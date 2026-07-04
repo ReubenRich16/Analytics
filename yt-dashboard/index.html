@@ -313,6 +313,7 @@
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
   const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
   const DEFAULT_CLIENT_ID = '766052665664-qk83b8i8fm9ns8b9m41m9u051idb1ksk.apps.googleusercontent.com';
+  const looksLikeClientId = v => /\.apps\.googleusercontent\.com$/.test((v || '').trim());
 
   let tokenClient = null, accessToken = null;
   let timer = null, paused = false, hiddenPaused = false;
@@ -356,6 +357,7 @@
     const cid = $('clientId').value.trim();
     if (!cid) return showError('Paste your OAuth Client ID first.');
     if (!window.google || !google.accounts) return showError('Google sign-in script hasn’t loaded yet — check your connection and try again.');
+    if (!looksLikeClientId(cid)) return showError('That doesn’t look like a Client ID — it should end in .apps.googleusercontent.com');
     clearError();
     try { localStorage.setItem('cc_client_id', cid); } catch (e) {}
     tokenClient = google.accounts.oauth2.initTokenClient({
@@ -1146,12 +1148,17 @@
     else if (document.hidden) setStatus('sleeping (tab hidden)');
   });
 
-  // Prefill client id: URL ?client_id=... wins, then the one remembered on this device, then the built-in default
+  // Prefill client id: URL ?client_id=... wins, then the one remembered on this device, then the built-in default.
+  // Anything not shaped like a real Client ID (placeholders, typos) is ignored and scrubbed.
   const params = new URLSearchParams(location.search);
   let savedId = '';
   try { savedId = localStorage.getItem('cc_client_id') || ''; } catch (e) {}
-  const urlId = params.get('client_id');
-  if (urlId) {
+  if (savedId && !looksLikeClientId(savedId)) {
+    savedId = '';
+    try { localStorage.removeItem('cc_client_id'); } catch (e) {}
+  }
+  const urlId = (params.get('client_id') || '').trim();
+  if (looksLikeClientId(urlId)) {
     $('clientId').value = urlId;
     try { localStorage.setItem('cc_client_id', urlId); } catch (e) {}
   } else {
