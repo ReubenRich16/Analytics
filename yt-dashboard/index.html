@@ -280,6 +280,7 @@
   const DATA = 'https://www.googleapis.com/youtube/v3/';
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
   const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
+  const DEFAULT_CLIENT_ID = '766052665664-qk83b8i8fm9ns8b9m41m9u051idb1ksk.apps.googleusercontent.com';
 
   let tokenClient = null, accessToken = null;
   let timer = null, paused = false, hiddenPaused = false;
@@ -843,7 +844,7 @@
     else if (document.hidden) setStatus('sleeping (tab hidden)');
   });
 
-  // Prefill client id: URL ?client_id=... wins, otherwise the one remembered on this device
+  // Prefill client id: URL ?client_id=... wins, then the one remembered on this device, then the built-in default
   const params = new URLSearchParams(location.search);
   let savedId = '';
   try { savedId = localStorage.getItem('cc_client_id') || ''; } catch (e) {}
@@ -851,8 +852,8 @@
   if (urlId) {
     $('clientId').value = urlId;
     try { localStorage.setItem('cc_client_id', urlId); } catch (e) {}
-  } else if (savedId) {
-    $('clientId').value = savedId;
+  } else {
+    $('clientId').value = savedId || DEFAULT_CLIENT_ID;
   }
 })();
 </script>
