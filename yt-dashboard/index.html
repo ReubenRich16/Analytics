@@ -1129,6 +1129,12 @@
 
   $('latestMore').addEventListener('click', () => { if (latestVid) openDrawer(latestVid); });
 
+  // In-app browsers (Messenger, Instagram, TikTok…) can't do Google sign-in — warn up front
+  const ua = navigator.userAgent || '';
+  if (/FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\/|MicroMessenger|Snapchat|TikTok|musical_ly|BytedanceWebview/i.test(ua)) {
+    showError('You’ve opened this inside an app’s built-in browser (Messenger, Instagram, etc.) — Google blocks sign-in there for safety. Tap the ⋯ menu and choose “Open in browser / Safari”, or copy the link into your normal browser, then sign in.');
+  }
+
   // Theme picker — remembered on this device
   function applyTheme(t) {
     if (t === 'midnight') document.body.removeAttribute('data-theme');
