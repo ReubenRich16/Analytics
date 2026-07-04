@@ -174,8 +174,10 @@
       </div>
       <button class="primary" id="signInBtn">Sign in with Google</button>
     </div>
+    <p class="hint" style="margin-top:8px"><button class="ghost" id="switchBtn" type="button">Use a different account / channel</button></p>
     <p class="hint">
-      If the box above is already filled in, just tap <b>Sign in with Google</b> and pick the channel's account.<br>
+      If the box above is already filled in, just tap <b>Sign in with Google</b> and pick the channel's account.
+      Got more than one channel? Google will ask which one during sign-in — or use the button above to switch.<br>
       First-time console setup lives in the repo README: enable the two YouTube APIs, set up the consent
       screen (add each user as a <b>Test user</b>), create a <b>Web application</b> OAuth client with this site's
       origin, then open this page as <code>?client_id=YOUR_ID</code> to prefill forever.
@@ -317,11 +319,12 @@
   const SUB_NAMES = { subscribed:'Subscribers', unsubscribed:'Non-subscribers (new audience)' };
 
   /* ---------- auth ---------- */
-  function initAuth() {
+  function initAuth(promptMode) {
     const cid = $('clientId').value.trim();
     if (!cid) return showError('Paste your OAuth Client ID first.');
     if (!window.google || !google.accounts) return showError('Google sign-in script hasn’t loaded yet — check your connection and try again.');
     clearError();
+    try { localStorage.setItem('cc_client_id', cid); } catch (e) {}
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: cid,
       scope: SCOPES,
@@ -331,7 +334,7 @@
         try { await bootstrap(); } catch (e) { showError(e.message); setStatus('error'); }
       }
     });
-    tokenClient.requestAccessToken({ prompt: '' });
+    tokenClient.requestAccessToken({ prompt: promptMode || '' });
   }
 
   async function api(url) {
@@ -799,7 +802,8 @@
   }
 
   /* ---------- events ---------- */
-  $('signInBtn').addEventListener('click', initAuth);
+  $('signInBtn').addEventListener('click', () => initAuth());
+  $('switchBtn').addEventListener('click', () => initAuth('select_account'));
   $('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') initAuth(); });
   $('signOutBtn').addEventListener('click', () => location.reload());
   $('sortMode').addEventListener('change', renderTable);
@@ -839,9 +843,17 @@
     else if (document.hidden) setStatus('sleeping (tab hidden)');
   });
 
-  // Prefill client id from URL: ?client_id=...
+  // Prefill client id: URL ?client_id=... wins, otherwise the one remembered on this device
   const params = new URLSearchParams(location.search);
-  if (params.get('client_id')) $('clientId').value = params.get('client_id');
+  let savedId = '';
+  try { savedId = localStorage.getItem('cc_client_id') || ''; } catch (e) {}
+  const urlId = params.get('client_id');
+  if (urlId) {
+    $('clientId').value = urlId;
+    try { localStorage.setItem('cc_client_id', urlId); } catch (e) {}
+  } else if (savedId) {
+    $('clientId').value = savedId;
+  }
 })();
 </script>
 </body>
