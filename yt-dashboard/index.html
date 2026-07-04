@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Channel Command</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root {
+    --ink:#0f1317; --panel:#161c22; --panel-2:#1c242c; --line:#242e38;
+    --text:#e9edf1; --muted:#7c8894; --live:#ff3b30; --up:#3ddc84; --down:#ff6b60;
+    --accent:#5aa9ff;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--ink); color:var(--text);
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:24px 14px 60px; min-height:100vh;
+  }
+  .wrap { width:100%; max-width:1020px; }
+
+  header { display:flex; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line); margin-bottom:20px; }
+  .live-dot { width:10px; height:10px; border-radius:50%; background:var(--muted); flex:none; }
+  .live-dot.on { background:var(--live); animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,59,48,.5);} 50%{box-shadow:0 0 0 7px rgba(255,59,48,0);} }
+  @media (prefers-reduced-motion:reduce){ .live-dot.on{animation:none;} }
+  header h1 { font-size:14px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+  header .status { margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); text-align:right; }
+
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:14px; }
+  .card h2 { font-size:14px; font-weight:500; margin-bottom:12px; }
+  label { display:block; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
+  input, select {
+    width:100%; background:var(--ink); border:1px solid var(--line); color:var(--text);
+    border-radius:7px; padding:10px 12px; font-family:'IBM Plex Mono',monospace; font-size:13px;
+  }
+  input:focus, select:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
+  .hint a { color:var(--text); }
+  .hint code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:11px; }
+  button.primary {
+    background:var(--live); color:#fff; border:none; border-radius:7px; padding:11px 22px;
+    font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:700; letter-spacing:.04em; cursor:pointer;
+  }
+  button.primary:hover { filter:brightness(1.1); }
+  button.ghost {
+    background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px;
+    padding:8px 14px; font-size:12px; cursor:pointer; font-family:'Space Grotesk',sans-serif;
+  }
+  button.ghost:hover { color:var(--text); border-color:var(--muted); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .field { flex:1 1 260px; }
+
+  .error { display:none; background:rgba(255,59,48,.08); border:1px solid rgba(255,59,48,.4); color:#ffb4ae; border-radius:10px; padding:12px 16px; margin-bottom:14px; font-size:13px; line-height:1.5; }
+
+  .channel-banner { display:none; align-items:center; gap:14px; padding:12px 16px; }
+  .channel-banner img { width:44px; height:44px; border-radius:50%; background:var(--panel-2); }
+  .channel-banner .ct { font-size:15px; font-weight:700; }
+  .channel-banner .cc { font-size:12px; color:var(--muted); margin-top:2px; font-family:'IBM Plex Mono',monospace; }
+  .channel-banner .controls { margin-left:auto; display:flex; gap:8px; flex:none; flex-wrap:wrap; }
+  .channel-banner select { width:auto; padding:8px 10px; font-size:12px; }
+
+  .grid { display:none; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:14px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .stat .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+  .stat-num { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:clamp(20px,4vw,32px); margin-top:7px; font-variant-numeric:tabular-nums; transition:color .8s ease; }
+  .stat-num.flash { color:var(--up); transition:color 0s; }
+  .stat .delta { font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:5px; color:var(--muted); min-height:15px; }
+  .stat .delta.up { color:var(--up); }
+
+  .velocity { display:none; }
+  .vhead { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
+  .vhead .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+  .vhead .rate { margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:12px; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:56px; border-bottom:1px solid var(--line); }
+  .bars .bar { flex:1; min-width:3px; background:var(--live); border-radius:2px 2px 0 0; min-height:2px; }
+  .bars .bar.zero { background:var(--line); }
+  .session { margin-top:10px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+  .session b { color:var(--up); font-weight:600; }
+
+  .tablecard { display:none; padding:0; overflow:hidden; }
+  .thead-bar { display:flex; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); gap:10px; }
+  .thead-bar .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+  .thead-bar select { width:auto; padding:6px 10px; font-size:12px; margin-left:auto; }
+  .tscroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  table { width:100%; border-collapse:collapse; font-size:13px; min-width:640px; }
+  th { text-align:right; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:500; padding:10px 14px; border-bottom:1px solid var(--line); }
+  th:first-child { text-align:left; }
+  td { padding:10px 14px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
+  tr:last-child td { border-bottom:none; }
+  td.title { text-align:left; font-family:'Space Grotesk',sans-serif; white-space:normal; min-width:200px; max-width:320px; line-height:1.3; cursor:pointer; }
+  td.title:hover { text-decoration:underline; }
+  td .tickup { color:var(--up); }
+  td .zero { color:var(--muted); opacity:.55; }
+  tr.mover td { background:rgba(61,220,132,.05); }
+  tr[data-vid] { cursor:pointer; }
+  tr[data-vid]:hover td { background:var(--panel-2); }
+
+  /* ---- detail drawer ---- */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(6,9,12,.7); z-index:40; }
+  .drawer {
+    display:none; position:fixed; z-index:50; inset:auto 0 0 0; max-height:88vh;
+    background:var(--panel); border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:20px 18px 40px;
+  }
+  @media (min-width:860px) {
+    .drawer { inset:0 0 0 auto; width:560px; max-height:none; border-radius:0; border-top:none; border-left:1px solid var(--line); }
+  }
+  .drawer .dhead { display:flex; align-items:flex-start; gap:12px; margin-bottom:16px; }
+  .drawer .dhead h3 { font-size:16px; font-weight:700; line-height:1.3; flex:1; }
+  .drawer .close { flex:none; }
+  .drawer .range-row { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .range-row button { flex:1; min-width:70px; }
+  .range-row button.active { color:var(--text); border-color:var(--accent); }
+  .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-bottom:18px; }
+  .mcell { background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .mcell .label { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .mcell .val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:5px; font-variant-numeric:tabular-nums; }
+  .mcell .sub { font-size:10px; color:var(--muted); margin-top:3px; font-family:'IBM Plex Mono',monospace; }
+  .dsection { margin-bottom:20px; }
+  .dsection h4 { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+  svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:8px; }
+  .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
+  .hbar-row .hlabel { flex:0 0 128px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hbar-row .htrack { flex:1; height:14px; background:var(--ink); border-radius:4px; overflow:hidden; }
+  .hbar-row .hfill { height:100%; background:var(--accent); border-radius:4px; min-width:2px; }
+  .hbar-row .hval { flex:0 0 76px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+  .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
+  .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
+
+  @media (max-width:620px) {
+    .grid { grid-template-columns:repeat(3,1fr); gap:8px; }
+    .stat { padding:12px 10px; }
+    .channel-banner { flex-wrap:wrap; }
+    .channel-banner .controls { margin-left:0; width:100%; }
+    .hbar-row .hlabel { flex-basis:96px; font-size:11px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="live-dot" id="liveDot"></div>
+    <h1>Channel Command</h1>
+    <div class="status" id="statusText">signed out</div>
+  </header>
+
+  <!-- SETUP -->
+  <div class="card" id="setupPanel">
+    <h2>Sign in with your channel's Google account</h2>
+    <div class="row">
+      <div class="field">
+        <label for="clientId">OAuth Client ID</label>
+        <input id="clientId" type="text" placeholder="1234567890-xxxx.apps.googleusercontent.com" autocomplete="off">
+      </div>
+      <button class="primary" id="signInBtn">Sign in with Google</button>
+    </div>
+    <p class="hint">
+      One-time console setup (same project as before):<br>
+      1. Enable <b>YouTube Data API v3</b> and <b>YouTube Analytics API</b> (API Library).<br>
+      2. APIs &amp; Services → <b>OAuth consent screen</b> → External → fill app name/email → add yourself as a <b>Test user</b>.<br>
+      3. Credentials → Create Credentials → <b>OAuth client ID</b> → type <b>Web application</b> → under <b>Authorized JavaScript origins</b> add the exact URL this page is served from (e.g. <code>https://yourname.github.io</code> or <code>http://localhost:8000</code>).<br>
+      4. Copy the Client ID into the box above. Tip: append <code>?client_id=YOUR_ID</code> to this page's URL to prefill it.<br>
+      This page must be opened via http(s) — Google sign-in doesn't work from a <code>file://</code> path.
+    </p>
+  </div>
+
+  <div class="error" id="errorBox"></div>
+
+  <!-- CHANNEL BANNER -->
+  <div class="card channel-banner" id="channelBanner">
+    <img id="chThumb" alt="" src="">
+    <div>
+      <div class="ct" id="chTitle"></div>
+      <div class="cc" id="chMeta"></div>
+    </div>
+    <div class="controls">
+      <select id="interval" title="Refresh rate">
+        <option value="20000">20s refresh</option>
+        <option value="30000" selected>30s refresh</option>
+        <option value="60000">60s refresh</option>
+      </select>
+      <button class="ghost" id="pauseBtn">Pause</button>
+      <button class="ghost" id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <!-- LIVE TOTALS -->
+  <div class="grid" id="statsGrid">
+    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
+    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
+    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
+  </div>
+
+  <div class="card velocity" id="velocityPanel">
+    <div class="vhead">
+      <div class="label">View velocity — gained per refresh</div>
+      <div class="rate" id="rateText"></div>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="session" id="sessionText"></div>
+  </div>
+
+  <!-- VIDEO TABLE -->
+  <div class="card tablecard" id="tableCard">
+    <div class="thead-bar">
+      <div class="label" id="tableLabel">Videos — tap a row for deep analytics</div>
+      <select id="sortMode">
+        <option value="hot" selected>Sort: hottest</option>
+        <option value="views">Sort: most views</option>
+        <option value="newest">Sort: newest</option>
+      </select>
+    </div>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- DETAIL DRAWER -->
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <div class="dhead">
+    <h3 id="dTitle"></h3>
+    <button class="ghost close" id="drawerClose">Close</button>
+  </div>
+  <div class="range-row" id="rangeRow">
+    <button class="ghost" data-days="7">7 days</button>
+    <button class="ghost active" data-days="28">28 days</button>
+    <button class="ghost" data-days="90">90 days</button>
+    <button class="ghost" data-days="0">Lifetime</button>
+  </div>
+  <div class="loading" id="dLoading" style="display:none">loading analytics…</div>
+  <div id="dContent"></div>
+  <p class="dnote">Analytics data is aggregated daily by YouTube and typically lags 24–48h — it won't match the live counters above exactly.</p>
+</div>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const fmt = new Intl.NumberFormat('en-AU');
+  const DATA = 'https://www.googleapis.com/youtube/v3/';
+  const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
+  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
+
+  let tokenClient = null, accessToken = null;
+  let timer = null, paused = false, hiddenPaused = false;
+  let intervalMs = 30000;
+  let uploadsPlaylist = '', videoIds = [], meta = {}, perVideo = {};
+  let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
+  let channelPublished = '2005-01-01';
+  let currentVideo = null, currentDays = 28;
+  const MAX_BARS = 60, VIDEO_CAP = 200;
+
+  const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+  const setStatus = t => $('statusText').textContent = t;
+  const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
+  const clearError = () => $('errorBox').style.display = 'none';
+  const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+
+  const TRAFFIC_NAMES = {
+    ADVERTISING:'Advertising', ANNOTATION:'Annotations', CAMPAIGN_CARD:'Campaign cards',
+    END_SCREEN:'End screens', EXT_URL:'External sites', HASHTAGS:'Hashtags',
+    LIVE_REDIRECT:'Live redirect', NO_LINK_EMBEDDED:'Embedded players', NO_LINK_OTHER:'Direct / unknown',
+    NOTIFICATION:'Notifications', PLAYLIST:'Playlists', PRODUCT_PAGE:'Product pages',
+    PROMOTED:'Promoted', RELATED_VIDEO:'Suggested videos', SHORTS:'Shorts feed',
+    SHORTS_CONTENT_LINKS:'Shorts links', SOUND_PAGE:'Sound page', SUBSCRIBER:'Subscriptions feed',
+    YT_CHANNEL:'Channel pages', YT_OTHER_PAGE:'Other YouTube', YT_PLAYLIST_PAGE:'Playlist pages',
+    YT_SEARCH:'YouTube search', VIDEO_REMIXES:'Remixes', IMMERSIVE_LIVE:'Immersive live'
+  };
+
+  /* ---------- auth ---------- */
+  function initAuth() {
+    const cid = $('clientId').value.trim();
+    if (!cid) return showError('Paste your OAuth Client ID first.');
+    if (!window.google || !google.accounts) return showError('Google sign-in script hasn\u2019t loaded yet — check your connection and try again.');
+    clearError();
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: cid,
+      scope: SCOPES,
+      callback: async resp => {
+        if (resp.error) return showError('Sign-in failed: ' + resp.error);
+        accessToken = resp.access_token;
+        try { await bootstrap(); } catch (e) { showError(e.message); setStatus('error'); }
+      }
+    });
+    tokenClient.requestAccessToken({ prompt: '' });
+  }
+
+  async function api(url) {
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (res.status === 401 && tokenClient) {
+      // token expired → silent refresh, then caller retries next tick
+      tokenClient.requestAccessToken({ prompt: '' });
+      throw new Error('Session refreshing — one moment…');
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      const reason = data?.error?.errors?.[0]?.reason || '';
+      if (reason === 'quotaExceeded') throw new Error('Daily API quota exceeded — resets midnight Pacific. Use a slower refresh.');
+      throw new Error(data?.error?.message || ('API error ' + res.status));
+    }
+    return data;
+  }
+  const dataApi = (ep, params) => api(DATA + ep + '?' + new URLSearchParams(params));
+  const analyticsApi = params => api(ANALYTICS + '?' + new URLSearchParams({ ids: 'channel==MINE', ...params }));
+
+  /* ---------- bootstrap after sign-in ---------- */
+  async function bootstrap() {
+    setStatus('loading channel…');
+    const ch = await dataApi('channels', { part: 'snippet,contentDetails,statistics', mine: 'true' });
+    if (!ch.items || !ch.items.length) throw new Error('No channel found on this Google account.');
+    const c = ch.items[0];
+    uploadsPlaylist = c.contentDetails.relatedPlaylists.uploads;
+    channelPublished = (c.snippet.publishedAt || '2005-01-01').slice(0, 10);
+    $('chTitle').textContent = c.snippet.title;
+    $('chMeta').textContent = fmt.format(+c.statistics.subscriberCount) + ' subs · ' + fmt.format(+c.statistics.videoCount) + ' videos';
+    const th = c.snippet.thumbnails?.default?.url; if (th) $('chThumb').src = th;
+
+    setStatus('loading videos…');
+    videoIds = []; meta = {}; let pageToken = '';
+    while (videoIds.length < VIDEO_CAP) {
+      const d = await dataApi('playlistItems', { part: 'contentDetails,snippet', playlistId: uploadsPlaylist, maxResults: '50', ...(pageToken ? { pageToken } : {}) });
+      for (const it of d.items) {
+        const id = it.contentDetails.videoId;
+        videoIds.push(id);
+        meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt };
+        if (videoIds.length >= VIDEO_CAP) break;
+      }
+      pageToken = d.nextPageToken; if (!pageToken) break;
+    }
+    if (!videoIds.length) throw new Error('No public videos found.');
+    $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
+
+    prevTotals = null; sessionStart = null; history = []; perVideo = {}; paused = false;
+    $('setupPanel').style.display = 'none';
+    $('channelBanner').style.display = 'flex';
+    $('statsGrid').style.display = 'grid';
+    $('velocityPanel').style.display = 'block';
+    $('tableCard').style.display = 'block';
+
+    intervalMs = +$('interval').value;
+    if (timer) clearInterval(timer);
+    await poll();
+    timer = setInterval(poll, intervalMs);
+  }
+
+  /* ---------- live polling ---------- */
+  function flash(el) { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); }
+
+  async function poll() {
+    if (paused || hiddenPaused || !accessToken) return;
+    setStatus('fetching…');
+    try {
+      const results = [];
+      for (const ids of chunk(videoIds, 50)) {
+        const d = await dataApi('videos', { part: 'statistics', id: ids.join(','), maxResults: '50' });
+        results.push(...d.items);
+      }
+      const totals = { views: 0, likes: 0, comments: 0 };
+      const firstRun = !sessionStart;
+      for (const it of results) {
+        const s = it.statistics;
+        const cur = { views: +(s.viewCount || 0), likes: +(s.likeCount || 0), comments: +(s.commentCount || 0) };
+        const p = perVideo[it.id];
+        perVideo[it.id] = { ...cur, tickV: p ? cur.views - p.views : 0, sessV: p ? cur.views - (p.views - (p.sessV || 0)) : 0 };
+        totals.views += cur.views; totals.likes += cur.likes; totals.comments += cur.comments;
+      }
+      if (firstRun) { sessionStart = { ...totals }; sessionTime = Date.now(); }
+
+      [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
+        const el = $(n); el.textContent = fmt.format(totals[k]);
+        const d = prevTotals ? totals[k] - prevTotals[k] : null;
+        if (d > 0) flash(el);
+        const de = $(dl);
+        if (d === null) { de.textContent = ''; de.className = 'delta'; }
+        else if (d > 0) { de.textContent = '+' + fmt.format(d); de.className = 'delta up'; }
+        else { de.textContent = '±0'; de.className = 'delta'; }
+      });
+
+      if (prevTotals) {
+        history.push(Math.max(0, totals.views - prevTotals.views));
+        if (history.length > MAX_BARS) history.shift();
+        const wrap = $('bars'); wrap.innerHTML = '';
+        const max = Math.max(1, ...history);
+        history.forEach(v => {
+          const b = document.createElement('div');
+          b.className = 'bar' + (v === 0 ? ' zero' : '');
+          b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
+          b.title = '+' + fmt.format(v) + ' views';
+          wrap.appendChild(b);
+        });
+      }
+      const mins = Math.max(1 / 60, (Date.now() - sessionTime) / 60000);
+      const gained = totals.views - sessionStart.views;
+      $('sessionText').innerHTML = 'session: <b>+' + fmt.format(gained) + '</b> views · <b>+' + fmt.format(totals.likes - sessionStart.likes) + '</b> likes · <b>+' + fmt.format(totals.comments - sessionStart.comments) + '</b> comments · ' + Math.round(mins) + 'm';
+      const pm = gained / mins;
+      $('rateText').textContent = pm >= 0.05 ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min' : '';
+
+      renderTable();
+      prevTotals = totals;
+      clearError();
+      $('liveDot').classList.add('on');
+      setStatus('live · ' + new Date().toLocaleTimeString());
+    } catch (err) {
+      $('liveDot').classList.remove('on');
+      setStatus('error');
+      showError(err.message);
+    }
+  }
+
+  function renderTable() {
+    const mode = $('sortMode').value;
+    const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id] })).filter(r => r.views !== undefined);
+    if (mode === 'views') rows.sort((a, b) => b.views - a.views);
+    else if (mode === 'newest') rows.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+    else rows.sort((a, b) => (b.sessV - a.sessV) || (b.views - a.views));
+    const tb = $('tbody'); tb.innerHTML = '';
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.dataset.vid = r.id;
+      if (r.tickV > 0) tr.className = 'mover';
+      tr.innerHTML =
+        '<td class="title">' + esc(r.title) + '</td>' +
+        '<td>' + fmt.format(r.views) + '</td>' +
+        '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td>' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td>' + fmt.format(r.likes) + '</td>' +
+        '<td>' + fmt.format(r.comments) + '</td>';
+      tr.addEventListener('click', () => openDrawer(r.id));
+      tb.appendChild(tr);
+    }
+  }
+
+  /* ---------- analytics drawer ---------- */
+  const iso = d => d.toISOString().slice(0, 10);
+  function rangeDates(days) {
+    const end = new Date();
+    const start = days === 0 ? new Date(channelPublished) : new Date(Date.now() - days * 864e5);
+    return { startDate: iso(start), endDate: iso(end) };
+  }
+  const fmtDur = s => {
+    s = Math.round(s);
+    const m = Math.floor(s / 60), sec = s % 60;
+    return m + ':' + String(sec).padStart(2, '0');
+  };
+  const fmtHours = mins => mins >= 6000 ? fmt.format(Math.round(mins / 60)) + ' h' : fmt.format(Math.round(mins)) + ' min';
+
+  function openDrawer(vid) {
+    currentVideo = vid;
+    $('dTitle').textContent = meta[vid].title;
+    $('overlay').style.display = 'block';
+    $('drawer').style.display = 'block';
+    loadAnalytics();
+  }
+  function closeDrawer() {
+    $('overlay').style.display = 'none';
+    $('drawer').style.display = 'none';
+    currentVideo = null;
+  }
+
+  async function loadAnalytics() {
+    if (!currentVideo) return;
+    const vid = currentVideo;
+    $('dLoading').style.display = 'block';
+    $('dContent').innerHTML = '';
+    const { startDate, endDate } = rangeDates(currentDays);
+    const base = { startDate, endDate, filters: 'video==' + vid };
+    try {
+      const [summary, daily, traffic, retention, demo] = await Promise.all([
+        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
+        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'day', sort: 'day' }),
+        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'insightTrafficSourceType', sort: '-views' }),
+        analyticsApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }).catch(() => null),
+        analyticsApi({ ...base, metrics: 'viewerPercentage', dimensions: 'ageGroup,gender', sort: 'gender,ageGroup' }).catch(() => null)
+      ]);
+      if (vid !== currentVideo) return; // user switched videos mid-flight
+      renderAnalytics(summary, daily, traffic, retention, demo);
+    } catch (err) {
+      $('dContent').innerHTML = '<p class="dnote">' + esc(err.message) + '</p>';
+    } finally {
+      $('dLoading').style.display = 'none';
+    }
+  }
+
+  function svgLine(points, w, h, pad, color, fillArea) {
+    if (points.length < 2) return '';
+    const xs = points.map((_, i) => pad + i * (w - 2 * pad) / (points.length - 1));
+    const max = Math.max(1, ...points);
+    const ys = points.map(v => h - pad - (v / max) * (h - 2 * pad));
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < xs.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    let out = '';
+    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" fill="' + color + '" opacity="0.12"/>';
+    out += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2"/>';
+    return out;
+  }
+
+  function renderAnalytics(summary, daily, traffic, retention, demo) {
+    const c = $('dContent');
+    let html = '';
+    const s = summary.rows && summary.rows[0];
+    if (!s) { c.innerHTML = '<p class="dnote">No analytics data for this range yet — very new videos take a day or two to appear.</p>'; return; }
+    const [views, minsWatched, avgDur, avgPct, likes, comments, shares, subsG, subsL] = s;
+
+    html += '<div class="metric-grid">' +
+      mcell('Views', fmt.format(views)) +
+      mcell('Watch time', fmtHours(minsWatched)) +
+      mcell('Avg view duration', fmtDur(avgDur)) +
+      mcell('Avg % viewed', Math.round(avgPct) + '%') +
+      mcell('Likes', fmt.format(likes)) +
+      mcell('Comments', fmt.format(comments)) +
+      mcell('Shares', fmt.format(shares)) +
+      mcell('Subs', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost') +
+      '</div>';
+
+    if (daily.rows && daily.rows.length > 1) {
+      const pts = daily.rows.map(r => r[1]);
+      html += '<div class="dsection"><h4>Daily views</h4>' +
+        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Daily views trend">' +
+        svgLine(pts, 560, 120, 8, '#ff3b30', true) + '</svg>' +
+        '<p class="dnote" style="margin-top:6px">' + esc(daily.rows[0][0]) + ' → ' + esc(daily.rows[daily.rows.length - 1][0]) +
+        ' · peak ' + fmt.format(Math.max(...pts)) + ' views/day</p></div>';
+    }
+
+    if (retention && retention.rows && retention.rows.length > 1) {
+      const pts = retention.rows.map(r => r[1] * 100);
+      html += '<div class="dsection"><h4>Audience retention — % still watching</h4>' +
+        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Retention curve">' +
+        svgLine(pts, 560, 120, 8, '#5aa9ff', true) + '</svg>' +
+        '<p class="dnote" style="margin-top:6px">start → end of video · ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% still watching at midpoint</p></div>';
+    }
+
+    if (traffic.rows && traffic.rows.length) {
+      const total = traffic.rows.reduce((a, r) => a + r[1], 0) || 1;
+      html += '<div class="dsection"><h4>Traffic sources</h4>';
+      for (const r of traffic.rows.slice(0, 8)) {
+        const pct = r[1] / total * 100;
+        html += '<div class="hbar-row"><div class="hlabel">' + esc(TRAFFIC_NAMES[r[0]] || r[0]) + '</div>' +
+          '<div class="htrack"><div class="hfill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+          '<div class="hval">' + fmt.format(r[1]) + ' · ' + Math.round(pct) + '%</div></div>';
+      }
+      html += '</div>';
+    }
+
+    if (demo && demo.rows && demo.rows.length) {
+      html += '<div class="dsection"><h4>Audience — age &amp; gender</h4>';
+      for (const r of demo.rows) {
+        const label = r[0].replace('age', '') + ' · ' + (r[1] === 'female' ? 'F' : r[1] === 'male' ? 'M' : 'other');
+        html += '<div class="hbar-row"><div class="hlabel">' + esc(label) + '</div>' +
+          '<div class="htrack"><div class="hfill" style="width:' + Math.min(100, r[2]).toFixed(1) + '%;background:#b58cff"></div></div>' +
+          '<div class="hval">' + r[2].toFixed(1) + '%</div></div>';
+      }
+      html += '</div>';
+    }
+    c.innerHTML = html;
+  }
+  const mcell = (label, val, sub) =>
+    '<div class="mcell"><div class="label">' + label + '</div><div class="val">' + val + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+
+  /* ---------- events ---------- */
+  $('signInBtn').addEventListener('click', initAuth);
+  $('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') initAuth(); });
+  $('signOutBtn').addEventListener('click', () => location.reload());
+  $('sortMode').addEventListener('change', renderTable);
+  $('interval').addEventListener('change', () => {
+    intervalMs = +$('interval').value;
+    if (timer) { clearInterval(timer); timer = setInterval(poll, intervalMs); }
+  });
+  $('pauseBtn').addEventListener('click', () => {
+    paused = !paused;
+    $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+    $('liveDot').classList.toggle('on', !paused);
+    setStatus(paused ? 'paused' : 'live');
+    if (!paused) poll();
+  });
+  $('drawerClose').addEventListener('click', closeDrawer);
+  $('overlay').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  $('rangeRow').addEventListener('click', e => {
+    const b = e.target.closest('button[data-days]');
+    if (!b) return;
+    currentDays = +b.dataset.days;
+    document.querySelectorAll('#rangeRow button').forEach(x => x.classList.toggle('active', x === b));
+    loadAnalytics();
+  });
+
+  // Quota saver: stop polling when the tab/screen isn't visible
+  document.addEventListener('visibilitychange', () => {
+    hiddenPaused = document.hidden;
+    if (!document.hidden && !paused) { setStatus('resuming…'); poll(); }
+    else if (document.hidden) setStatus('sleeping (tab hidden)');
+  });
+
+  // Prefill client id from URL: ?client_id=...
+  const params = new URLSearchParams(location.search);
+  if (params.get('client_id')) $('clientId').value = params.get('client_id');
+})();
+</script>
+</body>
+</html>
