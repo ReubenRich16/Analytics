@@ -320,7 +320,7 @@
   let uploadsPlaylist = '', videoIds = [], meta = {}, perVideo = {};
   let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
   let channelPublished = '2005-01-01';
-  let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null;
+  let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null, pollCount = 0;
   const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
 
@@ -517,6 +517,10 @@
         const el = $('latestLive');
         if (el) el.textContent = fmt.format(lv.views) + ' views · ' + fmt.format(lv.likes) + ' likes · ' + fmt.format(lv.comments) + ' comments right now';
       }
+      recordSnaps();
+      renderLiveRace();
+      pollCount++;
+      if (pollCount % 30 === 0) checkNewUploads();
       prevTotals = totals;
       clearError();
       $('liveDot').classList.add('on');
@@ -685,6 +689,96 @@
     $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
   }
 
+  /* ---------- minute-by-minute tracking ---------- */
+  // YouTube's API has no minute-level history, so the dashboard records its own:
+  // while open, it snapshots view counts of any video under a week old (every ~5 min)
+  // and saves the curves on this device for future same-age races.
+  const SNAP_KEY = 'cc_snaps_v1', SNAP_MAX_AGE = 7 * 1440, SNAP_GAP = 5;
+  let snaps = {};
+  try { snaps = JSON.parse(localStorage.getItem(SNAP_KEY) || '{}') || {}; } catch (e) { snaps = {}; }
+  const ageMinutes = vid => (Date.now() - new Date(meta[vid].publishedAt)) / 60000;
+  const fmtAge = m => {
+    m = Math.round(m);
+    if (m < 60) return m + ' min';
+    if (m < 2880) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    return Math.floor(m / 1440) + 'd ' + Math.floor((m % 1440) / 60) + 'h';
+  };
+  function recordSnaps() {
+    let changed = false;
+    for (const vid of videoIds) {
+      if (!meta[vid] || !perVideo[vid]) continue;
+      const a = ageMinutes(vid);
+      if (a < 0 || a > SNAP_MAX_AGE) continue;
+      const arr = snaps[vid] || (snaps[vid] = []);
+      const last = arr[arr.length - 1];
+      if (!last || a - last[0] >= SNAP_GAP) { arr.push([Math.round(a), perVideo[vid].views]); changed = true; }
+    }
+    if (changed) {
+      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
+      const keep = new Set(ids.slice(0, 12));
+      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
+      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
+    }
+  }
+  function viewsAtAge(vid, t) {
+    const arr = snaps[vid];
+    if (!arr || !arr.length || t < arr[0][0]) return null;
+    let prev = arr[0];
+    for (const s of arr) {
+      if (s[0] <= t) { prev = s; continue; }
+      const f = (t - prev[0]) / Math.max(1, s[0] - prev[0]);
+      return { v: Math.round(prev[1] + (s[1] - prev[1]) * f), stale: false };
+    }
+    return { v: prev[1], stale: t - prev[0] > 30 };
+  }
+  function renderLiveRace() {
+    const el = $('liveRaceContent');
+    if (!el || !latestVid || !perVideo[latestVid]) return;
+    const t = ageMinutes(latestVid);
+    const cur = perVideo[latestVid];
+    const pace = t > 0 ? cur.views / t : 0;
+    const head = '<p class="explain" style="margin-bottom:10px"><b style="color:var(--text)">' + fmt.format(cur.views) + ' views</b> at <b style="color:var(--text)">' + fmtAge(t) + '</b> old' +
+      (pace >= 0.05 ? ' · averaging ' + (pace >= 10 ? Math.round(pace) : pace.toFixed(1)) + ' views/min' : '') + '</p>';
+    if (t > SNAP_MAX_AGE) { el.innerHTML = '<p class="dnote">This video is over a week old, so the minute race has retired — the official-stats race below takes over.</p>'; return; }
+    const rivals = Object.keys(snaps)
+      .filter(id => id !== latestVid && meta[id])
+      .map(id => ({ id, at: viewsAtAge(id, t) }))
+      .filter(r => r.at !== null);
+    if (!rivals.length) {
+      el.innerHTML = head + '<p class="dnote">No minute-by-minute history exists for your older uploads yet — YouTube doesn’t share it, so the dashboard records its own while it’s open. From your <b>next upload</b> onwards, new videos will race right here in real time. Tip: keep the dashboard open for the first hours after uploading (history saves to the device that’s watching).</p>';
+      return;
+    }
+    const rows = [
+      { label: '★ ' + videoTitle(latestVid), val: cur.views, valText: fmt.format(cur.views) + ' views', color: 'var(--live)', strong: true },
+      ...rivals.map(r => ({ label: videoTitle(r.id), val: r.at.v, valText: fmt.format(r.at.v) + ' views' + (r.at.stale ? ' (last known)' : '') }))
+    ].sort((a, b) => b.val - a.val);
+    const rank = rows.findIndex(r => r.strong) + 1;
+    el.innerHTML = head +
+      '<p class="explain" style="margin-bottom:10px"><b>#' + rank + ' of ' + rows.length + '</b> vs your other uploads when they were exactly this old</p>' +
+      hbarList(rows, { color: 'var(--accent)' });
+  }
+  async function checkNewUploads() {
+    try {
+      const d = await dataApi('playlistItems', { part: 'contentDetails,snippet', playlistId: uploadsPlaylist, maxResults: '5' });
+      let added = false;
+      for (const it of d.items) {
+        const id = it.contentDetails.videoId;
+        if (!meta[id]) { meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt }; videoIds.unshift(id); added = true; }
+      }
+      if (added) {
+        $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
+        const nl = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
+        if (nl !== latestVid) {
+          latestVid = nl;
+          $('latestTitle').textContent = meta[nl].title;
+          const pd = new Date(meta[nl].publishedAt);
+          $('latestMetaLine').innerHTML = 'Published ' + esc(pd.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
+          loadLatest();
+        }
+      }
+    } catch (e) {}
+  }
+
   /* ---------- latest upload ---------- */
   async function loadLatest() {
     if (!latestVid) return;
@@ -700,11 +794,15 @@
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ startDate: pub, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==YT_SEARCH', metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '6' })
       ]);
+      const liveRaceHtml = '<div class="dsection"><h4>Live race — minute by minute</h4>' +
+        '<p class="explain">Real-time: this video right now vs what your previous uploads had when they were exactly the same age. Updates with every refresh.</p>' +
+        '<div id="liveRaceContent"><p class="dnote">warming up…</p></div></div>';
       let html = '';
       const s = summary && summary.rows && summary.rows[0];
       if (!s) {
-        html = '<p class="dnote">YouTube hasn’t finished counting this one yet — official stats take 24–48h to appear. The live numbers above are real-time, so watch those for now.</p>';
+        html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h. The live counters and race above are real-time.</p>';
       } else {
+        html += liveRaceHtml;
         html += '<div class="metric-grid">' +
           mcell('Views', fmt.format(s[0])) +
           mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
@@ -738,8 +836,8 @@
           if (ok) defaultN = n;
           btns += '<button class="ghost" data-n="' + n + '"' + (ok ? '' : ' disabled') + '>' + (n === 1 ? 'First day' : 'First ' + n + ' days') + '</button>';
         }
-        html += '<div class="dsection"><h4>Same-age race — is it beating your other uploads?</h4>' +
-          '<p class="explain">Views in the first days after upload: this video against your previous uploads at the exact same age. A fair fight — every video gets the same head start.</p>' +
+        html += '<div class="dsection"><h4>Official-stats race — first days compared</h4>' +
+          '<p class="explain">Same idea using YouTube’s official daily stats (they lag 24–48h): views in the first days after upload, this video vs your previous ten at the same age.</p>' +
           '<div class="range-row" id="compareRange">' + btns + '</div>' +
           '<div class="loading" id="compareLoading" style="display:none">comparing…</div>' +
           '<div id="compareContent"></div></div>';
@@ -747,6 +845,7 @@
         html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
       }
       $('latestContent').innerHTML = html;
+      renderLiveRace();
       const cr = $('compareRange');
       if (cr) {
         cr.addEventListener('click', e => {
