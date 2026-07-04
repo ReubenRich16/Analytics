@@ -13,6 +13,18 @@
     --text:#e9edf1; --muted:#7c8894; --live:#ff3b30; --up:#3ddc84; --down:#ff6b60;
     --accent:#5aa9ff; --purple:#b58cff; --gold:#ffcf5a;
   }
+  body[data-theme="blush"] {
+    --ink:#fbeef4; --panel:#ffffff; --panel-2:#f8dfeb; --line:#efcadb;
+    --text:#46213c; --muted:#a06f8c; --live:#f43f8e; --up:#188a58; --down:#d94f5c;
+    --accent:#d05ce3; --purple:#8b5cf6; --gold:#d97706;
+  }
+  body[data-theme="lavender"] {
+    --ink:#f2effb; --panel:#ffffff; --panel-2:#e9e2f8; --line:#d9cdf1;
+    --text:#33234f; --muted:#8878a8; --live:#a855f7; --up:#188a58; --down:#e11d48;
+    --accent:#7c3aed; --purple:#c026d3; --gold:#b45309;
+  }
+  body[data-theme] .error { background:rgba(244,63,142,.07); border-color:rgba(244,63,142,.35); color:#b4225f; }
+  body { transition:background .25s ease; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
     background:var(--ink); color:var(--text);
@@ -29,6 +41,7 @@
   @media (prefers-reduced-motion:reduce){ .live-dot.on{animation:none;} }
   header h1 { font-size:14px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
   header .status { margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); text-align:right; }
+  header select { width:auto; padding:6px 8px; font-size:11px; flex:none; }
 
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:14px; }
   .card h2 { font-size:14px; font-weight:500; margin-bottom:12px; }
@@ -162,6 +175,11 @@
     <div class="live-dot" id="liveDot"></div>
     <h1>Channel Command</h1>
     <div class="status" id="statusText">signed out</div>
+    <select id="themeSel" title="Theme">
+      <option value="midnight">🌙 Midnight</option>
+      <option value="blush">🌸 Blush</option>
+      <option value="lavender">💜 Lavender</option>
+    </select>
   </header>
 
   <!-- SETUP -->
@@ -195,6 +213,7 @@
     </div>
     <div class="controls">
       <select id="interval" title="Refresh rate">
+        <option value="15000">15s refresh</option>
         <option value="30000">30s refresh</option>
         <option value="60000" selected>60s refresh</option>
         <option value="120000">2m refresh</option>
@@ -219,6 +238,18 @@
     </div>
     <div class="bars" id="bars"></div>
     <div class="session" id="sessionText"></div>
+  </div>
+
+  <!-- LATEST UPLOAD -->
+  <div class="card" id="latestCard" style="display:none">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Latest upload — how it's doing since it went live</div>
+      <button class="ghost" id="latestMore" style="margin-left:auto">Full breakdown</button>
+    </div>
+    <h3 id="latestTitle" style="font-size:15px;font-weight:700;margin:10px 0 3px;line-height:1.3"></h3>
+    <p class="explain" id="latestMetaLine" style="margin-bottom:14px"></p>
+    <div class="loading" id="latestLoading" style="display:none">loading latest video analytics…</div>
+    <div id="latestContent"></div>
   </div>
 
   <!-- CHANNEL TRENDS -->
@@ -288,7 +319,7 @@
   let uploadsPlaylist = '', videoIds = [], meta = {}, perVideo = {};
   let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
   let channelPublished = '2005-01-01';
-  let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0;
+  let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null;
   const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
 
@@ -413,11 +444,18 @@
     $('trendsCard').style.display = 'block';
     $('tableCard').style.display = 'block';
 
+    latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
+    $('latestTitle').textContent = meta[latestVid].title;
+    const pubDate = new Date(meta[latestVid].publishedAt);
+    $('latestMetaLine').innerHTML = 'Published ' + esc(pubDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
+    $('latestCard').style.display = 'block';
+
     intervalMs = +$('interval').value;
     if (timer) clearInterval(timer);
     await poll();
     timer = setInterval(poll, intervalMs);
     loadTrends();
+    loadLatest();
   }
 
   /* ---------- live polling ---------- */
@@ -473,6 +511,11 @@
       $('rateText').textContent = pm >= 0.05 ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min' : '';
 
       renderTable();
+      if (latestVid && perVideo[latestVid]) {
+        const lv = perVideo[latestVid];
+        const el = $('latestLive');
+        if (el) el.textContent = fmt.format(lv.views) + ' views · ' + fmt.format(lv.likes) + ' likes · ' + fmt.format(lv.comments) + ' comments right now';
+      }
       prevTotals = totals;
       clearError();
       $('liveDot').classList.add('on');
@@ -529,8 +572,8 @@
     let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
     for (let i = 1; i < xs.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
     let out = '';
-    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" fill="' + color + '" opacity="0.12"/>';
-    out += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2"/>';
+    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" style="fill:' + color + ';opacity:.12"/>';
+    out += '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>';
     return out;
   }
 
@@ -540,12 +583,12 @@
     const maxAbs = Math.max(1, ...values.map(v => Math.abs(v)));
     const zero = h / 2;
     const bw = Math.max(1.5, (w - 2 * pad) / values.length - 1.5);
-    let out = '<line x1="' + pad + '" y1="' + zero + '" x2="' + (w - pad) + '" y2="' + zero + '" stroke="#242e38" stroke-width="1"/>';
+    let out = '<line x1="' + pad + '" y1="' + zero + '" x2="' + (w - pad) + '" y2="' + zero + '" style="stroke:var(--line);stroke-width:1"/>';
     values.forEach((v, i) => {
       const x = pad + i * (w - 2 * pad) / values.length;
       const bh = Math.max(1, Math.abs(v) / maxAbs * (zero - pad));
       const y = v >= 0 ? zero - bh : zero;
-      out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" fill="' + (v >= 0 ? '#3ddc84' : '#ff6b60') + '"/>';
+      out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" style="fill:' + (v >= 0 ? 'var(--up)' : 'var(--down)') + '"/>';
     });
     return out;
   }
@@ -618,7 +661,7 @@
       html += '<div class="dsection"><h4>Views per day — whole channel</h4>' +
         '<p class="explain">' + fmt.format(totalViews) + ' views and ' + fmtHours(totalMins) + ' of watch time in this period.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Channel daily views">' +
-        svgLine(pts, 560, 120, 8, '#ff3b30', true) + '</svg>' +
+        svgLine(pts, 560, 120, 8, 'var(--live)', true) + '</svg>' +
         '<p class="dnote" style="margin-top:6px">' + esc(daily.rows[0][0]) + ' → ' + esc(daily.rows[daily.rows.length - 1][0]) + ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
     }
 
@@ -638,6 +681,58 @@
     }
 
     $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
+  }
+
+  /* ---------- latest upload ---------- */
+  async function loadLatest() {
+    if (!latestVid) return;
+    const vid = latestVid;
+    $('latestLoading').style.display = 'block';
+    try {
+      const pub = (meta[vid].publishedAt || '').slice(0, 10) || channelPublished;
+      const endDate = iso(new Date());
+      const base = { startDate: pub, endDate, filters: 'video==' + vid };
+      const [summary, daily, traffic, search] = await Promise.all([
+        tryApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
+        tryApi({ startDate: pub, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==YT_SEARCH', metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '6' })
+      ]);
+      let html = '';
+      const s = summary && summary.rows && summary.rows[0];
+      if (!s) {
+        html = '<p class="dnote">YouTube hasn’t finished counting this one yet — official stats take 24–48h to appear. The live numbers above are real-time, so watch those for now.</p>';
+      } else {
+        html += '<div class="metric-grid">' +
+          mcell('Views', fmt.format(s[0])) +
+          mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
+          mcell('Avg watched', fmtDur(s[2]), 'how long a typical viewer stays') +
+          mcell('% of video watched', Math.round(s[3]) + '%', 'higher = people stick around') +
+          mcell('Likes', fmt.format(s[4])) +
+          mcell('Comments', fmt.format(s[5])) +
+          mcell('Shares', fmt.format(s[6])) +
+          mcell('Subscribers', '+' + fmt.format(s[7]), '−' + fmt.format(s[8]) + ' lost from this video') +
+          '</div>';
+        if (daily && daily.rows && daily.rows.length > 1) {
+          const pts = daily.rows.map(x => x[1]);
+          html += '<div class="dsection"><h4>Views per day since upload</h4>' +
+            '<svg class="chart" viewBox="0 0 560 100" preserveAspectRatio="none" role="img" aria-label="Daily views since upload">' +
+            svgLine(pts, 560, 100, 8, 'var(--live)', true) + '</svg></div>';
+        }
+        if (traffic && traffic.rows && traffic.rows.length) {
+          html += section('How viewers are finding it', 'Which parts of YouTube are sending people to this video.',
+            hbarList(traffic.rows.slice(0, 5).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
+        }
+        if (search && search.rows && search.rows.length) {
+          html += section('What people searched to find it', 'The exact words typed into YouTube search.',
+            hbarList(search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
+        }
+        html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
+      }
+      $('latestContent').innerHTML = html;
+    } finally {
+      $('latestLoading').style.display = 'none';
+    }
   }
 
   /* ---------- video drawer ---------- */
@@ -714,7 +809,7 @@
       html += '<div class="dsection"><h4>Views per day</h4>' +
         '<p class="explain">This video’s daily views across the period.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Daily views trend">' +
-        svgLine(pts, 560, 120, 8, '#ff3b30', true) + '</svg>' +
+        svgLine(pts, 560, 120, 8, 'var(--live)', true) + '</svg>' +
         '<p class="dnote" style="margin-top:6px">' + esc(r.daily.rows[0][0]) + ' → ' + esc(r.daily.rows[r.daily.rows.length - 1][0]) +
         ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
     }
@@ -724,7 +819,7 @@
       html += '<div class="dsection"><h4>How long people keep watching</h4>' +
         '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Retention curve">' +
-        svgLine(pts, 560, 120, 8, '#5aa9ff', true) + '</svg></div>';
+        svgLine(pts, 560, 120, 8, 'var(--accent)', true) + '</svg></div>';
     }
 
     if (r.traffic && r.traffic.rows && r.traffic.rows.length) {
@@ -836,6 +931,20 @@
     document.querySelectorAll('#trendsRange button').forEach(x => x.classList.toggle('active', x === b));
     loadTrends();
   });
+
+  $('latestMore').addEventListener('click', () => { if (latestVid) openDrawer(latestVid); });
+
+  // Theme picker — remembered on this device
+  function applyTheme(t) {
+    if (t === 'midnight') document.body.removeAttribute('data-theme');
+    else document.body.dataset.theme = t;
+    try { localStorage.setItem('cc_theme', t); } catch (e) {}
+    $('themeSel').value = t;
+  }
+  $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
+  let savedTheme = 'midnight';
+  try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
+  applyTheme(savedTheme);
 
   // Quota saver: stop polling when the tab/screen isn't visible
   document.addEventListener('visibilitychange', () => {
