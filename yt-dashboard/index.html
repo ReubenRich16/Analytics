@@ -64,6 +64,7 @@
     padding:8px 14px; font-size:12px; cursor:pointer; font-family:'Space Grotesk',sans-serif;
   }
   button.ghost:hover { color:var(--text); border-color:var(--muted); }
+  button.ghost[disabled] { opacity:.35; cursor:not-allowed; }
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
   .field { flex:1 1 260px; }
 
@@ -599,8 +600,9 @@
     let html = '';
     for (const r of rows) {
       const pct = r.val / total * 100;
-      html += '<div class="hbar-row"><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
-        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
+      const color = r.color || (opts && opts.color);
+      html += '<div class="hbar-row"' + (r.strong ? ' style="font-weight:700"' : '') + '><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (color ? ';background:' + color : '') + '"></div></div>' +
         '<div class="hval">' + (r.valText || (fmt.format(r.val) + ' · ' + Math.round(pct) + '%')) + '</div></div>';
     }
     return html;
@@ -727,11 +729,103 @@
           html += section('What people searched to find it', 'The exact words typed into YouTube search.',
             hbarList(search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
         }
+
+        // same-age comparison controls
+        const ageDays = Math.max(0, Math.floor((Date.now() - new Date(meta[vid].publishedAt)) / 864e5));
+        let btns = '', defaultN = 0;
+        for (const n of [1, 3, 7, 28]) {
+          const ok = ageDays >= n;
+          if (ok) defaultN = n;
+          btns += '<button class="ghost" data-n="' + n + '"' + (ok ? '' : ' disabled') + '>' + (n === 1 ? 'First day' : 'First ' + n + ' days') + '</button>';
+        }
+        html += '<div class="dsection"><h4>Same-age race — is it beating your other uploads?</h4>' +
+          '<p class="explain">Views in the first days after upload: this video against your previous uploads at the exact same age. A fair fight — every video gets the same head start.</p>' +
+          '<div class="range-row" id="compareRange">' + btns + '</div>' +
+          '<div class="loading" id="compareLoading" style="display:none">comparing…</div>' +
+          '<div id="compareContent"></div></div>';
+
         html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
       }
       $('latestContent').innerHTML = html;
+      const cr = $('compareRange');
+      if (cr) {
+        cr.addEventListener('click', e => {
+          const b = e.target.closest('button[data-n]');
+          if (!b || b.disabled) return;
+          cr.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+          loadCompare(+b.dataset.n);
+        });
+        const s2 = summary && summary.rows && summary.rows[0];
+        if (s2) {
+          const ageDays2 = Math.max(0, Math.floor((Date.now() - new Date(meta[vid].publishedAt)) / 864e5));
+          let dN = 0; for (const n of [1, 3, 7, 28]) if (ageDays2 >= n) dN = n;
+          if (dN) {
+            const db = cr.querySelector('button[data-n="' + dN + '"]');
+            if (db) db.classList.add('active');
+            loadCompare(dN);
+          } else {
+            $('compareContent').innerHTML = '<p class="dnote">This video is less than a day old — the race starts once YouTube counts its first full day (check back tomorrow!).</p>';
+          }
+        }
+      }
     } finally {
       $('latestLoading').style.display = 'none';
+    }
+  }
+
+  /* ---------- same-age comparison ---------- */
+  const cmpCache = {};
+  let cmpSeq = 0;
+  async function firstNDaysViews(vid, n) {
+    const key = vid + ':' + n;
+    if (key in cmpCache) return cmpCache[key];
+    const pub = new Date((meta[vid].publishedAt || '').slice(0, 10));
+    const end = new Date(Math.min(Date.now(), pub.getTime() + (n - 1) * 864e5));
+    const r = await tryApi({ startDate: iso(pub), endDate: iso(end), metrics: 'views', filters: 'video==' + vid });
+    const v = r && r.rows && r.rows[0] ? +r.rows[0][0] : 0;
+    cmpCache[key] = v;
+    return v;
+  }
+
+  async function loadCompare(n) {
+    if (!latestVid) return;
+    const seq = ++cmpSeq;
+    const loadEl = $('compareLoading'), outEl = $('compareContent');
+    if (!loadEl || !outEl) return;
+    loadEl.style.display = 'block';
+    try {
+      const others = videoIds
+        .filter(id => id !== latestVid)
+        .filter(id => Math.floor((Date.now() - new Date(meta[id].publishedAt)) / 864e5) >= n)
+        .sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))
+        .slice(0, 10);
+      if (!others.length) {
+        if (seq === cmpSeq) outEl.innerHTML = '<p class="dnote">No older uploads to race against yet.</p>';
+        return;
+      }
+      const [latestVal, ...otherVals] = await Promise.all([
+        firstNDaysViews(latestVid, n),
+        ...others.map(id => firstNDaysViews(id, n))
+      ]);
+      if (seq !== cmpSeq) return;
+      const rows = [
+        { label: '★ ' + videoTitle(latestVid), val: latestVal, valText: fmt.format(latestVal) + ' views', color: 'var(--live)', strong: true },
+        ...others.map((id, i) => ({ label: videoTitle(id), val: otherVals[i], valText: fmt.format(otherVals[i]) + ' views' }))
+      ].sort((a, b) => b.val - a.val);
+      const rank = rows.findIndex(r => r.strong) + 1;
+      const sortedOthers = otherVals.slice().sort((a, b) => a - b);
+      const mid = sortedOthers.length >> 1;
+      const median = sortedOthers.length % 2 ? sortedOthers[mid] : (sortedOthers[mid - 1] + sortedOthers[mid]) / 2;
+      let verdict = '<b>#' + rank + ' of ' + rows.length + '</b> at the same age';
+      if (median > 0) {
+        const diff = Math.round((latestVal / median - 1) * 100);
+        verdict += ' · ' + (diff >= 0 ? '<b style="color:var(--up)">' + diff + '% above</b>' : '<b style="color:var(--down)">' + Math.abs(diff) + '% below</b>') + ' your typical upload';
+      }
+      const ageDays = Math.floor((Date.now() - new Date(meta[latestVid].publishedAt)) / 864e5);
+      outEl.innerHTML = '<p class="explain" style="margin-bottom:10px">' + verdict + '</p>' + hbarList(rows, { color: 'var(--accent)' }) +
+        (ageDays <= 2 ? '<p class="dnote" style="margin-top:8px">Day-by-day numbers can lag up to 48h, so the new video may be undercounted for now.</p>' : '');
+    } finally {
+      if (seq === cmpSeq) loadEl.style.display = 'none';
     }
   }
 
