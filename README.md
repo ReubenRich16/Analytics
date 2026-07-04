@@ -12,6 +12,22 @@ automatically by the [`deploy-dashboard.yml`](.github/workflows/deploy-dashboard
 workflow whenever it changes. No build step — it's a single static HTML file
 that talks directly to the YouTube Data + Analytics APIs from your browser.
 
+**What it shows:** live view/like/comment counters and per-video movement;
+channel trends (daily subscriber gains/losses, channel views & watch time,
+top videos by watch time, Shorts vs regular split, playlist performance);
+and a per-video deep-dive (daily views, retention curve, traffic sources,
+YouTube search terms, suggested-by videos, external websites, countries,
+devices & systems, subscribers vs new audience, playback locations, shares
+by app, info-card clicks, age & gender). Everything is labelled in plain
+language.
+
+**Cost: $0.** GitHub Pages is free, the YouTube Analytics API is free, and
+the YouTube Data API has a free 10,000-unit daily quota. At the default 60s
+refresh the live counters use well under that even if left open all day,
+and polling pauses automatically when the tab is hidden. There is no
+billing account attached anywhere, so nothing can ever be charged — worst
+case the counters pause until the quota resets at midnight Pacific.
+
 ## One-time Google Cloud Console setup (~3 minutes)
 
 Done in the same Google Cloud project you already use (e.g. "Shinny YT"):

@@ -11,7 +11,7 @@
   :root {
     --ink:#0f1317; --panel:#161c22; --panel-2:#1c242c; --line:#242e38;
     --text:#e9edf1; --muted:#7c8894; --live:#ff3b30; --up:#3ddc84; --down:#ff6b60;
-    --accent:#5aa9ff;
+    --accent:#5aa9ff; --purple:#b58cff; --gold:#ffcf5a;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
@@ -99,6 +99,29 @@
   tr[data-vid] { cursor:pointer; }
   tr[data-vid]:hover td { background:var(--panel-2); }
 
+  /* ---- channel trends ---- */
+  .trends { display:none; }
+  .trends .thead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .trends .thead .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+  .trends .range-row { margin-left:auto; margin-bottom:0; }
+  .trends .range-row button { flex:none; min-width:0; padding:6px 12px; }
+
+  .dsection { margin-bottom:20px; }
+  .dsection:last-child { margin-bottom:4px; }
+  .dsection h4 { font-size:12px; font-weight:700; color:var(--text); margin-bottom:3px; }
+  .explain { font-size:11px; color:var(--muted); line-height:1.5; margin-bottom:10px; }
+  .bignums { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .bignums .mcell { flex:1 1 120px; }
+
+  svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:8px; }
+  .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
+  .hbar-row .hlabel { flex:0 0 148px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hbar-row .htrack { flex:1; height:14px; background:var(--ink); border-radius:4px; overflow:hidden; }
+  .hbar-row .hfill { height:100%; background:var(--accent); border-radius:4px; min-width:2px; }
+  .hbar-row .hval { flex:0 0 92px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+  .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
+  .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
+
   /* ---- detail drawer ---- */
   .overlay { display:none; position:fixed; inset:0; background:rgba(6,9,12,.7); z-index:40; }
   .drawer {
@@ -113,31 +136,23 @@
   .drawer .dhead { display:flex; align-items:flex-start; gap:12px; margin-bottom:16px; }
   .drawer .dhead h3 { font-size:16px; font-weight:700; line-height:1.3; flex:1; }
   .drawer .close { flex:none; }
-  .drawer .range-row { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .range-row { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
   .range-row button { flex:1; min-width:70px; }
   .range-row button.active { color:var(--text); border-color:var(--accent); }
-  .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-bottom:18px; }
+  .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:18px; }
   .mcell { background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:12px; }
   .mcell .label { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
   .mcell .val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:5px; font-variant-numeric:tabular-nums; }
-  .mcell .sub { font-size:10px; color:var(--muted); margin-top:3px; font-family:'IBM Plex Mono',monospace; }
-  .dsection { margin-bottom:20px; }
-  .dsection h4 { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
-  svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:8px; }
-  .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
-  .hbar-row .hlabel { flex:0 0 128px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .hbar-row .htrack { flex:1; height:14px; background:var(--ink); border-radius:4px; overflow:hidden; }
-  .hbar-row .hfill { height:100%; background:var(--accent); border-radius:4px; min-width:2px; }
-  .hbar-row .hval { flex:0 0 76px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
-  .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
-  .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
+  .mcell .sub { font-size:10px; color:var(--muted); margin-top:3px; line-height:1.4; }
 
   @media (max-width:620px) {
     .grid { grid-template-columns:repeat(3,1fr); gap:8px; }
     .stat { padding:12px 10px; }
     .channel-banner { flex-wrap:wrap; }
     .channel-banner .controls { margin-left:0; width:100%; }
-    .hbar-row .hlabel { flex-basis:96px; font-size:11px; }
+    .hbar-row .hlabel { flex-basis:104px; font-size:11px; }
+    .hbar-row .hval { flex-basis:78px; }
+    .trends .range-row { margin-left:0; width:100%; }
   }
 </style>
 </head>
@@ -160,12 +175,10 @@
       <button class="primary" id="signInBtn">Sign in with Google</button>
     </div>
     <p class="hint">
-      One-time console setup (same project as before):<br>
-      1. Enable <b>YouTube Data API v3</b> and <b>YouTube Analytics API</b> (API Library).<br>
-      2. APIs &amp; Services → <b>OAuth consent screen</b> → External → fill app name/email → add yourself as a <b>Test user</b>.<br>
-      3. Credentials → Create Credentials → <b>OAuth client ID</b> → type <b>Web application</b> → under <b>Authorized JavaScript origins</b> add the exact URL this page is served from (e.g. <code>https://yourname.github.io</code> or <code>http://localhost:8000</code>).<br>
-      4. Copy the Client ID into the box above. Tip: append <code>?client_id=YOUR_ID</code> to this page's URL to prefill it.<br>
-      This page must be opened via http(s) — Google sign-in doesn't work from a <code>file://</code> path.
+      If the box above is already filled in, just tap <b>Sign in with Google</b> and pick the channel's account.<br>
+      First-time console setup lives in the repo README: enable the two YouTube APIs, set up the consent
+      screen (add each user as a <b>Test user</b>), create a <b>Web application</b> OAuth client with this site's
+      origin, then open this page as <code>?client_id=YOUR_ID</code> to prefill forever.
     </p>
   </div>
 
@@ -180,9 +193,10 @@
     </div>
     <div class="controls">
       <select id="interval" title="Refresh rate">
-        <option value="20000">20s refresh</option>
-        <option value="30000" selected>30s refresh</option>
-        <option value="60000">60s refresh</option>
+        <option value="30000">30s refresh</option>
+        <option value="60000" selected>60s refresh</option>
+        <option value="120000">2m refresh</option>
+        <option value="300000">5m refresh</option>
       </select>
       <button class="ghost" id="pauseBtn">Pause</button>
       <button class="ghost" id="signOutBtn">Sign out</button>
@@ -203,6 +217,21 @@
     </div>
     <div class="bars" id="bars"></div>
     <div class="session" id="sessionText"></div>
+  </div>
+
+  <!-- CHANNEL TRENDS -->
+  <div class="card trends" id="trendsCard">
+    <div class="thead">
+      <div class="label">Channel trends</div>
+      <div class="range-row" id="trendsRange">
+        <button class="ghost" data-days="7">7 days</button>
+        <button class="ghost active" data-days="28">28 days</button>
+        <button class="ghost" data-days="90">90 days</button>
+      </div>
+    </div>
+    <p class="explain">The bigger picture for the whole channel. YouTube adds up this data once a day, so “today” is usually still filling in.</p>
+    <div class="loading" id="trendsLoading" style="display:none">loading channel trends…</div>
+    <div id="trendsContent"></div>
   </div>
 
   <!-- VIDEO TABLE -->
@@ -239,7 +268,7 @@
   </div>
   <div class="loading" id="dLoading" style="display:none">loading analytics…</div>
   <div id="dContent"></div>
-  <p class="dnote">Analytics data is aggregated daily by YouTube and typically lags 24–48h — it won't match the live counters above exactly.</p>
+  <p class="dnote" style="margin-top:14px">Sections only appear once YouTube has data for them. YouTube adds this data up once a day (usually 24–48h behind), so it won't match the live counters exactly.</p>
 </div>
 
 <script>
@@ -252,11 +281,12 @@
 
   let tokenClient = null, accessToken = null;
   let timer = null, paused = false, hiddenPaused = false;
-  let intervalMs = 30000;
+  let intervalMs = 60000;
   let uploadsPlaylist = '', videoIds = [], meta = {}, perVideo = {};
   let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
   let channelPublished = '2005-01-01';
-  let currentVideo = null, currentDays = 28;
+  let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0;
+  const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
 
   const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
@@ -264,10 +294,15 @@
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
   const clearError = () => $('errorBox').style.display = 'none';
   const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+  const pretty = s => String(s).replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase());
+
+  let regionNames = null;
+  try { regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) {}
+  const countryName = c => { try { return (regionNames && regionNames.of(c)) || c; } catch (e) { return c; } };
 
   const TRAFFIC_NAMES = {
-    ADVERTISING:'Advertising', ANNOTATION:'Annotations', CAMPAIGN_CARD:'Campaign cards',
-    END_SCREEN:'End screens', EXT_URL:'External sites', HASHTAGS:'Hashtags',
+    ADVERTISING:'Ads', ANNOTATION:'Annotations', CAMPAIGN_CARD:'Campaign cards',
+    END_SCREEN:'End screens', EXT_URL:'Other websites', HASHTAGS:'Hashtags',
     LIVE_REDIRECT:'Live redirect', NO_LINK_EMBEDDED:'Embedded players', NO_LINK_OTHER:'Direct / unknown',
     NOTIFICATION:'Notifications', PLAYLIST:'Playlists', PRODUCT_PAGE:'Product pages',
     PROMOTED:'Promoted', RELATED_VIDEO:'Suggested videos', SHORTS:'Shorts feed',
@@ -275,12 +310,17 @@
     YT_CHANNEL:'Channel pages', YT_OTHER_PAGE:'Other YouTube', YT_PLAYLIST_PAGE:'Playlist pages',
     YT_SEARCH:'YouTube search', VIDEO_REMIXES:'Remixes', IMMERSIVE_LIVE:'Immersive live'
   };
+  const DEVICE_NAMES = { DESKTOP:'Computer', MOBILE:'Phone', TABLET:'Tablet', TV:'TV', GAME_CONSOLE:'Games console', UNKNOWN_PLATFORM:'Unknown' };
+  const OS_NAMES = { ANDROID:'Android', IOS:'iPhone / iPad', WINDOWS:'Windows PC', MACINTOSH:'Mac', LINUX:'Linux', SMART_TV:'Smart TV', PLAYSTATION:'PlayStation', XBOX:'Xbox', CHROMECAST:'Chromecast', TIZEN:'Samsung TV', WEBOS:'LG TV', KAIOS:'KaiOS phone' };
+  const LOCATION_NAMES = { WATCH:'YouTube watch page', EMBEDDED:'Embedded on other websites', CHANNEL:'Channel page', EXTERNAL_APP:'Other apps', BROWSE:'Home / browse feed', SEARCH:'Search results page', MOBILE:'Mobile site (legacy)', YT_OTHER:'Other YouTube pages' };
+  const CONTENT_NAMES = { shorts:'Shorts', videoOnDemand:'Regular videos', liveStream:'Live streams', story:'Stories', post:'Posts' };
+  const SUB_NAMES = { subscribed:'Subscribers', unsubscribed:'Non-subscribers (new audience)' };
 
   /* ---------- auth ---------- */
   function initAuth() {
     const cid = $('clientId').value.trim();
     if (!cid) return showError('Paste your OAuth Client ID first.');
-    if (!window.google || !google.accounts) return showError('Google sign-in script hasn\u2019t loaded yet — check your connection and try again.');
+    if (!window.google || !google.accounts) return showError('Google sign-in script hasn’t loaded yet — check your connection and try again.');
     clearError();
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: cid,
@@ -297,26 +337,48 @@
   async function api(url) {
     const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
     if (res.status === 401 && tokenClient) {
-      // token expired → silent refresh, then caller retries next tick
       tokenClient.requestAccessToken({ prompt: '' });
       throw new Error('Session refreshing — one moment…');
     }
     const data = await res.json();
     if (!res.ok) {
       const reason = data?.error?.errors?.[0]?.reason || '';
-      if (reason === 'quotaExceeded') throw new Error('Daily API quota exceeded — resets midnight Pacific. Use a slower refresh.');
+      if (reason === 'quotaExceeded') throw new Error('Daily free API quota used up — it resets at midnight Pacific time (no charge, ever). Pick a slower refresh rate for tomorrow.');
       throw new Error(data?.error?.message || ('API error ' + res.status));
     }
     return data;
   }
   const dataApi = (ep, params) => api(DATA + ep + '?' + new URLSearchParams(params));
   const analyticsApi = params => api(ANALYTICS + '?' + new URLSearchParams({ ids: 'channel==MINE', ...params }));
+  const tryApi = params => analyticsApi(params).catch(() => null);
+
+  async function ensureVideoTitles(ids) {
+    const missing = [...new Set(ids)].filter(id => id && !meta[id] && !titleCache[id]);
+    for (const part of chunk(missing, 50)) {
+      try {
+        const d = await dataApi('videos', { part: 'snippet', id: part.join(','), maxResults: '50' });
+        for (const it of d.items) titleCache[it.id] = it.snippet.title;
+      } catch (e) {}
+    }
+  }
+  const videoTitle = id => (meta[id] && meta[id].title) || titleCache[id] || id;
+
+  async function playlistTitles(ids) {
+    const out = {};
+    for (const part of chunk([...new Set(ids)].filter(Boolean), 50)) {
+      try {
+        const d = await dataApi('playlists', { part: 'snippet', id: part.join(','), maxResults: '50' });
+        for (const it of d.items) out[it.id] = it.snippet.title;
+      } catch (e) {}
+    }
+    return out;
+  }
 
   /* ---------- bootstrap after sign-in ---------- */
   async function bootstrap() {
     setStatus('loading channel…');
     const ch = await dataApi('channels', { part: 'snippet,contentDetails,statistics', mine: 'true' });
-    if (!ch.items || !ch.items.length) throw new Error('No channel found on this Google account.');
+    if (!ch.items || !ch.items.length) throw new Error('No channel found on this Google account. Sign in with the account that owns the YouTube channel.');
     const c = ch.items[0];
     uploadsPlaylist = c.contentDetails.relatedPlaylists.uploads;
     channelPublished = (c.snippet.publishedAt || '2005-01-01').slice(0, 10);
@@ -344,12 +406,14 @@
     $('channelBanner').style.display = 'flex';
     $('statsGrid').style.display = 'grid';
     $('velocityPanel').style.display = 'block';
+    $('trendsCard').style.display = 'block';
     $('tableCard').style.display = 'block';
 
     intervalMs = +$('interval').value;
     if (timer) clearInterval(timer);
     await poll();
     timer = setInterval(poll, intervalMs);
+    loadTrends();
   }
 
   /* ---------- live polling ---------- */
@@ -439,7 +503,7 @@
     }
   }
 
-  /* ---------- analytics drawer ---------- */
+  /* ---------- shared formatting & charts ---------- */
   const iso = d => d.toISOString().slice(0, 10);
   function rangeDates(days) {
     const end = new Date();
@@ -453,6 +517,126 @@
   };
   const fmtHours = mins => mins >= 6000 ? fmt.format(Math.round(mins / 60)) + ' h' : fmt.format(Math.round(mins)) + ' min';
 
+  function svgLine(points, w, h, pad, color, fillArea) {
+    if (points.length < 2) return '';
+    const xs = points.map((_, i) => pad + i * (w - 2 * pad) / (points.length - 1));
+    const max = Math.max(1, ...points);
+    const ys = points.map(v => h - pad - (v / max) * (h - 2 * pad));
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < xs.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    let out = '';
+    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" fill="' + color + '" opacity="0.12"/>';
+    out += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2"/>';
+    return out;
+  }
+
+  // bar chart that can show negatives (for subscriber gains/losses)
+  function svgPosNeg(values, w, h, pad) {
+    if (!values.length) return '';
+    const maxAbs = Math.max(1, ...values.map(v => Math.abs(v)));
+    const zero = h / 2;
+    const bw = Math.max(1.5, (w - 2 * pad) / values.length - 1.5);
+    let out = '<line x1="' + pad + '" y1="' + zero + '" x2="' + (w - pad) + '" y2="' + zero + '" stroke="#242e38" stroke-width="1"/>';
+    values.forEach((v, i) => {
+      const x = pad + i * (w - 2 * pad) / values.length;
+      const bh = Math.max(1, Math.abs(v) / maxAbs * (zero - pad));
+      const y = v >= 0 ? zero - bh : zero;
+      out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" fill="' + (v >= 0 ? '#3ddc84' : '#ff6b60') + '"/>';
+    });
+    return out;
+  }
+
+  function hbarList(rows, opts) {
+    const total = rows.reduce((a, r) => a + r.val, 0) || 1;
+    const max = Math.max(1, ...rows.map(r => r.val));
+    let html = '';
+    for (const r of rows) {
+      const pct = r.val / total * 100;
+      html += '<div class="hbar-row"><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
+        '<div class="hval">' + (r.valText || (fmt.format(r.val) + ' · ' + Math.round(pct) + '%')) + '</div></div>';
+    }
+    return html;
+  }
+
+  const section = (title, explainer, body) =>
+    body ? '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + explainer + '</p>' + body + '</div>' : '';
+
+  const mcell = (label, val, sub) =>
+    '<div class="mcell"><div class="label">' + label + '</div><div class="val">' + val + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+
+  /* ---------- channel trends ---------- */
+  async function loadTrends() {
+    const seq = ++trendSeq;
+    const { startDate, endDate } = rangeDates(trendDays);
+    $('trendsLoading').style.display = 'block';
+    try {
+      const [subs, daily, top, ctype, pl] = await Promise.all([
+        tryApi({ startDate, endDate, metrics: 'subscribersGained,subscribersLost', dimensions: 'day', sort: 'day' }),
+        tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched', dimensions: 'day', sort: 'day' }),
+        tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched', dimensions: 'video', sort: '-estimatedMinutesWatched', maxResults: '10' }),
+        tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched', dimensions: 'creatorContentType' }),
+        tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched,playlistStarts', dimensions: 'playlist', filters: 'isCurated==1', sort: '-views', maxResults: '10' })
+      ]);
+      if (seq !== trendSeq) return; // user changed range mid-flight
+      await ensureVideoTitles(top && top.rows ? top.rows.map(r => r[0]) : []);
+      const plNames = await playlistTitles(pl && pl.rows ? pl.rows.map(r => r[0]) : []);
+      if (seq !== trendSeq) return;
+      renderTrends(subs, daily, top, ctype, pl, plNames);
+    } finally {
+      if (seq === trendSeq) $('trendsLoading').style.display = 'none';
+    }
+  }
+
+  function renderTrends(subs, daily, top, ctype, pl, plNames) {
+    let html = '';
+
+    if (subs && subs.rows && subs.rows.length) {
+      const gained = subs.rows.reduce((a, r) => a + r[1], 0);
+      const lost = subs.rows.reduce((a, r) => a + r[2], 0);
+      const net = gained - lost;
+      const bars = subs.rows.map(r => r[1] - r[2]);
+      html += '<div class="dsection"><h4>Subscribers</h4>' +
+        '<p class="explain">Green bars are days you gained subscribers, red bars are days you lost them.</p>' +
+        '<div class="bignums">' +
+        mcell('Gained', '+' + fmt.format(gained)) +
+        mcell('Lost', '−' + fmt.format(lost)) +
+        mcell('Net change', (net >= 0 ? '+' : '−') + fmt.format(Math.abs(net))) +
+        '</div>' +
+        '<svg class="chart" viewBox="0 0 560 110" preserveAspectRatio="none" role="img" aria-label="Subscribers gained and lost per day">' +
+        svgPosNeg(bars, 560, 110, 6) + '</svg></div>';
+    }
+
+    if (daily && daily.rows && daily.rows.length > 1) {
+      const pts = daily.rows.map(r => r[1]);
+      const totalViews = pts.reduce((a, b) => a + b, 0);
+      const totalMins = daily.rows.reduce((a, r) => a + r[2], 0);
+      html += '<div class="dsection"><h4>Views per day — whole channel</h4>' +
+        '<p class="explain">' + fmt.format(totalViews) + ' views and ' + fmtHours(totalMins) + ' of watch time in this period.</p>' +
+        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Channel daily views">' +
+        svgLine(pts, 560, 120, 8, '#ff3b30', true) + '</svg>' +
+        '<p class="dnote" style="margin-top:6px">' + esc(daily.rows[0][0]) + ' → ' + esc(daily.rows[daily.rows.length - 1][0]) + ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
+    }
+
+    if (top && top.rows && top.rows.length) {
+      html += section('Top videos by watch time', 'Ranked by total hours watched — the number YouTube’s algorithm cares about most, not just clicks.',
+        hbarList(top.rows.map(r => ({ label: videoTitle(r[0]), val: r[2], valText: fmtHours(r[2]) })), { color: 'var(--gold)' }));
+    }
+
+    if (ctype && ctype.rows && ctype.rows.length > 1) {
+      html += section('Shorts vs regular videos', 'How your views split between Shorts and normal uploads in this period.',
+        hbarList(ctype.rows.slice().sort((a, b) => b[1] - a[1]).map(r => ({ label: CONTENT_NAMES[r[0]] || pretty(r[0]), val: r[1] }))));
+    }
+
+    if (pl && pl.rows && pl.rows.length) {
+      html += section('Playlists', 'How your playlists are doing. “Started” = how many times someone began watching the playlist.',
+        hbarList(pl.rows.map(r => ({ label: plNames[r[0]] || r[0], val: r[1], valText: fmt.format(r[1]) + ' · ' + fmt.format(r[3]) + ' started' })), { color: 'var(--purple)' }));
+    }
+
+    $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
+  }
+
+  /* ---------- video drawer ---------- */
   function openDrawer(vid) {
     currentVideo = vid;
     $('dTitle').textContent = meta[vid].title;
@@ -473,16 +657,29 @@
     $('dContent').innerHTML = '';
     const { startDate, endDate } = rangeDates(currentDays);
     const base = { startDate, endDate, filters: 'video==' + vid };
+    const detail = type => ({ startDate, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==' + type, metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '12' });
     try {
-      const [summary, daily, traffic, retention, demo] = await Promise.all([
+      const [summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards] = await Promise.all([
         analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
-        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'day', sort: 'day' }),
-        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'insightTrafficSourceType', sort: '-views' }),
-        analyticsApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }).catch(() => null),
-        analyticsApi({ ...base, metrics: 'viewerPercentage', dimensions: 'ageGroup,gender', sort: 'gender,ageGroup' }).catch(() => null)
+        tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
+        tryApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }),
+        tryApi({ ...base, metrics: 'viewerPercentage', dimensions: 'ageGroup,gender', sort: 'gender,ageGroup' }),
+        tryApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'country', sort: '-views', maxResults: '12' }),
+        tryApi(detail('YT_SEARCH')),
+        tryApi(detail('RELATED_VIDEO')),
+        tryApi(detail('EXT_URL')),
+        tryApi({ ...base, metrics: 'views', dimensions: 'deviceType', sort: '-views' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'operatingSystem', sort: '-views', maxResults: '8' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'subscribedStatus' }),
+        tryApi({ ...base, metrics: 'views', dimensions: 'insightPlaybackLocationType', sort: '-views' }),
+        tryApi({ ...base, metrics: 'shares', dimensions: 'sharingService', sort: '-shares', maxResults: '8' }),
+        tryApi({ ...base, metrics: 'cardImpressions,cardClicks,cardClickRate' })
       ]);
-      if (vid !== currentVideo) return; // user switched videos mid-flight
-      renderAnalytics(summary, daily, traffic, retention, demo);
+      if (vid !== currentVideo) return;
+      await ensureVideoTitles(suggested && suggested.rows ? suggested.rows.map(r => r[0]) : []);
+      if (vid !== currentVideo) return;
+      renderAnalytics({ summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards });
     } catch (err) {
       $('dContent').innerHTML = '<p class="dnote">' + esc(err.message) + '</p>';
     } finally {
@@ -490,80 +687,116 @@
     }
   }
 
-  function svgLine(points, w, h, pad, color, fillArea) {
-    if (points.length < 2) return '';
-    const xs = points.map((_, i) => pad + i * (w - 2 * pad) / (points.length - 1));
-    const max = Math.max(1, ...points);
-    const ys = points.map(v => h - pad - (v / max) * (h - 2 * pad));
-    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
-    for (let i = 1; i < xs.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
-    let out = '';
-    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" fill="' + color + '" opacity="0.12"/>';
-    out += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2"/>';
-    return out;
-  }
-
-  function renderAnalytics(summary, daily, traffic, retention, demo) {
+  function renderAnalytics(r) {
     const c = $('dContent');
-    let html = '';
-    const s = summary.rows && summary.rows[0];
+    const s = r.summary && r.summary.rows && r.summary.rows[0];
     if (!s) { c.innerHTML = '<p class="dnote">No analytics data for this range yet — very new videos take a day or two to appear.</p>'; return; }
-    const [views, minsWatched, avgDur, avgPct, likes, comments, shares, subsG, subsL] = s;
+    const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8];
+    let html = '';
 
     html += '<div class="metric-grid">' +
       mcell('Views', fmt.format(views)) +
-      mcell('Watch time', fmtHours(minsWatched)) +
-      mcell('Avg view duration', fmtDur(avgDur)) +
-      mcell('Avg % viewed', Math.round(avgPct) + '%') +
+      mcell('Watch time', fmtHours(minsWatched), 'total time people spent watching') +
+      mcell('Avg watched', fmtDur(avgDur), 'how long a typical viewer stays') +
+      mcell('% of video watched', Math.round(avgPct) + '%', 'higher = people stick around') +
       mcell('Likes', fmt.format(likes)) +
       mcell('Comments', fmt.format(comments)) +
       mcell('Shares', fmt.format(shares)) +
-      mcell('Subs', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost') +
+      mcell('Subscribers', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost from this video') +
       '</div>';
 
-    if (daily.rows && daily.rows.length > 1) {
-      const pts = daily.rows.map(r => r[1]);
-      html += '<div class="dsection"><h4>Daily views</h4>' +
+    if (r.daily && r.daily.rows && r.daily.rows.length > 1) {
+      const pts = r.daily.rows.map(x => x[1]);
+      html += '<div class="dsection"><h4>Views per day</h4>' +
+        '<p class="explain">This video’s daily views across the period.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Daily views trend">' +
         svgLine(pts, 560, 120, 8, '#ff3b30', true) + '</svg>' +
-        '<p class="dnote" style="margin-top:6px">' + esc(daily.rows[0][0]) + ' → ' + esc(daily.rows[daily.rows.length - 1][0]) +
-        ' · peak ' + fmt.format(Math.max(...pts)) + ' views/day</p></div>';
+        '<p class="dnote" style="margin-top:6px">' + esc(r.daily.rows[0][0]) + ' → ' + esc(r.daily.rows[r.daily.rows.length - 1][0]) +
+        ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
     }
 
-    if (retention && retention.rows && retention.rows.length > 1) {
-      const pts = retention.rows.map(r => r[1] * 100);
-      html += '<div class="dsection"><h4>Audience retention — % still watching</h4>' +
+    if (r.retention && r.retention.rows && r.retention.rows.length > 1) {
+      const pts = r.retention.rows.map(x => x[1] * 100);
+      html += '<div class="dsection"><h4>How long people keep watching</h4>' +
+        '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Retention curve">' +
-        svgLine(pts, 560, 120, 8, '#5aa9ff', true) + '</svg>' +
-        '<p class="dnote" style="margin-top:6px">start → end of video · ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% still watching at midpoint</p></div>';
+        svgLine(pts, 560, 120, 8, '#5aa9ff', true) + '</svg></div>';
     }
 
-    if (traffic.rows && traffic.rows.length) {
-      const total = traffic.rows.reduce((a, r) => a + r[1], 0) || 1;
-      html += '<div class="dsection"><h4>Traffic sources</h4>';
-      for (const r of traffic.rows.slice(0, 8)) {
-        const pct = r[1] / total * 100;
-        html += '<div class="hbar-row"><div class="hlabel">' + esc(TRAFFIC_NAMES[r[0]] || r[0]) + '</div>' +
-          '<div class="htrack"><div class="hfill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
-          '<div class="hval">' + fmt.format(r[1]) + ' · ' + Math.round(pct) + '%</div></div>';
-      }
-      html += '</div>';
+    if (r.traffic && r.traffic.rows && r.traffic.rows.length) {
+      html += section('How viewers found this video', 'Which parts of YouTube (and beyond) sent people here.',
+        hbarList(r.traffic.rows.slice(0, 8).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
     }
 
-    if (demo && demo.rows && demo.rows.length) {
-      html += '<div class="dsection"><h4>Audience — age &amp; gender</h4>';
-      for (const r of demo.rows) {
-        const label = r[0].replace('age', '') + ' · ' + (r[1] === 'female' ? 'F' : r[1] === 'male' ? 'M' : 'other');
-        html += '<div class="hbar-row"><div class="hlabel">' + esc(label) + '</div>' +
-          '<div class="htrack"><div class="hfill" style="width:' + Math.min(100, r[2]).toFixed(1) + '%;background:#b58cff"></div></div>' +
-          '<div class="hval">' + r[2].toFixed(1) + '%</div></div>';
-      }
-      html += '</div>';
+    if (r.search && r.search.rows && r.search.rows.length) {
+      html += section('What people searched', 'The exact words typed into YouTube search that led to this video — gold for titles and future video ideas.',
+        hbarList(r.search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
     }
+
+    if (r.suggested && r.suggested.rows && r.suggested.rows.length) {
+      html += section('Videos that sent viewers here', 'This video was recommended next to these — that’s where the views came from.',
+        hbarList(r.suggested.rows.map(x => ({ label: videoTitle(x[0]), val: x[1] }))));
+    }
+
+    if (r.external && r.external.rows && r.external.rows.length) {
+      html += section('Websites that sent viewers', 'Views that came from links or embeds on sites outside YouTube.',
+        hbarList(r.external.rows.map(x => ({ label: x[0], val: x[1] }))));
+    }
+
+    if (r.geo && r.geo.rows && r.geo.rows.length) {
+      html += section('Where viewers are in the world', 'Top countries watching this video.',
+        hbarList(r.geo.rows.map(x => ({ label: countryName(x[0]), val: x[1] })), { color: 'var(--up)' }));
+    }
+
+    let deviceHtml = '';
+    if (r.device && r.device.rows && r.device.rows.length) {
+      deviceHtml += hbarList(r.device.rows.map(x => ({ label: DEVICE_NAMES[x[0]] || pretty(x[0]), val: x[1] })));
+    }
+    if (r.os && r.os.rows && r.os.rows.length) {
+      deviceHtml += '<p class="explain" style="margin-top:12px">By system:</p>' +
+        hbarList(r.os.rows.map(x => ({ label: OS_NAMES[x[0]] || pretty(x[0]), val: x[1] })), { color: 'var(--purple)' });
+    }
+    if (deviceHtml) html += section('What they watched on', 'Phones, TVs, computers… TV viewers usually watch for much longer.', deviceHtml);
+
+    if (r.subStatus && r.subStatus.rows && r.subStatus.rows.length) {
+      html += section('Subscribers vs new audience', 'Lots of non-subscriber views means the video is reaching beyond your existing fans — that’s how channels grow.',
+        hbarList(r.subStatus.rows.slice().sort((a, b) => b[1] - a[1]).map(x => ({ label: SUB_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
+    }
+
+    if (r.playback && r.playback.rows && r.playback.rows.length) {
+      html += section('Where it was played', 'Mostly the normal YouTube watch page, but embeds on other sites show up here too.',
+        hbarList(r.playback.rows.map(x => ({ label: LOCATION_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
+    }
+
+    if (r.sharing && r.sharing.rows && r.sharing.rows.length) {
+      html += section('How people shared it', 'Which apps people used when they hit the Share button.',
+        hbarList(r.sharing.rows.map(x => ({ label: pretty(x[0]), val: x[1], valText: fmt.format(x[1]) + ' shares' })), { color: 'var(--up)' }));
+    }
+
+    const cd = r.cards && r.cards.rows && r.cards.rows[0];
+    if (cd && cd[0] > 0) {
+      html += '<div class="dsection"><h4>Info cards</h4>' +
+        '<p class="explain">The little “i” pop-ups shown during the video.</p>' +
+        '<div class="bignums">' +
+        mcell('Shown', fmt.format(cd[0])) +
+        mcell('Clicked', fmt.format(cd[1])) +
+        mcell('Click rate', (cd[2] * 100).toFixed(1) + '%') +
+        '</div></div>';
+    }
+
+    if (r.demo && r.demo.rows && r.demo.rows.length) {
+      let demoHtml = '';
+      for (const x of r.demo.rows) {
+        const label = x[0].replace('age', '') + ' yrs · ' + (x[1] === 'female' ? 'women' : x[1] === 'male' ? 'men' : 'other');
+        demoHtml += '<div class="hbar-row"><div class="hlabel">' + esc(label) + '</div>' +
+          '<div class="htrack"><div class="hfill" style="width:' + Math.min(100, x[2]).toFixed(1) + '%;background:var(--purple)"></div></div>' +
+          '<div class="hval">' + x[2].toFixed(1) + '%</div></div>';
+      }
+      html += section('Who’s watching — age & gender', 'Share of watch time by age group. Only appears once enough people have watched.', demoHtml);
+    }
+
     c.innerHTML = html;
   }
-  const mcell = (label, val, sub) =>
-    '<div class="mcell"><div class="label">' + label + '</div><div class="val">' + val + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
 
   /* ---------- events ---------- */
   $('signInBtn').addEventListener('click', initAuth);
@@ -590,6 +823,13 @@
     currentDays = +b.dataset.days;
     document.querySelectorAll('#rangeRow button').forEach(x => x.classList.toggle('active', x === b));
     loadAnalytics();
+  });
+  $('trendsRange').addEventListener('click', e => {
+    const b = e.target.closest('button[data-days]');
+    if (!b) return;
+    trendDays = +b.dataset.days;
+    document.querySelectorAll('#trendsRange button').forEach(x => x.classList.toggle('active', x === b));
+    loadTrends();
   });
 
   // Quota saver: stop polling when the tab/screen isn't visible
