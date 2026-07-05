@@ -116,7 +116,7 @@
   .thead-bar .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
   .thead-bar select { width:auto; padding:6px 10px; font-size:12px; margin-left:auto; }
   .tscroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table { width:100%; border-collapse:collapse; font-size:13px; min-width:640px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; min-width:780px; }
   th { text-align:right; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:500; padding:10px 14px; border-bottom:1px solid var(--line); }
   th:first-child { text-align:left; }
   td { padding:10px 14px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
@@ -146,6 +146,15 @@
   .comment .who span { color:var(--muted); font-weight:400; }
   .comment .txt { font-size:13px; line-height:1.5; margin-top:3px; overflow-wrap:anywhere; }
   .comment .on { font-size:11px; color:var(--muted); margin-top:4px; }
+  .chip { display:inline-block; padding:3px 10px; border:1px solid var(--line); border-radius:999px; font-size:11px; margin:0 5px 6px 0; background:var(--ink); }
+  .chip b { font-weight:600; color:var(--muted); font-size:10px; }
+  .chip.missing { border-color:var(--gold); color:var(--gold); }
+  .simrow { display:flex; gap:10px; font-size:12px; padding:7px 0; border-bottom:1px solid var(--line); align-items:center; }
+  .simrow:last-child { border-bottom:none; }
+  .simrow .st { flex:1; line-height:1.35; }
+  .simrow .st span { color:var(--muted); font-size:11px; }
+  .simrow .sv { flex:none; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+  .footer-tools { display:flex; gap:8px; justify-content:center; margin-top:4px; }
   .bignums { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .bignums .mcell { flex:1 1 120px; }
 
@@ -315,14 +324,24 @@
         <option value="hot" selected>Sort: hottest</option>
         <option value="views">Sort: most views</option>
         <option value="newest">Sort: newest</option>
+        <option value="avgpct">Sort: % watched†</option>
+        <option value="subs">Sort: subs gained†</option>
+        <option value="shares">Sort: shares†</option>
       </select>
     </div>
     <div class="tscroll">
       <table>
-        <thead><tr><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th></tr></thead>
+        <thead><tr><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th><th title="Official stats, last 28 days, lag 24-48h">Avg %†</th><th title="Official stats, last 28 days, lag 24-48h">Subs†</th><th title="Official stats, last 28 days, lag 24-48h">Shares†</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
+    <p class="dnote" style="padding:10px 16px" id="rollupNote">† = YouTube's official stats for the last 28 days — they lag 24–48h and won't match the live columns.</p>
+  </div>
+
+  <div class="footer-tools">
+    <button class="ghost" id="exportBtn">Export saved data</button>
+    <button class="ghost" id="importBtn">Import saved data</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none">
   </div>
 </div>
 
@@ -341,6 +360,7 @@
   </div>
   <div class="loading" id="dLoading" style="display:none">loading analytics…</div>
   <div id="dContent"></div>
+  <div id="kwLabWrap" style="margin-top:6px"></div>
   <p class="dnote" style="margin-top:14px">Sections only appear once YouTube has data for them. YouTube adds this data up once a day (usually 24–48h behind), so it won't match the live counters exactly.</p>
 </div>
 
@@ -366,6 +386,24 @@
   const MAX_BARS = 60, VIDEO_CAP = 200;
 
   const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+
+  // localStorage report caches — read first, fetch only on miss (spec: persist, don't re-fetch)
+  const cacheGet = (k, maxAgeMs) => {
+    try {
+      const v = JSON.parse(localStorage.getItem(k) || 'null');
+      if (v && (!maxAgeMs || Date.now() - new Date(v.fetchedAt) < maxAgeMs)) return v;
+    } catch (e) {}
+    return null;
+  };
+  const cacheSet = (k, obj) => {
+    obj.fetchedAt = new Date().toISOString();
+    try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {
+      try {
+        Object.keys(localStorage).filter(x => x.startsWith('cc:analytics:')).forEach(x => localStorage.removeItem(x));
+        localStorage.setItem(k, JSON.stringify(obj));
+      } catch (e2) {}
+    }
+  };
   const setStatus = t => $('statusText').textContent = t;
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
   const clearError = () => $('errorBox').style.display = 'none';
@@ -543,6 +581,7 @@
     timer = setInterval(poll, intervalMs);
     loadTrends();
     loadLatest();
+    loadRollup();
   }
 
   /* ---------- live polling ---------- */
@@ -620,11 +659,36 @@
     }
   }
 
+  // one cheap analytics call powers the table's Avg % / Subs / Shares columns (spec: channel-level rollup)
+  let rollupMap = {};
+  async function loadRollup() {
+    const key = 'cc:rollup:v1:28';
+    let c = cacheGet(key, 12 * 3600 * 1000);
+    if (!c || !c.rows) {
+      const { startDate, endDate } = rangeDates(28);
+      const rows = [];
+      for (const part of chunk(videoIds, 200)) {
+        const r = await tryApi({ startDate, endDate, dimensions: 'video', metrics: 'views,averageViewPercentage,subscribersGained,shares', filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
+        if (r && r.rows) rows.push(...r.rows);
+      }
+      c = { rows };
+      cacheSet(key, c);
+    }
+    rollupMap = {};
+    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4] };
+    const d = (c.fetchedAt || '').slice(0, 10);
+    if (d) $('rollupNote').textContent = '† = YouTube’s official stats, last 28 days (fetched ' + d + ') — they lag 24–48h and won’t match the live columns.';
+    renderTable();
+  }
+
   function renderTable() {
     const mode = $('sortMode').value;
-    const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id] })).filter(r => r.views !== undefined);
+    const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id], ru: rollupMap[id] || {} })).filter(r => r.views !== undefined);
     if (mode === 'views') rows.sort((a, b) => b.views - a.views);
     else if (mode === 'newest') rows.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+    else if (mode === 'avgpct') rows.sort((a, b) => (b.ru.avgPct || 0) - (a.ru.avgPct || 0));
+    else if (mode === 'subs') rows.sort((a, b) => (b.ru.subs || 0) - (a.ru.subs || 0));
+    else if (mode === 'shares') rows.sort((a, b) => (b.ru.shares || 0) - (a.ru.shares || 0));
     else rows.sort((a, b) => (b.sessV - a.sessV) || (b.views - a.views));
     const tb = $('tbody'); tb.innerHTML = '';
     for (const r of rows) {
@@ -637,7 +701,10 @@
         '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + fmt.format(r.likes) + '</td>' +
-        '<td>' + fmt.format(r.comments) + '</td>';
+        '<td>' + fmt.format(r.comments) + '</td>' +
+        '<td>' + (r.ru.avgPct != null ? Math.round(r.ru.avgPct) + '%' : '<span class="zero">·</span>') + '</td>' +
+        '<td>' + (r.ru.subs != null && r.ru.subs > 0 ? '<span class="tickup">+' + fmt.format(r.ru.subs) + '</span>' : r.ru.subs != null ? '0' : '<span class="zero">·</span>') + '</td>' +
+        '<td>' + (r.ru.shares != null ? fmt.format(r.ru.shares) : '<span class="zero">·</span>') + '</td>';
       tr.addEventListener('click', () => openDrawer(r.id));
       tb.appendChild(tr);
     }
@@ -1096,6 +1163,106 @@
     }
   }
 
+  /* ---------- keyword & tag lab (search.list is 100 units — cached forever, budget-guarded) ---------- */
+  const KW_CAP = 20;
+  const pacificToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  function kwBudget() {
+    let b = null;
+    try { b = JSON.parse(localStorage.getItem('cc:kwbudget:v1') || 'null'); } catch (e) {}
+    if (!b || b.date !== pacificToday()) b = { date: pacificToday(), searchListCalls: 0 };
+    return b;
+  }
+  const saveBudget = b => { try { localStorage.setItem('cc:kwbudget:v1', JSON.stringify(b)); } catch (e) {} };
+  const extractHash = t => [...new Set(((t || '').match(/#[\p{L}0-9_]+/gu) || []).map(h => h.toLowerCase()))];
+  const chipRow = (items, missingSet, countMap) =>
+    items.map(x => '<span class="chip' + (missingSet && missingSet.has(x.toLowerCase()) ? ' missing' : '') + '">' + esc(x) + (countMap && countMap[x] ? ' <b>×' + countMap[x] + '</b>' : '') + '</span>').join('');
+
+  function renderLab(vid) {
+    const wrap = $('kwLabWrap');
+    if (!wrap) return;
+    const cache = cacheGet('cc:kwcache:v1:' + vid);
+    const left = Math.max(0, KW_CAP - kwBudget().searchListCalls);
+    let html = '<div class="dsection"><h4>Keyword &amp; Tag Lab</h4>' +
+      '<p class="explain">Compares this video’s tags &amp; hashtags with the videos YouTube actually ranks for the same search — and highlights what the competition uses that this one is missing.</p>';
+    if (!cache) {
+      html += '<button class="ghost" id="kwRun">🔎 Research keywords</button>' +
+        '<p class="dnote" style="margin-top:8px">Uses 100 of the day’s free quota, runs <b>once per video</b>, then it’s saved on this device forever. ' + left + ' of ' + KW_CAP + ' researches left today.</p></div>';
+      wrap.innerHTML = html;
+      const btn = $('kwRun');
+      if (btn) btn.addEventListener('click', () => runResearch(vid));
+      return;
+    }
+    const a = cache.aggregate || {};
+    const own = [...(cache.ownTags || []), ...(cache.ownHashtags || [])];
+    const missT = new Set((a.missingTags || []).map(s => s.toLowerCase()));
+    const missH = new Set((a.missingHashtags || []).map(s => s.toLowerCase()));
+    html += '<p class="dnote" style="margin-bottom:10px">Searched “' + esc(cache.query) + '” on ' + esc((cache.fetchedAt || '').slice(0, 10)) + ' · <b style="color:var(--up)">cached — no quota used</b> · <button class="ghost" id="kwRerun" style="padding:4px 10px">Re-run (100 units)</button></p>';
+    html += '<p class="explain" style="margin-bottom:6px">This video’s own tags &amp; hashtags:</p><div>' + (own.length ? chipRow(own) : '<span class="dnote">none set — that alone is worth fixing</span>') + '</div>';
+    const topTags = Object.entries(a.tagCounts || {}).sort((x, y) => y[1] - x[1]).slice(0, 20).map(e2 => e2[0]);
+    const topHash = Object.entries(a.hashtagCounts || {}).sort((x, y) => y[1] - x[1]).slice(0, 12).map(e2 => e2[0]);
+    if (topTags.length || topHash.length) {
+      html += '<p class="explain" style="margin:14px 0 6px">What similar videos use — <b style="color:var(--gold)">gold = they use it, you don’t (consider adding)</b>:</p><div>' +
+        chipRow(topTags, missT, a.tagCounts) + chipRow(topHash, missH, a.hashtagCounts) + '</div>';
+    }
+    const ownViews = perVideo[vid] ? perVideo[vid].views : 0;
+    html += '<p class="explain" style="margin:14px 0 6px">The competition for that search · this video: <b style="color:var(--text)">' + fmt.format(ownViews) + '</b> views · their median: <b style="color:var(--text)">' + fmt.format(a.medianViews || 0) + '</b></p>';
+    for (const s of (cache.similar || []).slice(0, 10)) {
+      html += '<div class="simrow"><div class="st">' + esc(s.title) + '<br><span>' + esc(s.channelTitle) + '</span></div><div class="sv">' + fmt.format(s.views) + ' views</div></div>';
+    }
+    html += '</div>';
+    wrap.innerHTML = html;
+    const rb = $('kwRerun');
+    if (rb) rb.addEventListener('click', () => runResearch(vid));
+  }
+
+  async function runResearch(vid) {
+    const b = kwBudget();
+    if (b.searchListCalls >= KW_CAP) {
+      $('kwLabWrap').innerHTML = '<div class="dsection"><h4>Keyword &amp; Tag Lab</h4><p class="dnote">Keyword searches used up for today (' + KW_CAP + '/' + KW_CAP + ') — the free allowance resets at midnight Pacific.</p></div>';
+      return;
+    }
+    const wrap = $('kwLabWrap');
+    wrap.innerHTML = '<div class="dsection"><h4>Keyword &amp; Tag Lab</h4><p class="loading">researching similar videos…</p></div>';
+    try {
+      // query: prefer the video's top real search term, else its cleaned title
+      let query = '';
+      const rk = currentDays === 0 ? 'lifetime' : String(currentDays);
+      const ac = cacheGet('cc:analytics:v1:' + vid + ':' + rk);
+      const srows = ac && ac.reports && ac.reports.search && ac.reports.search.rows;
+      if (srows && srows.length) query = srows[0][0];
+      if (!query) query = (meta[vid].title || '').replace(/#[\p{L}0-9_]+/gu, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).slice(0, 6).join(' ');
+      b.searchListCalls++; saveBudget(b);
+      const sr = await dataApi('search', { part: 'snippet', type: 'video', q: query, maxResults: '25', order: 'relevance' });
+      const ids = (sr.items || []).filter(it => it.id && it.id.videoId && (!it.snippet || it.snippet.channelId !== chanId)).map(it => it.id.videoId);
+      const similar = [];
+      for (const part of chunk(ids, 50)) {
+        const d = await dataApi('videos', { part: 'snippet,statistics', id: part.join(','), maxResults: '50' });
+        for (const it of d.items) similar.push({
+          videoId: it.id, title: it.snippet.title, channelTitle: it.snippet.channelTitle,
+          views: +((it.statistics && it.statistics.viewCount) || 0), publishedAt: it.snippet.publishedAt,
+          tags: (it.snippet.tags || []).map(t => t.toLowerCase()),
+          hashtags: extractHash(it.snippet.title + ' ' + (it.snippet.description || ''))
+        });
+      }
+      similar.sort((x, y) => y.views - x.views);
+      const ownTags = (meta[vid].tags || []).map(t => t.toLowerCase());
+      const ownHashtags = meta[vid].hashtags || [];
+      const tagCounts = {}, hashtagCounts = {};
+      for (const s of similar) {
+        for (const t of new Set(s.tags)) tagCounts[t] = (tagCounts[t] || 0) + 1;
+        for (const h of new Set(s.hashtags)) hashtagCounts[h] = (hashtagCounts[h] || 0) + 1;
+      }
+      const vs = similar.map(s => s.views).sort((x, y) => x - y);
+      const medianViews = vs.length ? (vs.length % 2 ? vs[vs.length >> 1] : Math.round((vs[vs.length / 2 - 1] + vs[vs.length / 2]) / 2)) : 0;
+      const missingTags = Object.keys(tagCounts).filter(t => tagCounts[t] >= 2 && !ownTags.includes(t));
+      const missingHashtags = Object.keys(hashtagCounts).filter(h => hashtagCounts[h] >= 2 && !ownHashtags.includes(h));
+      cacheSet('cc:kwcache:v1:' + vid, { query, ownTags, ownHashtags, similar, aggregate: { tagCounts, hashtagCounts, medianViews, missingTags, missingHashtags } });
+      renderLab(vid);
+    } catch (e) {
+      wrap.innerHTML = '<div class="dsection"><h4>Keyword &amp; Tag Lab</h4><p class="dnote">' + esc(e.message) + '</p></div>';
+    }
+  }
+
   /* ---------- video drawer ---------- */
   function openDrawer(vid) {
     currentVideo = vid;
@@ -1103,6 +1270,7 @@
     $('overlay').style.display = 'block';
     $('drawer').style.display = 'block';
     loadAnalytics();
+    renderLab(vid);
   }
   function closeDrawer() {
     $('overlay').style.display = 'none';
@@ -1115,9 +1283,20 @@
     const vid = currentVideo;
     $('dLoading').style.display = 'block';
     $('dContent').innerHTML = '';
+    const rangeKey = currentDays === 0 ? 'lifetime' : String(currentDays);
+    const acKey = 'cc:analytics:v1:' + vid + ':' + rangeKey;
+    const cachedAc = cacheGet(acKey, 12 * 3600 * 1000);
+    if (cachedAc && cachedAc.reports) {
+      const rep = cachedAc.reports;
+      await ensureVideoTitles(rep.suggested && rep.suggested.rows ? rep.suggested.rows.map(r => r[0]) : []);
+      if (vid !== currentVideo) return;
+      renderAnalytics(rep);
+      $('dLoading').style.display = 'none';
+      return;
+    }
     const { startDate, endDate } = rangeDates(currentDays);
     const base = { startDate, endDate, filters: 'video==' + vid };
-    const detail = type => ({ startDate, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==' + type, metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '12' });
+    const detail = type => ({ startDate, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==' + type, metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '25' });
     try {
       const [summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards] = await Promise.all([
         analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
@@ -1139,7 +1318,9 @@
       if (vid !== currentVideo) return;
       await ensureVideoTitles(suggested && suggested.rows ? suggested.rows.map(r => r[0]) : []);
       if (vid !== currentVideo) return;
-      renderAnalytics({ summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards });
+      const reports = { summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards };
+      cacheSet(acKey, { reports });
+      renderAnalytics(reports);
     } catch (err) {
       $('dContent').innerHTML = '<p class="dnote">' + esc(err.message) + '</p>';
     } finally {
@@ -1177,8 +1358,11 @@
 
     if (r.retention && r.retention.rows && r.retention.rows.length > 1) {
       const pts = r.retention.rows.map(x => x[1] * 100);
+      let dropAt = 1, dropSize = 0;
+      for (let i = 1; i < pts.length; i++) { const dd = pts[i - 1] - pts[i]; if (dd > dropSize) { dropSize = dd; dropAt = i; } }
+      const dropPos = Math.round(dropAt / (pts.length - 1) * 100);
       html += '<div class="dsection"><h4>How long people keep watching</h4>' +
-        '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point.</p>' +
+        '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point' + (dropSize >= 1 ? ', and the biggest drop-off is around ' + dropPos + '% of the way through' : '') + '.</p>' +
         '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Retention curve">' +
         svgLine(pts, 560, 120, 8, 'var(--accent)', true) + '</svg></div>';
     }
@@ -1189,7 +1373,7 @@
     }
 
     if (r.search && r.search.rows && r.search.rows.length) {
-      html += section('What people searched', 'The exact words typed into YouTube search that led to this video — gold for titles and future video ideas.',
+      html += section('What people searched', 'The exact words typed into YouTube search that led to this video — gold for titles and future video ideas. (Rare terms are hidden by YouTube for privacy.)',
         hbarList(r.search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
     }
 
@@ -1268,6 +1452,38 @@
   });
   $('errorBox').addEventListener('click', () => {
     if (!accessToken && tokenClient) tokenClient.requestAccessToken({ prompt: '' });
+  });
+  // Export/import all saved data (caches, keyword research, minute-race history, theme) — never the session token
+  $('exportBtn').addEventListener('click', () => {
+    const out = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k !== 'cc_tok' && (k.startsWith('cc:') || k.startsWith('cc_'))) out[k] = localStorage.getItem(k);
+    }
+    const blob = new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'channel-command-data.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  $('importBtn').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const obj = JSON.parse(rd.result);
+        let n = 0;
+        for (const [k, v] of Object.entries(obj)) {
+          if (k !== 'cc_tok' && (k.startsWith('cc:') || k.startsWith('cc_')) && typeof v === 'string') { localStorage.setItem(k, v); n++; }
+        }
+        alert('Imported ' + n + ' saved items. Reload the page to use them.');
+      } catch (err) { alert('That file didn’t look right: ' + err.message); }
+    };
+    rd.readAsText(f);
+    e.target.value = '';
   });
   $('sortMode').addEventListener('change', renderTable);
   $('interval').addEventListener('change', () => {
