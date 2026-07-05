@@ -176,17 +176,18 @@
   .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
   .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
 
-  /* ---- detail drawer ---- */
-  .overlay { display:none; position:fixed; inset:0; background:rgba(6,9,12,.7); z-index:40; }
+  /* ---- detail drawer: persistent right-side panel ---- */
+  .overlay { display:none !important; }
   .drawer {
-    display:none; position:fixed; z-index:50; inset:auto 0 0 0; max-height:88vh;
-    background:var(--panel); border-top:1px solid var(--line);
-    border-radius:16px 16px 0 0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    display:none; position:fixed; z-index:50; inset:0 0 0 auto;
+    width:min(560px, 100%);
+    background:var(--panel); border-left:1px solid var(--line);
+    box-shadow:-14px 0 44px rgba(0,0,0,.35);
+    overflow-y:auto; -webkit-overflow-scrolling:touch;
     padding:20px 18px 40px;
   }
-  @media (min-width:860px) {
-    .drawer { inset:0 0 0 auto; width:560px; max-height:none; border-radius:0; border-top:none; border-left:1px solid var(--line); }
-  }
+  #thumbZoom { position:fixed; inset:0; z-index:120; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.75); pointer-events:none; }
+  #thumbZoom img { width:min(86vw, 1100px); aspect-ratio:16/9; object-fit:cover; border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.6); }
   .drawer .dhead { display:flex; align-items:flex-start; gap:12px; margin-bottom:16px; }
   .drawer .dhead h3 { font-size:16px; font-weight:700; line-height:1.3; flex:1; }
   .drawer .close { flex:none; }
@@ -364,10 +365,10 @@
 <div class="overlay" id="overlay"></div>
 <div class="drawer" id="drawer">
   <div class="dhead">
-    <img id="dThumb" class="vthumb" loading="lazy" alt="" src="" style="width:88px;flex:none;display:none">
     <h3 id="dTitle"></h3>
     <button class="ghost close" id="drawerClose">Close</button>
   </div>
+  <img id="dThumbBig" class="vthumb" loading="lazy" alt="" src="" style="width:100%;margin-bottom:14px;display:none">
   <div class="range-row" id="rangeRow">
     <button class="ghost" data-days="7">7 days</button>
     <button class="ghost active" data-days="28">28 days</button>
@@ -1376,15 +1377,13 @@
   function openDrawer(vid) {
     currentVideo = vid;
     $('dTitle').textContent = meta[vid].title;
-    const dt = $('dThumb');
-    if (meta[vid].thumb) { dt.src = meta[vid].thumb; dt.style.display = 'block'; } else dt.style.display = 'none';
-    $('overlay').style.display = 'block';
+    const dt = $('dThumbBig');
+    if (meta[vid].thumb) { dt.src = (meta[vid].thumb || '').replace('mqdefault', 'hqdefault'); dt.style.display = 'block'; } else dt.style.display = 'none';
     $('drawer').style.display = 'block';
     loadAnalytics();
     renderLab(vid);
   }
   function closeDrawer() {
-    $('overlay').style.display = 'none';
     $('drawer').style.display = 'none';
     currentVideo = null;
   }
@@ -1612,8 +1611,33 @@
     if (!paused) poll();
   });
   $('drawerClose').addEventListener('click', closeDrawer);
-  $('overlay').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  // Hover a thumbnail for 2s → near-fullscreen preview (mouse/trackpad devices only)
+  if (window.matchMedia && matchMedia('(hover: hover)').matches) {
+    let zoomTimer = null, zoomEl = null;
+    const hideZoom = () => { clearTimeout(zoomTimer); zoomTimer = null; if (zoomEl) zoomEl.style.display = 'none'; };
+    document.addEventListener('pointerover', e => {
+      const img = e.target.closest ? e.target.closest('img.vthumb') : null;
+      if (!img || !img.src || img.id === 'dThumbBig') return;
+      clearTimeout(zoomTimer);
+      zoomTimer = setTimeout(() => {
+        if (!zoomEl) {
+          zoomEl = document.createElement('div');
+          zoomEl.id = 'thumbZoom';
+          zoomEl.innerHTML = '<img alt="">';
+          document.body.appendChild(zoomEl);
+        }
+        zoomEl.querySelector('img').src = img.src.replace('mqdefault', 'hqdefault');
+        zoomEl.style.display = 'flex';
+      }, 2000);
+    });
+    document.addEventListener('pointerout', e => {
+      if (e.target.closest && e.target.closest('img.vthumb')) hideZoom();
+    });
+    document.addEventListener('pointerdown', hideZoom);
+    document.addEventListener('scroll', hideZoom, true);
+  }
   $('rangeRow').addEventListener('click', e => {
     const b = e.target.closest('button[data-days]');
     if (!b) return;
