@@ -52,7 +52,7 @@
 
   /* floating thumbnail balls background */
   #bgBalls { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
-  .bgball { position:absolute; border-radius:50%; background-size:cover; background-position:center; opacity:.09; filter:blur(1px); animation:floatBall linear infinite; will-change:transform; }
+  .bgball { position:absolute; border-radius:50%; background-size:cover; background-position:center; opacity:.15; filter:blur(1px); animation:floatBall linear infinite; will-change:transform; }
   @keyframes floatBall { 0% { transform:translateY(110vh) rotate(0deg); } 100% { transform:translateY(-30vh) rotate(300deg); } }
   @media (prefers-reduced-motion:reduce){ .bgball { display:none; } }
 
@@ -632,6 +632,19 @@
       b.style.left = Math.round(Math.random() * 94) + 'vw';
       b.style.backgroundImage = 'url("' + thumbs[i % thumbs.length] + '")';
       b.style.animationDuration = (35 + Math.random() * 45) + 's';
+      b.style.animationDelay = (-Math.random() * 70) + 's';
+      holder.appendChild(b);
+    }
+    // the channel's own profile picture floats too, as a larger bubble
+    const avatar = $('chThumb').src;
+    if (avatar) {
+      const b = document.createElement('div');
+      b.className = 'bgball';
+      const size = 190 + Math.round(Math.random() * 60);
+      b.style.width = b.style.height = size + 'px';
+      b.style.left = Math.round(10 + Math.random() * 70) + 'vw';
+      b.style.backgroundImage = 'url("' + avatar.replace('=s88-', '=s240-') + '")';
+      b.style.animationDuration = (55 + Math.random() * 30) + 's';
       b.style.animationDelay = (-Math.random() * 70) + 's';
       holder.appendChild(b);
     }
@@ -1709,7 +1722,7 @@
         }
         zoomEl.querySelector('img').src = img.src.replace('mqdefault', 'hqdefault');
         zoomEl.style.display = 'flex';
-      }, 2000);
+      }, 300);
     });
     document.addEventListener('pointerout', e => {
       if (e.target.closest && e.target.closest('img.vthumb')) hideZoom();
