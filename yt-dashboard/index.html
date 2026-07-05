@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Channel Command</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
@@ -23,12 +23,28 @@
     --text:#33234f; --muted:#8878a8; --live:#a855f7; --up:#188a58; --down:#e11d48;
     --accent:#7c3aed; --purple:#c026d3; --gold:#b45309;
   }
-  body[data-theme] .error { background:rgba(244,63,142,.07); border-color:rgba(244,63,142,.35); color:#b4225f; }
+  body[data-theme="honey"] {
+    --ink:#faf3e7; --panel:#fffdf8; --panel-2:#f7ead2; --line:#ecd7b4;
+    --text:#4a3416; --muted:#a3865a; --live:#ea580c; --up:#15803d; --down:#dc2626;
+    --accent:#d97706; --purple:#9333ea; --gold:#b45309;
+  }
+  body[data-theme="ocean"] {
+    --ink:#0a1220; --panel:#111c2e; --panel-2:#16243a; --line:#1f3350;
+    --text:#e6eefb; --muted:#7e93b3; --live:#38bdf8; --up:#34d399; --down:#fb7185;
+    --accent:#818cf8; --purple:#c084fc; --gold:#fbbf24;
+  }
+  body[data-theme="noir"] {
+    --ink:#000000; --panel:#0c0c0e; --panel-2:#151518; --line:#232327;
+    --text:#f4f4f5; --muted:#8b8b93; --live:#ff2d55; --up:#30d158; --down:#ff453a;
+    --accent:#0a84ff; --purple:#bf5af2; --gold:#ffd60a;
+  }
+  body[data-theme="blush"] .error, body[data-theme="lavender"] .error, body[data-theme="honey"] .error { background:rgba(244,63,142,.07); border-color:rgba(244,63,142,.35); color:#b4225f; }
   body { transition:background .25s ease; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
     background:var(--ink); color:var(--text);
-    font-family:'Space Grotesk',system-ui,sans-serif;
+    font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
     display:flex; flex-direction:column; align-items:center;
     padding:24px 14px 60px; min-height:100vh;
   }
@@ -43,8 +59,8 @@
   header .status { margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); text-align:right; }
   header select { width:auto; padding:6px 8px; font-size:11px; flex:none; }
 
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:14px; }
-  .card h2 { font-size:14px; font-weight:500; margin-bottom:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:14px; }
+  .card h2 { font-size:14px; font-weight:600; margin-bottom:12px; font-family:'Space Grotesk',sans-serif; }
   label { display:block; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
   input, select {
     width:100%; background:var(--ink); border:1px solid var(--line); color:var(--text);
@@ -61,14 +77,14 @@
   button.primary:hover { filter:brightness(1.1); }
   button.ghost {
     background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px;
-    padding:8px 14px; font-size:12px; cursor:pointer; font-family:'Space Grotesk',sans-serif;
+    padding:8px 14px; font-size:12px; cursor:pointer; font-family:'Inter',sans-serif; font-weight:500;
   }
   button.ghost:hover { color:var(--text); border-color:var(--muted); }
   button.ghost[disabled] { opacity:.35; cursor:not-allowed; }
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
   .field { flex:1 1 260px; }
 
-  .error { display:none; background:rgba(255,59,48,.08); border:1px solid rgba(255,59,48,.4); color:#ffb4ae; border-radius:10px; padding:12px 16px; margin-bottom:14px; font-size:13px; line-height:1.5; }
+  .error { display:none; background:rgba(255,59,48,.08); border:1px solid rgba(255,59,48,.4); color:#ffb4ae; border-radius:10px; padding:12px 16px; margin-bottom:14px; font-size:13px; line-height:1.5; cursor:pointer; }
 
   .channel-banner { display:none; align-items:center; gap:14px; padding:12px 16px; }
   .channel-banner img { width:44px; height:44px; border-radius:50%; background:var(--panel-2); }
@@ -105,7 +121,7 @@
   th:first-child { text-align:left; }
   td { padding:10px 14px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
   tr:last-child td { border-bottom:none; }
-  td.title { text-align:left; font-family:'Space Grotesk',sans-serif; white-space:normal; min-width:200px; max-width:320px; line-height:1.3; cursor:pointer; }
+  td.title { text-align:left; font-family:'Inter',sans-serif; white-space:normal; min-width:200px; max-width:320px; line-height:1.35; cursor:pointer; }
   td.title:hover { text-decoration:underline; }
   td .tickup { color:var(--up); }
   td .zero { color:var(--muted); opacity:.55; }
@@ -123,7 +139,13 @@
   .dsection { margin-bottom:20px; }
   .dsection:last-child { margin-bottom:4px; }
   .dsection h4 { font-size:12px; font-weight:700; color:var(--text); margin-bottom:3px; }
-  .explain { font-size:11px; color:var(--muted); line-height:1.5; margin-bottom:10px; }
+  .explain { font-size:11.5px; color:var(--muted); line-height:1.55; margin-bottom:10px; }
+  .comment { padding:11px 0; border-bottom:1px solid var(--line); }
+  .comment:last-child { border-bottom:none; }
+  .comment .who { font-size:12px; font-weight:600; }
+  .comment .who span { color:var(--muted); font-weight:400; }
+  .comment .txt { font-size:13px; line-height:1.5; margin-top:3px; overflow-wrap:anywhere; }
+  .comment .on { font-size:11px; color:var(--muted); margin-top:4px; }
   .bignums { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .bignums .mcell { flex:1 1 120px; }
 
@@ -178,8 +200,11 @@
     <div class="status" id="statusText">signed out</div>
     <select id="themeSel" title="Theme">
       <option value="midnight">🌙 Midnight</option>
+      <option value="noir">🖤 Noir</option>
+      <option value="ocean">🌊 Ocean</option>
       <option value="blush">🌸 Blush</option>
       <option value="lavender">💜 Lavender</option>
+      <option value="honey">🍯 Honey</option>
     </select>
   </header>
 
@@ -253,6 +278,20 @@
     <div id="latestContent"></div>
   </div>
 
+  <!-- RECENT COMMENTS -->
+  <div class="card" id="commentsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Recent comments</div>
+    <p class="explain" style="margin-top:8px">The newest comments across the whole channel, refreshed every few minutes.</p>
+    <div id="commentsList"><p class="dnote">loading comments…</p></div>
+  </div>
+
+  <!-- HASHTAGS & KEYWORDS -->
+  <div class="card" id="keywordsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">What's working — top hashtags &amp; keywords</div>
+    <p class="explain" style="margin-top:8px">Every hashtag and tag across your uploads, ranked by the <b>average views of the videos that use it</b> — so a tag on two hits beats a tag spread across ten duds. Use the winners in your next upload.</p>
+    <div id="keywordsContent"><p class="dnote">crunching…</p></div>
+  </div>
+
   <!-- CHANNEL TRENDS -->
   <div class="card trends" id="trendsCard">
     <div class="thead">
@@ -322,6 +361,7 @@
   let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
   let channelPublished = '2005-01-01';
   let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null, pollCount = 0;
+  let chanId = '', raceMode = 'latest';
   const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
 
@@ -353,6 +393,40 @@
   const SUB_NAMES = { subscribed:'Subscribers', unsubscribed:'Non-subscribers (new audience)' };
 
   /* ---------- auth ---------- */
+  // Google's browser tokens last ~1 hour. To stop constant "logged out":
+  // 1. the token is remembered on-device so reloads within the hour resume instantly,
+  // 2. a silent renewal runs ~5 min before expiry while the tab is open,
+  // 3. if renewal is blocked, the error banner becomes a one-tap reconnect.
+  let tokenExp = 0, refreshTimer = null, bootstrapped = false;
+
+  function saveToken(resp) {
+    accessToken = resp.access_token;
+    tokenExp = Date.now() + ((+resp.expires_in || 3600) * 1000);
+    try { localStorage.setItem('cc_tok', JSON.stringify({ t: accessToken, e: tokenExp })); } catch (e) {}
+    scheduleRefresh();
+  }
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    const ms = Math.max(30000, tokenExp - Date.now() - 5 * 60 * 1000);
+    refreshTimer = setTimeout(() => { try { if (tokenClient && !document.hidden) tokenClient.requestAccessToken({ prompt: '' }); } catch (e) {} }, ms);
+  }
+  function ensureTokenClient(cid) {
+    if (tokenClient || !window.google || !google.accounts) return;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: cid,
+      scope: SCOPES,
+      callback: async resp => {
+        if (resp.error) return showError('Sign-in failed: ' + resp.error);
+        saveToken(resp);
+        if (!bootstrapped) {
+          try { await bootstrap(); bootstrapped = true; } catch (e) { showError(e.message); setStatus('error'); }
+        } else { clearError(); poll(); }
+      },
+      error_callback: () => {
+        if (bootstrapped) showError('Your Google session needs a quick renew — tap this message to reconnect.');
+      }
+    });
+  }
   function initAuth(promptMode) {
     const cid = $('clientId').value.trim();
     if (!cid) return showError('Paste your OAuth Client ID first.');
@@ -360,23 +434,17 @@
     if (!looksLikeClientId(cid)) return showError('That doesn’t look like a Client ID — it should end in .apps.googleusercontent.com');
     clearError();
     try { localStorage.setItem('cc_client_id', cid); } catch (e) {}
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: cid,
-      scope: SCOPES,
-      callback: async resp => {
-        if (resp.error) return showError('Sign-in failed: ' + resp.error);
-        accessToken = resp.access_token;
-        try { await bootstrap(); } catch (e) { showError(e.message); setStatus('error'); }
-      }
-    });
+    ensureTokenClient(cid);
     tokenClient.requestAccessToken({ prompt: promptMode || '' });
   }
 
   async function api(url) {
     const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
-    if (res.status === 401 && tokenClient) {
-      tokenClient.requestAccessToken({ prompt: '' });
-      throw new Error('Session refreshing — one moment…');
+    if (res.status === 401) {
+      accessToken = null;
+      try { localStorage.removeItem('cc_tok'); } catch (e) {}
+      if (tokenClient) tokenClient.requestAccessToken({ prompt: '' });
+      throw new Error('Reconnecting to Google — if this message stays, tap it to sign back in.');
     }
     const data = await res.json();
     if (!res.ok) {
@@ -418,6 +486,7 @@
     const ch = await dataApi('channels', { part: 'snippet,contentDetails,statistics', mine: 'true' });
     if (!ch.items || !ch.items.length) throw new Error('No channel found on this Google account. Sign in with the account that owns the YouTube channel.');
     const c = ch.items[0];
+    chanId = c.id;
     uploadsPlaylist = c.contentDetails.relatedPlaylists.uploads;
     channelPublished = (c.snippet.publishedAt || '2005-01-01').slice(0, 10);
     $('chTitle').textContent = c.snippet.title;
@@ -439,6 +508,19 @@
     if (!videoIds.length) throw new Error('No public videos found.');
     $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
 
+    setStatus('loading tags…');
+    for (const part of chunk(videoIds, 50)) {
+      try {
+        const d = await dataApi('videos', { part: 'snippet', id: part.join(','), maxResults: '50' });
+        for (const it of d.items) {
+          const m = meta[it.id]; if (!m) continue;
+          m.tags = it.snippet.tags || [];
+          const text = (it.snippet.title || '') + ' ' + (it.snippet.description || '');
+          m.hashtags = [...new Set((text.match(/#[\p{L}0-9_]+/gu) || []).map(h => h.toLowerCase()))];
+        }
+      } catch (e) {}
+    }
+
     prevTotals = null; sessionStart = null; history = []; perVideo = {}; paused = false;
     $('setupPanel').style.display = 'none';
     $('channelBanner').style.display = 'flex';
@@ -446,6 +528,8 @@
     $('velocityPanel').style.display = 'block';
     $('trendsCard').style.display = 'block';
     $('tableCard').style.display = 'block';
+    $('commentsCard').style.display = 'block';
+    $('keywordsCard').style.display = 'block';
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
     $('latestTitle').textContent = meta[latestVid].title;
@@ -521,7 +605,9 @@
       }
       recordSnaps();
       renderLiveRace();
+      renderKeywords();
       pollCount++;
+      if (pollCount % 5 === 1) loadComments();
       if (pollCount % 30 === 0) checkNewUploads();
       prevTotals = totals;
       clearError();
@@ -717,7 +803,7 @@
     }
     if (changed) {
       const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
-      const keep = new Set(ids.slice(0, 12));
+      const keep = new Set(ids.slice(0, 15));
       for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
       try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
     }
@@ -742,7 +828,7 @@
     const head = '<p class="explain" style="margin-bottom:10px"><b style="color:var(--text)">' + fmt.format(cur.views) + ' views</b> at <b style="color:var(--text)">' + fmtAge(t) + '</b> old' +
       (pace >= 0.05 ? ' · averaging ' + (pace >= 10 ? Math.round(pace) : pace.toFixed(1)) + ' views/min' : '') + '</p>';
     if (t > SNAP_MAX_AGE) { el.innerHTML = '<p class="dnote">This video is over a week old, so the minute race has retired — the official-stats race below takes over.</p>'; return; }
-    const rivals = Object.keys(snaps)
+    let rivals = Object.keys(snaps)
       .filter(id => id !== latestVid && meta[id])
       .map(id => ({ id, at: viewsAtAge(id, t) }))
       .filter(r => r.at !== null);
@@ -750,13 +836,17 @@
       el.innerHTML = head + '<p class="dnote">No minute-by-minute history exists for your older uploads yet — YouTube doesn’t share it, so the dashboard records its own while it’s open. From your <b>next upload</b> onwards, new videos will race right here in real time. Tip: keep the dashboard open for the first hours after uploading (history saves to the device that’s watching).</p>';
       return;
     }
+    if (raceMode === 'best') rivals = rivals.sort((a, b) => b.at.v - a.at.v).slice(0, 10);
+    else rivals = rivals.sort((a, b) => new Date(meta[b.id].publishedAt) - new Date(meta[a.id].publishedAt)).slice(0, 10);
     const rows = [
       { label: '★ ' + videoTitle(latestVid), val: cur.views, valText: fmt.format(cur.views) + ' views', color: 'var(--live)', strong: true },
       ...rivals.map(r => ({ label: videoTitle(r.id), val: r.at.v, valText: fmt.format(r.at.v) + ' views' + (r.at.stale ? ' (last known)' : '') }))
     ].sort((a, b) => b.val - a.val);
     const rank = rows.findIndex(r => r.strong) + 1;
     el.innerHTML = head +
-      '<p class="explain" style="margin-bottom:10px"><b>#' + rank + ' of ' + rows.length + '</b> vs your other uploads when they were exactly this old</p>' +
+      '<p class="explain" style="margin-bottom:10px"><b>#' + rank + ' of ' + rows.length + '</b> vs ' +
+      (raceMode === 'best' ? 'your <b>10 best recorded openings</b>' : 'your <b>latest 10 uploads</b>') +
+      ' when they were exactly this old</p>' +
       hbarList(rows, { color: 'var(--accent)' });
   }
   async function checkNewUploads() {
@@ -798,6 +888,10 @@
       ]);
       const liveRaceHtml = '<div class="dsection"><h4>Live race — minute by minute</h4>' +
         '<p class="explain">Real-time: this video right now vs what your previous uploads had when they were exactly the same age. Updates with every refresh.</p>' +
+        '<div class="range-row" id="raceModeRow">' +
+        '<button class="ghost' + (raceMode === 'latest' ? ' active' : '') + '" data-mode="latest">Latest 10</button>' +
+        '<button class="ghost' + (raceMode === 'best' ? ' active' : '') + '" data-mode="best">Best 10 openings</button>' +
+        '</div>' +
         '<div id="liveRaceContent"><p class="dnote">warming up…</p></div></div>';
       let html = '';
       const s = summary && summary.rows && summary.rows[0];
@@ -848,6 +942,14 @@
       }
       $('latestContent').innerHTML = html;
       renderLiveRace();
+      const rm = $('raceModeRow');
+      if (rm) rm.addEventListener('click', e => {
+        const b = e.target.closest('button[data-mode]');
+        if (!b) return;
+        raceMode = b.dataset.mode;
+        rm.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+        renderLiveRace();
+      });
       const cr = $('compareRange');
       if (cr) {
         cr.addEventListener('click', e => {
@@ -872,6 +974,70 @@
     } finally {
       $('latestLoading').style.display = 'none';
     }
+  }
+
+  /* ---------- recent comments ---------- */
+  const timeAgo = iso2 => {
+    const s = (Date.now() - new Date(iso2)) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    if (s < 2592000) return Math.round(s / 86400) + 'd ago';
+    return new Date(iso2).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  };
+  async function loadComments() {
+    if (!chanId) return;
+    try {
+      const d = await dataApi('commentThreads', { part: 'snippet', allThreadsRelatedToChannelId: chanId, order: 'time', maxResults: '10', textFormat: 'plainText' });
+      if (!d.items || !d.items.length) { $('commentsList').innerHTML = '<p class="dnote">No comments yet — they’ll show up here the moment someone writes one.</p>'; return; }
+      await ensureVideoTitles(d.items.map(it => it.snippet.videoId).filter(Boolean));
+      let html = '';
+      for (const it of d.items) {
+        const s = it.snippet.topLevelComment.snippet;
+        const vid = it.snippet.videoId;
+        html += '<div class="comment">' +
+          '<div class="who">' + esc(s.authorDisplayName) + ' <span>· ' + timeAgo(s.publishedAt) + (s.likeCount ? ' · ♥ ' + fmt.format(s.likeCount) : '') + '</span></div>' +
+          '<div class="txt">' + esc(s.textDisplay) + '</div>' +
+          (vid ? '<div class="on">on “' + esc(videoTitle(vid)) + '”</div>' : '') +
+          '</div>';
+      }
+      $('commentsList').innerHTML = html;
+    } catch (e) {
+      $('commentsList').innerHTML = '<p class="dnote">Couldn’t load comments right now (' + esc(e.message) + ')</p>';
+    }
+  }
+
+  /* ---------- hashtag & keyword rankings ---------- */
+  function renderKeywords() {
+    const el = $('keywordsContent');
+    if (!el) return;
+    const build = kind => {
+      const map = {};
+      for (const id of videoIds) {
+        const m = meta[id], p = perVideo[id];
+        if (!m || !p) continue;
+        for (const raw of (kind === 'hash' ? (m.hashtags || []) : (m.tags || []))) {
+          const key = raw.toLowerCase();
+          const e2 = map[key] || (map[key] = { label: raw, n: 0, total: 0 });
+          e2.n++; e2.total += p.views;
+        }
+      }
+      return Object.values(map)
+        .map(x => ({ ...x, avg: x.total / x.n }))
+        .sort((a, b) => b.avg - a.avg)
+        .slice(0, 10);
+    };
+    const hashes = build('hash'), tags = build('tag');
+    if (!hashes.length && !tags.length) {
+      el.innerHTML = '<p class="dnote">No hashtags or tags found on your uploads yet — add some to your titles, descriptions and video tags and they’ll be ranked here.</p>';
+      return;
+    }
+    let html = '';
+    if (hashes.length) html += section('Top 10 hashtags', 'From titles and descriptions.',
+      hbarList(hashes.map(x => ({ label: x.label, val: Math.round(x.avg), valText: 'avg ' + fmt.format(Math.round(x.avg)) + ' · ' + x.n + ' vid' + (x.n > 1 ? 's' : '') })), { color: 'var(--gold)' }));
+    if (tags.length) html += section('Top 10 keywords (video tags)', 'The tags set on each upload.',
+      hbarList(tags.map(x => ({ label: x.label, val: Math.round(x.avg), valText: 'avg ' + fmt.format(Math.round(x.avg)) + ' · ' + x.n + ' vid' + (x.n > 1 ? 's' : '') })), { color: 'var(--purple)' }));
+    el.innerHTML = html;
   }
 
   /* ---------- same-age comparison ---------- */
@@ -1096,7 +1262,13 @@
   $('signInBtn').addEventListener('click', () => initAuth());
   $('switchBtn').addEventListener('click', () => initAuth('select_account'));
   $('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') initAuth(); });
-  $('signOutBtn').addEventListener('click', () => location.reload());
+  $('signOutBtn').addEventListener('click', () => {
+    try { localStorage.removeItem('cc_tok'); } catch (e) {}
+    location.reload();
+  });
+  $('errorBox').addEventListener('click', () => {
+    if (!accessToken && tokenClient) tokenClient.requestAccessToken({ prompt: '' });
+  });
   $('sortMode').addEventListener('change', renderTable);
   $('interval').addEventListener('change', () => {
     intervalMs = +$('interval').value;
@@ -1170,6 +1342,27 @@
   } else {
     $('clientId').value = savedId || DEFAULT_CLIENT_ID;
   }
+
+  // Resume a still-valid session across reloads — no tap needed within the hour
+  let savedTok = null;
+  try { savedTok = JSON.parse(localStorage.getItem('cc_tok') || 'null'); } catch (e) {}
+  if (savedTok && savedTok.e - Date.now() > 60000 && looksLikeClientId($('clientId').value)) {
+    accessToken = savedTok.t; tokenExp = savedTok.e;
+    setStatus('resuming session…');
+    bootstrap().then(() => { bootstrapped = true; scheduleRefresh(); }).catch(() => {
+      accessToken = null;
+      try { localStorage.removeItem('cc_tok'); } catch (e) {}
+      setStatus('signed out');
+    });
+  }
+  // The Google script loads async — prepare the token client for silent renewals as soon as it's ready
+  const gisWait = setInterval(() => {
+    if (window.google && google.accounts) {
+      clearInterval(gisWait);
+      const cid = $('clientId').value.trim();
+      if (looksLikeClientId(cid)) ensureTokenClient(cid);
+    }
+  }, 400);
 })();
 </script>
 </body>
