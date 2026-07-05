@@ -152,6 +152,9 @@
   .comment .who span { color:var(--muted); font-weight:400; }
   .comment .txt { font-size:13px; line-height:1.5; margin-top:3px; overflow-wrap:anywhere; }
   .comment .on { font-size:11px; color:var(--muted); margin-top:4px; }
+  .vthumb { aspect-ratio:16/9; object-fit:cover; border-radius:6px; background:var(--panel-2); display:block; border:1px solid var(--line); }
+  td.thumbcell { padding:6px 0 6px 14px; width:76px; }
+  td.thumbcell .vthumb { width:72px; }
   .chip { display:inline-block; padding:3px 10px; border:1px solid var(--line); border-radius:999px; font-size:11px; margin:0 5px 6px 0; background:var(--ink); }
   .chip b { font-weight:600; color:var(--muted); font-size:10px; }
   .chip.missing { border-color:var(--gold); color:var(--gold); }
@@ -288,8 +291,13 @@
       <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Latest upload — how it's doing since it went live</div>
       <button class="ghost" id="latestMore" style="margin-left:auto">Full breakdown</button>
     </div>
-    <h3 id="latestTitle" style="font-size:15px;font-weight:700;margin:10px 0 3px;line-height:1.3"></h3>
-    <p class="explain" id="latestMetaLine" style="margin-bottom:14px"></p>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-top:10px">
+      <img id="latestThumb" class="vthumb" loading="lazy" alt="" src="" style="width:104px;flex:none;display:none">
+      <div style="flex:1;min-width:0">
+        <h3 id="latestTitle" style="font-size:15px;font-weight:700;margin:0 0 3px;line-height:1.3"></h3>
+        <p class="explain" id="latestMetaLine" style="margin-bottom:14px"></p>
+      </div>
+    </div>
     <div class="loading" id="latestLoading" style="display:none">loading latest video analytics…</div>
     <div id="latestContent"></div>
   </div>
@@ -338,7 +346,7 @@
     </div>
     <div class="tscroll">
       <table>
-        <thead><tr><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th><th title="Official stats, last 28 days, lag 24-48h">Avg %†</th><th title="Official stats, last 28 days, lag 24-48h">Subs†</th><th title="Official stats, last 28 days, lag 24-48h">Shares†</th></tr></thead>
+        <thead><tr><th></th><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th><th title="Official stats, last 28 days, lag 24-48h">Avg %†</th><th title="Official stats, last 28 days, lag 24-48h">Subs†</th><th title="Official stats, last 28 days, lag 24-48h">Shares†</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -356,6 +364,7 @@
 <div class="overlay" id="overlay"></div>
 <div class="drawer" id="drawer">
   <div class="dhead">
+    <img id="dThumb" class="vthumb" loading="lazy" alt="" src="" style="width:88px;flex:none;display:none">
     <h3 id="dTitle"></h3>
     <button class="ghost close" id="drawerClose">Close</button>
   </div>
@@ -546,7 +555,7 @@
       for (const it of d.items) {
         const id = it.contentDetails.videoId;
         videoIds.push(id);
-        meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt };
+        meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt, thumb: (it.snippet.thumbnails?.medium || it.snippet.thumbnails?.high || it.snippet.thumbnails?.default)?.url || '' };
         if (videoIds.length >= VIDEO_CAP) break;
       }
       pageToken = d.nextPageToken; if (!pageToken) break;
@@ -579,6 +588,8 @@
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
     $('latestTitle').textContent = meta[latestVid].title;
+    const lt = $('latestThumb');
+    if (meta[latestVid].thumb) { lt.src = meta[latestVid].thumb; lt.style.display = 'block'; } else lt.style.display = 'none';
     const pubDate = new Date(meta[latestVid].publishedAt);
     $('latestMetaLine').innerHTML = 'Published ' + esc(pubDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
     $('latestCard').style.display = 'block';
@@ -709,6 +720,7 @@
       tr.dataset.vid = r.id;
       if (r.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
+        '<td class="thumbcell">' + (r.thumb ? '<img class="vthumb" loading="lazy" alt="" src="' + esc(r.thumb) + '">' : '') + '</td>' +
         '<td class="title">' + esc(r.title) + '</td>' +
         '<td>' + fmt.format(r.views) + '</td>' +
         '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
@@ -995,7 +1007,7 @@
       let added = false;
       for (const it of d.items) {
         const id = it.contentDetails.videoId;
-        if (!meta[id]) { meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt }; videoIds.unshift(id); added = true; }
+        if (!meta[id]) { meta[id] = { title: it.snippet.title, publishedAt: it.contentDetails.videoPublishedAt || it.snippet.publishedAt, thumb: (it.snippet.thumbnails?.medium || it.snippet.thumbnails?.high || it.snippet.thumbnails?.default)?.url || '' }; videoIds.unshift(id); added = true; }
       }
       if (added) {
         $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
@@ -1003,6 +1015,8 @@
         if (nl !== latestVid) {
           latestVid = nl;
           $('latestTitle').textContent = meta[nl].title;
+          const lt2 = $('latestThumb');
+          if (meta[nl].thumb) { lt2.src = meta[nl].thumb; lt2.style.display = 'block'; } else lt2.style.display = 'none';
           const pd = new Date(meta[nl].publishedAt);
           $('latestMetaLine').innerHTML = 'Published ' + esc(pd.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
           loadLatest();
@@ -1299,7 +1313,9 @@
     const ownViews = perVideo[vid] ? perVideo[vid].views : 0;
     html += '<p class="explain" style="margin:14px 0 6px">The competition for that search · this video: <b style="color:var(--text)">' + fmt.format(ownViews) + '</b> views · their median: <b style="color:var(--text)">' + fmt.format(a.medianViews || 0) + '</b></p>';
     for (const s of (cache.similar || []).slice(0, 10)) {
-      html += '<div class="simrow"><div class="st">' + esc(s.title) + '<br><span>' + esc(s.channelTitle) + '</span></div><div class="sv">' + fmt.format(s.views) + ' views</div></div>';
+      html += '<div class="simrow">' +
+        (s.thumb ? '<img class="vthumb" loading="lazy" alt="" src="' + esc(s.thumb) + '" style="width:64px;flex:none">' : '') +
+        '<div class="st">' + esc(s.title) + '<br><span>' + esc(s.channelTitle) + '</span></div><div class="sv">' + fmt.format(s.views) + ' views</div></div>';
     }
     html += '</div>';
     wrap.innerHTML = html;
@@ -1332,6 +1348,7 @@
         for (const it of d.items) similar.push({
           videoId: it.id, title: it.snippet.title, channelTitle: it.snippet.channelTitle,
           views: +((it.statistics && it.statistics.viewCount) || 0), publishedAt: it.snippet.publishedAt,
+          thumb: (it.snippet.thumbnails?.medium || it.snippet.thumbnails?.high || it.snippet.thumbnails?.default)?.url || '',
           tags: (it.snippet.tags || []).map(t => t.toLowerCase()),
           hashtags: extractHash(it.snippet.title + ' ' + (it.snippet.description || ''))
         });
@@ -1359,6 +1376,8 @@
   function openDrawer(vid) {
     currentVideo = vid;
     $('dTitle').textContent = meta[vid].title;
+    const dt = $('dThumb');
+    if (meta[vid].thumb) { dt.src = meta[vid].thumb; dt.style.display = 'block'; } else dt.style.display = 'none';
     $('overlay').style.display = 'block';
     $('drawer').style.display = 'block';
     loadAnalytics();
