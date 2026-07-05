@@ -48,7 +48,13 @@
     display:flex; flex-direction:column; align-items:center;
     padding:24px 14px 60px; min-height:100vh;
   }
-  .wrap { width:100%; max-width:1020px; }
+  .wrap { width:100%; max-width:1020px; position:relative; z-index:1; }
+
+  /* floating thumbnail balls background */
+  #bgBalls { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
+  .bgball { position:absolute; border-radius:50%; background-size:cover; background-position:center; opacity:.09; filter:blur(1px); animation:floatBall linear infinite; will-change:transform; }
+  @keyframes floatBall { 0% { transform:translateY(110vh) rotate(0deg); } 100% { transform:translateY(-30vh) rotate(300deg); } }
+  @media (prefers-reduced-motion:reduce){ .bgball { display:none; } }
 
   header { display:flex; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line); margin-bottom:20px; }
   .live-dot { width:10px; height:10px; border-radius:50%; background:var(--muted); flex:none; }
@@ -602,6 +608,33 @@
     loadTrends();
     loadLatest();
     loadRollup();
+    spawnBalls();
+  }
+
+  // floating thumbnail balls background
+  function spawnBalls() {
+    if (reducedMotion) return;
+    let holder = $('bgBalls');
+    if (!holder) {
+      holder = document.createElement('div');
+      holder.id = 'bgBalls';
+      document.body.prepend(holder);
+    }
+    holder.innerHTML = '';
+    const thumbs = videoIds.map(id => meta[id] && meta[id].thumb).filter(Boolean).slice(0, 24);
+    if (!thumbs.length) return;
+    const n = Math.min(12, Math.max(6, thumbs.length));
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement('div');
+      b.className = 'bgball';
+      const size = 60 + Math.round(Math.random() * 90);
+      b.style.width = b.style.height = size + 'px';
+      b.style.left = Math.round(Math.random() * 94) + 'vw';
+      b.style.backgroundImage = 'url("' + thumbs[i % thumbs.length] + '")';
+      b.style.animationDuration = (35 + Math.random() * 45) + 's';
+      b.style.animationDelay = (-Math.random() * 70) + 's';
+      holder.appendChild(b);
+    }
   }
 
   /* ---------- live polling ---------- */
@@ -925,6 +958,52 @@
     if (pl && pl.rows && pl.rows.length) {
       html += section('Playlists', 'How your playlists are doing. “Started” = how many times someone began watching the playlist.',
         hbarList(pl.rows.map(r => ({ label: plNames[r[0]] || r[0], val: r[1], valText: fmt.format(r[1]) + ' · ' + fmt.format(r[3]) + ' started' })), { color: 'var(--purple)' }));
+    }
+
+    // best time to post — from your own uploads' pace (no API for "viewers online", so this is your history)
+    const cand = videoIds.filter(id => meta[id] && perVideo[id]).map(id => {
+      const ageD = (Date.now() - new Date(meta[id].publishedAt)) / 864e5;
+      return { d: new Date(meta[id].publishedAt), rate: perVideo[id].views / Math.max(1, ageD), ok: ageD >= 3 };
+    }).filter(x => x.ok);
+    if (cand.length >= 4) {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const parts = [
+        { n: 'Morning (6am–12pm)', f: h2 => h2 >= 6 && h2 < 12 },
+        { n: 'Afternoon (12–5pm)', f: h2 => h2 >= 12 && h2 < 17 },
+        { n: 'Evening (5–9pm)', f: h2 => h2 >= 17 && h2 < 21 },
+        { n: 'Night (9pm–6am)', f: h2 => h2 >= 21 || h2 < 6 }
+      ];
+      const dayAgg = {}, partAgg = {};
+      for (const c of cand) {
+        const dn = days[c.d.getDay()];
+        (dayAgg[dn] = dayAgg[dn] || { t: 0, n: 0 }); dayAgg[dn].t += c.rate; dayAgg[dn].n++;
+        const pn = parts.find(p2 => p2.f(c.d.getHours())).n;
+        (partAgg[pn] = partAgg[pn] || { t: 0, n: 0 }); partAgg[pn].t += c.rate; partAgg[pn].n++;
+      }
+      const toRows = agg => Object.entries(agg)
+        .map(([k, v]) => ({ label: k, val: v.t / v.n, valText: fmt.format(Math.round(v.t / v.n)) + ' views/day avg · ' + v.n + ' vid' + (v.n > 1 ? 's' : '') }))
+        .sort((a, b) => b.val - a.val);
+      html += section('Best time to post — based on your uploads', 'Videos grouped by when you posted them, ranked by how fast they collect views per day since. Your history, not a guarantee — YouTube only shows “when your viewers are online” inside Studio; the API doesn’t share it.',
+        hbarList(toRows(dayAgg), { color: 'var(--gold)' }) +
+        '<p class="explain" style="margin:10px 0 6px">By time of day posted:</p>' +
+        hbarList(toRows(partAgg), { color: 'var(--accent)' }));
+    }
+
+    // when views arrive — from the app's own minute-history recordings
+    const hourBuckets = new Array(24).fill(0);
+    for (const [sid, arr] of Object.entries(snaps)) {
+      if (!meta[sid] || !arr || arr.length < 2) continue;
+      const pub2 = new Date(meta[sid].publishedAt).getTime();
+      for (let i = 1; i < arr.length; i++) {
+        const dv = arr[i][1] - arr[i - 1][1];
+        if (dv <= 0) continue;
+        hourBuckets[new Date(pub2 + arr[i][0] * 60000).getHours()] += dv;
+      }
+    }
+    if (hourBuckets.some(v => v > 0)) {
+      const hTips = hourBuckets.map((v, h2) => fmt.format(v) + ' views recorded — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm'));
+      html += section('When views actually arrive (recorded by the app)', 'Views gained per hour of the day, from the minute-history this dashboard records on recent uploads. It only counts hours the dashboard was open watching, so it fills in over time — YouTube’s API has no official hour-by-hour data.',
+        barChartHtml(hourBuckets, hTips, 'Views by hour of day'));
     }
 
     $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
