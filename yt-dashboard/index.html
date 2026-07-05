@@ -377,7 +377,8 @@
   const fmt = new Intl.NumberFormat('en-AU');
   const DATA = 'https://www.googleapis.com/youtube/v3/';
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
-  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
+  // youtube.force-ssl is required by YouTube for ANY comments call, even read-only ones
+  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl';
   const DEFAULT_CLIENT_ID = '766052665664-qk83b8i8fm9ns8b9m41m9u051idb1ksk.apps.googleusercontent.com';
   const looksLikeClientId = v => /\.apps\.googleusercontent\.com$/.test((v || '').trim());
 
@@ -1142,7 +1143,11 @@
       }
       $('commentsList').innerHTML = html;
     } catch (e) {
-      $('commentsList').innerHTML = '<p class="dnote">Couldn’t load comments right now (' + esc(e.message) + ')</p>';
+      if (/insufficient authentication scopes/i.test(e.message || '')) {
+        $('commentsList').innerHTML = '<p class="dnote">Comments need one extra permission that your current sign-in doesn’t have yet — tap <b>Sign out</b>, then sign in again and approve the new item on Google’s screen. One-time thing.</p>';
+      } else {
+        $('commentsList').innerHTML = '<p class="dnote">Couldn’t load comments right now (' + esc(e.message) + ')</p>';
+      }
     }
   }
 
