@@ -98,6 +98,12 @@
   .stat .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
   .stat-num { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:clamp(20px,4vw,32px); margin-top:7px; font-variant-numeric:tabular-nums; transition:color .8s ease; }
   .stat-num.flash { color:var(--up); transition:color 0s; }
+  @keyframes bumpUp { 0% { transform:translateY(8px); opacity:.35; } 100% { transform:none; opacity:1; } }
+  .stat-num.bump { animation:bumpUp .5s ease; }
+  header .status { transition:color 1.4s ease; }
+  header .status.tick { color:var(--up); transition:none; }
+  @media (prefers-reduced-motion:reduce){ .stat-num.bump { animation:none; } }
+  #chartTip { position:fixed; z-index:99; display:none; pointer-events:none; background:var(--panel-2); border:1px solid var(--line); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:11px; padding:5px 9px; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:240px; }
   .stat .delta { font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:5px; color:var(--muted); min-height:15px; }
   .stat .delta.up { color:var(--up); }
 
@@ -608,9 +614,10 @@
       if (firstRun) { sessionStart = { ...totals }; sessionTime = Date.now(); }
 
       [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
-        const el = $(n); el.textContent = fmt.format(totals[k]);
+        const el = $(n);
+        animateNum(el, prevTotals ? prevTotals[k] : null, totals[k]);
         const d = prevTotals ? totals[k] - prevTotals[k] : null;
-        if (d > 0) flash(el);
+        if (d > 0) { flash(el); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
         const de = $(dl);
         if (d === null) { de.textContent = ''; de.className = 'delta'; }
         else if (d > 0) { de.textContent = '+' + fmt.format(d); de.className = 'delta up'; }
@@ -652,6 +659,9 @@
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
+      const st = $('statusText');
+      st.classList.add('tick');
+      requestAnimationFrame(() => requestAnimationFrame(() => st.classList.remove('tick')));
     } catch (err) {
       $('liveDot').classList.remove('on');
       setStatus('error');
@@ -724,33 +734,93 @@
   };
   const fmtHours = mins => mins >= 6000 ? fmt.format(Math.round(mins / 60)) + ' h' : fmt.format(Math.round(mins)) + ' min';
 
-  function svgLine(points, w, h, pad, color, fillArea) {
-    if (points.length < 2) return '';
-    const xs = points.map((_, i) => pad + i * (w - 2 * pad) / (points.length - 1));
-    const max = Math.max(1, ...points);
-    const ys = points.map(v => h - pad - (v / max) * (h - 2 * pad));
+  /* ---------- interactive charts: axes + hover/touch tooltips ---------- */
+  const chartReg = [];
+  const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const friendlyDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' }); } catch (e) { return d; } };
+  const shortDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); } catch (e) { return d; } };
+
+  function lineChartHtml(pts, tips, color, opts) {
+    opts = opts || {};
+    const w = 560, h = 132, L = 46, R = 10, T = 12, B = 24;
+    const max = Math.max(1, ...pts);
+    const n = pts.length;
+    const xs = pts.map((_, i) => L + i * (w - L - R) / Math.max(1, n - 1));
+    const ys = pts.map(v => h - B - (v / max) * (h - T - B));
+    const ci = chartReg.length;
+    chartReg.push({ tips, xs, ys, L, R, w });
     let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
-    for (let i = 1; i < xs.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
-    let out = '';
-    if (fillArea) out += '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + (h - pad) + ' L' + xs[0].toFixed(1) + ',' + (h - pad) + ' Z" style="fill:' + color + ';opacity:.12"/>';
-    out += '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>';
-    return out;
+    for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    const yLab = opts.yMaxLabel || fmt.format(Math.round(max));
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
+      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
+      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
+      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLab) + '</text>' +
+      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">0</text>' +
+      (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
+      (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '') +
+      (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (h - B) + ' L' + xs[0].toFixed(1) + ',' + (h - B) + ' Z" style="fill:' + color + ';opacity:.12"/>' : '') +
+      (n > 1 ? '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' : '') +
+      '<circle class="cdot" r="4" style="display:none;fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/></svg>';
   }
 
-  // bar chart that can show negatives (for subscriber gains/losses)
-  function svgPosNeg(values, w, h, pad) {
-    if (!values.length) return '';
+  function barChartHtml(values, tips, label) {
+    const w = 560, h = 112, L = 46, R = 10, T = 10, B = 10;
     const maxAbs = Math.max(1, ...values.map(v => Math.abs(v)));
-    const zero = h / 2;
-    const bw = Math.max(1.5, (w - 2 * pad) / values.length - 1.5);
-    let out = '<line x1="' + pad + '" y1="' + zero + '" x2="' + (w - pad) + '" y2="' + zero + '" style="stroke:var(--line);stroke-width:1"/>';
+    const zero = (h - T - B) / 2 + T;
+    const bw = Math.max(1.5, (w - L - R) / values.length - 1.5);
+    const ci = chartReg.length;
+    chartReg.push({ tips, L, R, w, bars: true });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (label || 'chart') + '">' +
+      '<line x1="' + L + '" y1="' + zero + '" x2="' + (w - R) + '" y2="' + zero + '" style="stroke:var(--line);stroke-width:1"/>' +
+      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">+' + fmt.format(maxAbs) + '</text>' +
+      '<text x="' + (L - 6) + '" y="' + (h - B) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">−' + fmt.format(maxAbs) + '</text>';
     values.forEach((v, i) => {
-      const x = pad + i * (w - 2 * pad) / values.length;
-      const bh = Math.max(1, Math.abs(v) / maxAbs * (zero - pad));
+      const x = L + i * (w - L - R) / values.length;
+      const bh = Math.max(1, Math.abs(v) / maxAbs * (zero - T));
       const y = v >= 0 ? zero - bh : zero;
       out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" style="fill:' + (v >= 0 ? 'var(--up)' : 'var(--down)') + '"/>';
     });
-    return out;
+    return out + '</svg>';
+  }
+
+  let chartTip = null;
+  function moveTip(e) {
+    const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-ci]') : null;
+    if (!chartTip) { chartTip = document.createElement('div'); chartTip.id = 'chartTip'; document.body.appendChild(chartTip); }
+    if (!svg) {
+      chartTip.style.display = 'none';
+      document.querySelectorAll('svg.chart .cdot').forEach(c => c.style.display = 'none');
+      return;
+    }
+    const d = chartReg[+svg.dataset.ci];
+    if (!d || !d.tips || !d.tips.length) return;
+    const rect = svg.getBoundingClientRect();
+    const xv = (e.clientX - rect.left) / rect.width * d.w;
+    let idx = d.bars
+      ? Math.floor((xv - d.L) / Math.max(1, d.w - d.L - d.R) * d.tips.length)
+      : Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
+    idx = Math.max(0, Math.min(d.tips.length - 1, idx));
+    const dot = svg.querySelector('.cdot');
+    if (dot && d.xs) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
+    chartTip.textContent = d.tips[idx];
+    chartTip.style.display = 'block';
+    chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 200, e.clientX + 14)) + 'px';
+    chartTip.style.top = (e.clientY - 38) + 'px';
+  }
+  document.addEventListener('pointermove', moveTip);
+  document.addEventListener('pointerdown', moveTip);
+
+  function animateNum(el, from, to) {
+    if (reducedMotion || from == null || from === to) { el.textContent = fmt.format(to); return; }
+    const t0 = performance.now(), dur = 800;
+    const step = now => {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt.format(Math.round(from + (to - from) * eased));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   function hbarList(rows, opts) {
@@ -804,26 +874,26 @@
       const lost = subs.rows.reduce((a, r) => a + r[2], 0);
       const net = gained - lost;
       const bars = subs.rows.map(r => r[1] - r[2]);
+      const subTips = subs.rows.map(r => friendlyDate(r[0]) + ' — +' + fmt.format(r[1]) + ' gained, −' + fmt.format(r[2]) + ' lost');
       html += '<div class="dsection"><h4>Subscribers</h4>' +
-        '<p class="explain">Green bars are days you gained subscribers, red bars are days you lost them.</p>' +
+        '<p class="explain">Green bars are days you gained subscribers, red bars are days you lost them. Hover or tap a bar for the exact day.</p>' +
         '<div class="bignums">' +
         mcell('Gained', '+' + fmt.format(gained)) +
         mcell('Lost', '−' + fmt.format(lost)) +
         mcell('Net change', (net >= 0 ? '+' : '−') + fmt.format(Math.abs(net))) +
         '</div>' +
-        '<svg class="chart" viewBox="0 0 560 110" preserveAspectRatio="none" role="img" aria-label="Subscribers gained and lost per day">' +
-        svgPosNeg(bars, 560, 110, 6) + '</svg></div>';
+        barChartHtml(bars, subTips, 'Subscribers gained and lost per day') + '</div>';
     }
 
     if (daily && daily.rows && daily.rows.length > 1) {
       const pts = daily.rows.map(r => r[1]);
       const totalViews = pts.reduce((a, b) => a + b, 0);
       const totalMins = daily.rows.reduce((a, r) => a + r[2], 0);
+      const dTips = daily.rows.map(r => fmt.format(r[1]) + ' views — ' + friendlyDate(r[0]));
       html += '<div class="dsection"><h4>Views per day — whole channel</h4>' +
-        '<p class="explain">' + fmt.format(totalViews) + ' views and ' + fmtHours(totalMins) + ' of watch time in this period.</p>' +
-        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Channel daily views">' +
-        svgLine(pts, 560, 120, 8, 'var(--live)', true) + '</svg>' +
-        '<p class="dnote" style="margin-top:6px">' + esc(daily.rows[0][0]) + ' → ' + esc(daily.rows[daily.rows.length - 1][0]) + ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
+        '<p class="explain">' + fmt.format(totalViews) + ' views and ' + fmtHours(totalMins) + ' of watch time in this period. Hover or tap the line for exact days.</p>' +
+        lineChartHtml(pts, dTips, 'var(--live)', { label: 'Channel daily views', x0: shortDate(daily.rows[0][0]), x1: shortDate(daily.rows[daily.rows.length - 1][0]) }) +
+        '<p class="dnote" style="margin-top:6px">best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
     }
 
     if (top && top.rows && top.rows.length) {
@@ -978,9 +1048,9 @@
           '</div>';
         if (daily && daily.rows && daily.rows.length > 1) {
           const pts = daily.rows.map(x => x[1]);
+          const dTips = daily.rows.map(x => fmt.format(x[1]) + ' views — ' + friendlyDate(x[0]));
           html += '<div class="dsection"><h4>Views per day since upload</h4>' +
-            '<svg class="chart" viewBox="0 0 560 100" preserveAspectRatio="none" role="img" aria-label="Daily views since upload">' +
-            svgLine(pts, 560, 100, 8, 'var(--live)', true) + '</svg></div>';
+            lineChartHtml(pts, dTips, 'var(--live)', { label: 'Daily views since upload', x0: shortDate(daily.rows[0][0]), x1: shortDate(daily.rows[daily.rows.length - 1][0]) }) + '</div>';
         }
         if (traffic && traffic.rows && traffic.rows.length) {
           html += section('How viewers are finding it', 'Which parts of YouTube are sending people to this video.',
@@ -1204,6 +1274,21 @@
       html += '<p class="explain" style="margin:14px 0 6px">What similar videos use — <b style="color:var(--gold)">gold = they use it, you don’t (consider adding)</b>:</p><div>' +
         chipRow(topTags, missT, a.tagCounts) + chipRow(topHash, missH, a.hashtagCounts) + '</div>';
     }
+    // title patterns from the same-genre competition — feeds titles and on-screen text
+    const simTitles = (cache.similar || []).map(s => s.title).filter(Boolean);
+    if (simTitles.length) {
+      const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','your','you','my','i','is','are','be','how','what','why','this','that','it','its','at','from','vs','into','out','up','down','new','was','can','will','get','got','has','have']);
+      const wc = {};
+      for (const t of simTitles) for (const w2 of new Set((t.toLowerCase().match(/[\p{L}\p{N}']{3,}/gu) || []).filter(w3 => !STOP.has(w3)))) wc[w2] = (wc[w2] || 0) + 1;
+      const topWords = Object.entries(wc).filter(x => x[1] >= 2).sort((x, y) => y[1] - x[1]).slice(0, 12);
+      const ownWords = new Set(((meta[vid].title || '').toLowerCase().match(/[\p{L}\p{N}']{3,}/gu) || []));
+      const pct2 = f => Math.round(simTitles.filter(f).length / simTitles.length * 100);
+      const avgWords = Math.round(simTitles.reduce((s2, t) => s2 + t.split(/\s+/).length, 0) / simTitles.length);
+      html += '<p class="explain" style="margin:14px 0 6px"><b style="color:var(--text)">Title patterns in this genre</b> — steal for your titles and on-screen text. Their typical title: ~' + avgWords + ' words · ' + pct2(t => /\d/.test(t)) + '% use a number · ' + pct2(t => /\b[A-Z]{3,}\b/.test(t)) + '% use a CAPS word · ' + pct2(t => /\?/.test(t)) + '% ask a question · ' + pct2(t => /[\[(]/.test(t)) + '% use brackets.</p>';
+      if (topWords.length) html += '<p class="explain" style="margin-bottom:6px">Words winning titles keep using (gold = not in your title):</p><div>' +
+        topWords.map(([w4, n4]) => '<span class="chip' + (ownWords.has(w4) ? '' : ' missing') + '">' + esc(w4) + ' <b>×' + n4 + '</b></span>').join('') + '</div>' +
+        '<p class="dnote" style="margin-top:6px">YouTube’s API can’t see on-screen text, so use these words and your “What people searched” terms as opening hooks — and put your strongest one right before the biggest drop-off in the retention curve above.</p>';
+    }
     const ownViews = perVideo[vid] ? perVideo[vid].views : 0;
     html += '<p class="explain" style="margin:14px 0 6px">The competition for that search · this video: <b style="color:var(--text)">' + fmt.format(ownViews) + '</b> views · their median: <b style="color:var(--text)">' + fmt.format(a.medianViews || 0) + '</b></p>';
     for (const s of (cache.similar || []).slice(0, 10)) {
@@ -1348,12 +1433,11 @@
 
     if (r.daily && r.daily.rows && r.daily.rows.length > 1) {
       const pts = r.daily.rows.map(x => x[1]);
+      const dTips = r.daily.rows.map(x => fmt.format(x[1]) + ' views — ' + friendlyDate(x[0]));
       html += '<div class="dsection"><h4>Views per day</h4>' +
-        '<p class="explain">This video’s daily views across the period.</p>' +
-        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Daily views trend">' +
-        svgLine(pts, 560, 120, 8, 'var(--live)', true) + '</svg>' +
-        '<p class="dnote" style="margin-top:6px">' + esc(r.daily.rows[0][0]) + ' → ' + esc(r.daily.rows[r.daily.rows.length - 1][0]) +
-        ' · best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
+        '<p class="explain">This video’s daily views across the period. Hover or tap the line for exact days.</p>' +
+        lineChartHtml(pts, dTips, 'var(--live)', { label: 'Daily views trend', x0: shortDate(r.daily.rows[0][0]), x1: shortDate(r.daily.rows[r.daily.rows.length - 1][0]) }) +
+        '<p class="dnote" style="margin-top:6px">best day ' + fmt.format(Math.max(...pts)) + ' views</p></div>';
     }
 
     if (r.retention && r.retention.rows && r.retention.rows.length > 1) {
@@ -1363,8 +1447,7 @@
       const dropPos = Math.round(dropAt / (pts.length - 1) * 100);
       html += '<div class="dsection"><h4>How long people keep watching</h4>' +
         '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point' + (dropSize >= 1 ? ', and the biggest drop-off is around ' + dropPos + '% of the way through' : '') + '.</p>' +
-        '<svg class="chart" viewBox="0 0 560 120" preserveAspectRatio="none" role="img" aria-label="Retention curve">' +
-        svgLine(pts, 560, 120, 8, 'var(--accent)', true) + '</svg></div>';
+        lineChartHtml(pts, pts.map((p, i) => Math.round(p) + '% still watching — ' + Math.round(i / (pts.length - 1) * 100) + '% through the video'), 'var(--accent)', { label: 'Retention curve', yMaxLabel: Math.round(Math.max(...pts)) + '%', x0: 'start', x1: 'end' }) + '</div>';
     }
 
     if (r.traffic && r.traffic.rows && r.traffic.rows.length) {
