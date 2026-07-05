@@ -260,6 +260,7 @@
         <option value="120000">2m refresh</option>
         <option value="300000">5m refresh</option>
       </select>
+      <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
       <button class="ghost" id="pauseBtn">Pause</button>
       <button class="ghost" id="signOutBtn">Sign out</button>
     </div>
@@ -593,8 +594,9 @@
   /* ---------- live polling ---------- */
   function flash(el) { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); }
 
-  async function poll() {
-    if (paused || hiddenPaused || !accessToken) return;
+  async function poll(force) {
+    if (!accessToken) return;
+    if ((paused || hiddenPaused) && !force) return;
     setStatus('fetching…');
     try {
       const results = [];
@@ -1572,6 +1574,11 @@
   $('interval').addEventListener('change', () => {
     intervalMs = +$('interval').value;
     if (timer) { clearInterval(timer); timer = setInterval(poll, intervalMs); }
+  });
+  $('refreshBtn').addEventListener('click', () => {
+    if (!accessToken) return;
+    loadComments();
+    poll(true);
   });
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused;
