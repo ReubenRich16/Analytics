@@ -52,6 +52,40 @@ https://reubenrich16.github.io/Analytics/?client_id=YOUR_CLIENT_ID_HERE
 The `?client_id=` parameter prefills the Client ID forever — just tap
 **Sign in with Google**.
 
+## Phase 2 — the history robot (one-time setup, ~3 minutes)
+
+Two GitHub Actions live in this repo: an **hourly snapshot** of public stats
+(`snapshot.yml` → `data/history.json`, plus milestone alerts as GitHub
+issues) and a **weekly search-rank check** (`rank.yml` → `data/ranks.json`).
+They can't use your dashboard sign-in (that's interactive-only), so they run
+on a plain **API key** — public data only. To switch them on:
+
+1. **Create an API key**: Google Cloud Console → same project → APIs &
+   Services → Credentials → **+ Create Credentials → API key**. (Optional
+   hardening: restrict it to the YouTube Data API v3.)
+2. **Find your channel ID**: hover your channel name in the dashboard after
+   signing in (it's in the tooltip), or youtube.com/account_advanced.
+3. **Add repo secrets**: GitHub → this repo → Settings → Secrets and
+   variables → Actions → New repository secret:
+   - `YT_API_KEY` — the API key
+   - `CHANNEL_ID` — your channel ID (starts with `UC`)
+   - `BENCH_CHANNELS` *(optional)* — comma-separated channel IDs of 2–3
+     similar channels to benchmark against
+4. **Pick search keywords** *(optional)*: edit `data/keywords.json` and list
+   up to 10 search phrases to track weekly (each costs 100 units/week).
+5. Run the "Hourly stats snapshot" workflow once manually from the Actions
+   tab to confirm it goes green.
+
+The dashboard picks the data up automatically: exact subscriber history,
+views-per-hour on every video, ⚡ acceleration badges, benchmark growth
+comparison, milestones, and search ranks all appear once history exists.
+
+**Studio CSV (CTR & impressions):** no API provides these. In YouTube
+Studio → Analytics → Advanced mode → Export current view → CSV (with
+Content, Impressions and click-through-rate columns), then use **Import
+Studio CSV** at the bottom of the dashboard. Impressions & CTR then show in
+each video's Scorecard.
+
 ## Alternative: standalone repo via CLI
 
 `yt-dashboard/publish.sh` is the original one-shot publisher. If you'd rather

@@ -1,0 +1,38 @@
+name: Hourly stats snapshot
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: snapshot
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot public stats
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          BENCH_CHANNELS: ${{ secrets.BENCH_CHANNELS }}
+        run: node scripts/snapshot.mjs
+      - name: Commit history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet || git commit -m "Stats snapshot"
+          git push
+      - name: Raise milestone issue
+        if: ${{ hashFiles('new-alerts.txt') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --title "📈 Channel milestone — $(date -u +%d\ %b)" --body "$(cat new-alerts.txt)" || true

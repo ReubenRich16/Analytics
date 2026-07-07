@@ -314,6 +314,8 @@
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Recent comments</div>
     <p class="explain" style="margin-top:8px">The newest comments across the whole channel, refreshed every few minutes.</p>
     <div id="commentsList"><p class="dnote">loading comments…</p></div>
+    <button class="ghost" id="cwordsBtn" style="margin-top:10px">💡 Find patterns in the last 100 comments</button>
+    <div id="cwordsOut"></div>
   </div>
 
   <!-- HASHTAGS & KEYWORDS -->
@@ -346,6 +348,7 @@
         <option value="hot" selected>Sort: hottest</option>
         <option value="views">Sort: most views</option>
         <option value="newest">Sort: newest</option>
+        <option value="pace">Sort: views/day pace</option>
         <option value="avgpct">Sort: % watched†</option>
         <option value="subs">Sort: subs gained†</option>
         <option value="shares">Sort: shares†</option>
@@ -363,7 +366,9 @@
   <div class="footer-tools">
     <button class="ghost" id="exportBtn">Export saved data</button>
     <button class="ghost" id="importBtn">Import saved data</button>
+    <button class="ghost" id="csvBtn" title="Studio → Analytics → Advanced mode → Export CSV">Import Studio CSV (CTR)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none">
+    <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
   </div>
 </div>
 
@@ -419,6 +424,29 @@
     } catch (e) {}
     return null;
   };
+  // repo-recorded history (written hourly by the snapshot GitHub Action)
+  const DATA_RAW = 'https://raw.githubusercontent.com/ReubenRich16/Analytics/claude/youtube-dashboard-setup-8tcx30/data/';
+  let hist = null, histAlerts = [], histRanks = null, accelSet = new Set();
+  const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
+  async function loadHistory() {
+    const grab = async f => { try { const r = await fetch(DATA_RAW + f, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; } };
+    hist = await grab('history.json');
+    histAlerts = (await grab('alerts.json')) || [];
+    histRanks = await grab('ranks.json');
+    accelSet = new Set();
+    if (hist && hist.videos) {
+      const now2 = Date.now();
+      for (const [vid, arr] of Object.entries(hist.videos)) {
+        if (arr.length < 3) continue;
+        const nowS = arr[arr.length - 1];
+        const d1 = histAtOrBefore(arr, now2 - 864e5), d2 = histAtOrBefore(arr, now2 - 2 * 864e5);
+        if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
+        if (nowS[1] - d1[1] >= 50 && nowS[1] - d1[1] >= (d1[1] - d2[1]) * 1.5) accelSet.add(vid);
+      }
+    }
+    if (videoIds.length) { renderTable(); loadTrends(); }
+  }
+
   const cacheSet = (k, obj) => {
     obj.fetchedAt = new Date().toISOString();
     try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {
@@ -552,6 +580,7 @@
     uploadsPlaylist = c.contentDetails.relatedPlaylists.uploads;
     channelPublished = (c.snippet.publishedAt || '2005-01-01').slice(0, 10);
     $('chTitle').textContent = c.snippet.title;
+    $('chTitle').title = 'Channel ID: ' + chanId;
     $('chMeta').textContent = fmt.format(+c.statistics.subscriberCount) + ' subs · ' + fmt.format(+c.statistics.videoCount) + ' videos';
     const th = c.snippet.thumbnails?.default?.url; if (th) $('chThumb').src = th;
 
@@ -609,6 +638,7 @@
     loadLatest();
     loadRollup();
     spawnBalls();
+    loadHistory();
   }
 
   // floating thumbnail balls background
@@ -754,9 +784,10 @@
 
   function renderTable() {
     const mode = $('sortMode').value;
-    const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id], ru: rollupMap[id] || {} })).filter(r => r.views !== undefined);
+    const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id], ru: rollupMap[id] || {}, pace: perVideo[id] ? perVideo[id].views / Math.max(1, (Date.now() - new Date(meta[id].publishedAt)) / 864e5) : 0 })).filter(r => r.views !== undefined);
     if (mode === 'views') rows.sort((a, b) => b.views - a.views);
     else if (mode === 'newest') rows.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+    else if (mode === 'pace') rows.sort((a, b) => b.pace - a.pace);
     else if (mode === 'avgpct') rows.sort((a, b) => (b.ru.avgPct || 0) - (a.ru.avgPct || 0));
     else if (mode === 'subs') rows.sort((a, b) => (b.ru.subs || 0) - (a.ru.subs || 0));
     else if (mode === 'shares') rows.sort((a, b) => (b.ru.shares || 0) - (a.ru.shares || 0));
@@ -768,7 +799,7 @@
       if (r.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="thumbcell">' + (r.thumb ? '<img class="vthumb" loading="lazy" alt="" src="' + esc(r.thumb) + '">' : '') + '</td>' +
-        '<td class="title">' + esc(r.title) + '</td>' +
+        '<td class="title">' + (accelSet.has(r.id) ? '<span title="Accelerating — views coming in 1.5x+ faster than yesterday">⚡ </span>' : '') + esc(r.title) + '</td>' +
         '<td>' + fmt.format(r.views) + '</td>' +
         '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
@@ -843,6 +874,32 @@
       const y = v >= 0 ? zero - bh : zero;
       out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" style="fill:' + (v >= 0 ? 'var(--up)' : 'var(--down)') + '"/>';
     });
+    return out + '</svg>';
+  }
+
+  // several lines on one chart (launch-curve overlays)
+  function multiLineHtml(series, tips, opts) {
+    opts = opts || {};
+    const w = 560, h = 150, L = 46, R = 10, T = 12, B = 24;
+    const maxLen = Math.max(2, ...series.map(s => s.pts.length));
+    const maxV = Math.max(1, ...series.flatMap(s => s.pts));
+    const X = i => L + i * (w - L - R) / (maxLen - 1);
+    const Y = v => h - B - (v / maxV) * (h - T - B);
+    const ci = chartReg.length;
+    chartReg.push({ tips, L, R, w });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
+      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
+      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
+      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + fmt.format(Math.round(maxV)) + '</text>' +
+      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">0</text>' +
+      (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
+      (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '');
+    for (const s of series) {
+      if (s.pts.length < 2) continue;
+      let d = 'M' + X(0).toFixed(1) + ',' + Y(s.pts[0]).toFixed(1);
+      for (let i = 1; i < s.pts.length; i++) d += ' L' + X(i).toFixed(1) + ',' + Y(s.pts[i]).toFixed(1);
+      out += '<path d="' + d + '" style="fill:none;stroke:' + s.color + ';stroke-width:' + (s.width || 1.5) + ';opacity:' + (s.opacity != null ? s.opacity : 1) + '"/>';
+    }
     return out + '</svg>';
   }
 
@@ -1019,6 +1076,43 @@
         barChartHtml(hourBuckets, hTips, 'Views by hour of day'));
     }
 
+    // recorded history sections (from the repo's hourly snapshot job)
+    if (hist && hist.channel && hist.channel.length > 1) {
+      const chn = hist.channel;
+      const sPts = chn.map(s2 => s2[1]);
+      const sTips = chn.map(s2 => fmt.format(s2[1]) + ' subs — ' + new Date(s2[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
+      html += section('Subscriber history — recorded hourly', 'From the repo’s snapshot robot. YouTube publicly shows rounded subscriber counts, so the line moves in steps — this is the only free way to see movement between days.',
+        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
+      const bIds = Object.keys(hist.bench || {});
+      if (bIds.length) {
+        const cut = Date.now() - 30 * 864e5;
+        const growth = arr => { const a = histAtOrBefore(arr, cut) || arr[0]; const b = arr[arr.length - 1]; return a && a[1] ? { pct: (b[1] - a[1]) / a[1] * 100, now: b[1] } : null; };
+        const rows2 = [];
+        const own = growth(chn);
+        if (own) rows2.push({ label: '★ Your channel', val: Math.max(0.01, own.pct), valText: own.pct.toFixed(1) + '% · ' + fmt.format(own.now) + ' subs', color: 'var(--live)', strong: true });
+        for (const b of bIds) { const g = growth(hist.bench[b]); if (g) rows2.push({ label: (hist.benchMeta && hist.benchMeta[b]) || b, val: Math.max(0.01, g.pct), valText: g.pct.toFixed(1) + '% · ' + fmt.format(g.now) + ' subs' }); }
+        if (rows2.length > 1) html += section('Benchmark channels — subscriber growth, last 30 days', 'Similar channels tracked by the snapshot robot (set channel IDs in the BENCH_CHANNELS repo secret).',
+          hbarList(rows2.sort((a, b) => b.val - a.val)));
+      }
+    }
+    if (histAlerts && histAlerts.length) {
+      html += section('Recent milestones', 'Detected automatically by the hourly snapshot job — it also opens a GitHub issue so you get a notification.',
+        histAlerts.slice(-5).reverse().map(a => '<p class="dnote" style="margin-bottom:6px">' + esc(new Date(a.ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })) + ' — ' + esc(a.text) + '</p>').join(''));
+    }
+    if (histRanks && Object.keys(histRanks).length) {
+      let rr = '';
+      for (const [kw, arr] of Object.entries(histRanks)) {
+        if (!arr.length) continue;
+        const last = arr[arr.length - 1], prevR = arr.length > 1 ? arr[arr.length - 2] : null;
+        const delta = prevR && prevR.rank && last.rank ? prevR.rank - last.rank : 0;
+        rr += '<p class="dnote" style="margin-bottom:6px">“' + esc(kw) + '” — ' + (last.rank ? ('<b style="color:var(--text)">#' + last.rank + '</b>' + (delta ? ' <b style="color:' + (delta > 0 ? 'var(--up)' : 'var(--down)') + '">' + (delta > 0 ? '▲' : '▼') + Math.abs(delta) + '</b>' : '')) : 'not in top 50') + (last.title ? ' · ' + esc(last.title) : '') + '</p>';
+      }
+      if (rr) html += section('Search rank tracker — weekly', 'Where your videos rank in YouTube search for your target keywords. Edit data/keywords.json in the repo to choose them (max 10).', rr);
+    }
+    if (!hist) {
+      html += '<div class="dsection"><h4>Unlock hourly history 🔓</h4><p class="explain">A snapshot robot is installed in the repo but needs two one-time secrets: create an <b>API key</b> in your Google Cloud project (Credentials → Create credentials → API key), then in GitHub → Analytics repo → Settings → Secrets and variables → Actions, add <b>YT_API_KEY</b> and <b>CHANNEL_ID</b> (your channel ID is in the tooltip when you hover your channel name above). Once set, this card grows: exact subscriber history, views-per-hour on every video, ⚡ acceleration badges, milestone alerts, rival-channel tracking and weekly search ranks. Full steps in the repo README.</p></div>';
+    }
+
     $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
   }
 
@@ -1185,9 +1279,11 @@
           '<div class="loading" id="compareLoading" style="display:none">comparing…</div>' +
           '<div id="compareContent"></div></div>';
 
+        html += '<div id="launchWrap"></div>';
         html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
       }
       $('latestContent').innerHTML = html;
+      loadLaunchCurves();
       renderLiveRace();
       const rm = $('raceModeRow');
       if (rm) rm.addEventListener('click', e => {
@@ -1258,6 +1354,34 @@
     }
   }
 
+  /* ---------- comment intelligence ---------- */
+  async function analyzeComments() {
+    const out = $('cwordsOut');
+    out.innerHTML = '<p class="loading">reading the last 100 comments…</p>';
+    try {
+      let c = cacheGet('cc:cwords:v1', 12 * 3600 * 1000);
+      if (!c) {
+        const d = await dataApi('commentThreads', { part: 'snippet', allThreadsRelatedToChannelId: chanId, order: 'time', maxResults: '100', textFormat: 'plainText' });
+        c = { texts: (d.items || []).map(it => it.snippet.topLevelComment.snippet.textDisplay || '') };
+        cacheSet('cc:cwords:v1', c);
+      }
+      const STOP2 = new Set(['the','and','this','that','you','your','for','was','are','have','has','with','not','but','just','like','love','video','videos','really','much','more','very','one','can','all','out','get','its','it’s','his','her','him','she','they','them','from','what','when','how','who','why','will','would','could','been','had','did','does','omg','wow','nice','good','great','amazing','best','make','made','watch','watching','youtube','channel','please','thanks','thank']);
+      const uni = {}, bi = {};
+      for (const t of c.texts) {
+        const ws = (t.toLowerCase().match(/[\p{L}']{3,}/gu) || []).filter(w2 => !STOP2.has(w2));
+        for (const w2 of new Set(ws)) uni[w2] = (uni[w2] || 0) + 1;
+        for (let i = 0; i < ws.length - 1; i++) { const b = ws[i] + ' ' + ws[i + 1]; bi[b] = (bi[b] || 0) + 1; }
+      }
+      const top = (o, n2, min) => Object.entries(o).filter(x => x[1] >= min).sort((x, y) => y[1] - x[1]).slice(0, n2);
+      const bits = top(bi, 10, 2), unis = top(uni, 12, 3);
+      out.innerHTML = (bits.length || unis.length)
+        ? '<p class="explain" style="margin-top:10px">What people keep saying — phrases first (gold), then words. Repeated phrases are usually content requests:</p><div>' +
+          bits.map(([w2, n2]) => '<span class="chip missing">' + esc(w2) + ' <b>×' + n2 + '</b></span>').join('') +
+          unis.map(([w2, n2]) => '<span class="chip">' + esc(w2) + ' <b>×' + n2 + '</b></span>').join('') + '</div>'
+        : '<p class="dnote">Not enough comment text yet to find patterns — check back when there are more comments.</p>';
+    } catch (e) { out.innerHTML = '<p class="dnote">' + esc(e.message) + '</p>'; }
+  }
+
   /* ---------- hashtag & keyword rankings ---------- */
   function renderKeywords() {
     const el = $('keywordsContent');
@@ -1289,6 +1413,48 @@
     if (tags.length) html += section('Top 10 keywords (video tags)', 'The tags set on each upload.',
       hbarList(tags.map(x => ({ label: x.label, val: Math.round(x.avg), valText: 'avg ' + fmt.format(Math.round(x.avg)) + ' · ' + x.n + ' vid' + (x.n > 1 ? 's' : '') })), { color: 'var(--purple)' }));
     el.innerHTML = html;
+  }
+
+  /* ---------- launch curves: every video's first 14 days, aligned by age ---------- */
+  async function loadLaunchCurves() {
+    const holder = $('launchWrap');
+    if (!holder || !latestVid) return;
+    try {
+      const vids = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 8);
+      const curves = {};
+      for (const vid of vids) {
+        const key = 'cc:launch:v1:' + vid;
+        let c = cacheGet(key, vid === latestVid ? 6 * 3600 * 1000 : 0);
+        if (!c) {
+          const pub = (meta[vid].publishedAt || '').slice(0, 10);
+          const end = iso(new Date(Math.min(Date.now(), new Date(pub).getTime() + 13 * 864e5)));
+          const r = await tryApi({ startDate: pub, endDate: end, metrics: 'views', dimensions: 'day', sort: 'day', filters: 'video==' + vid });
+          c = { rows: (r && r.rows) || [] };
+          cacheSet(key, c);
+        }
+        let cum = 0;
+        curves[vid] = c.rows.map(x => cum += x[1]);
+      }
+      const others = vids.filter(v => v !== latestVid).map(v => curves[v]).filter(a => a && a.length > 1);
+      const latest = curves[latestVid] || [];
+      if (!others.length && latest.length < 2) { holder.innerHTML = ''; return; }
+      const maxLen = Math.max(latest.length, 2, ...others.map(a => a.length));
+      const med = [];
+      for (let i = 0; i < maxLen; i++) {
+        const vals = others.map(a => a[Math.min(i, a.length - 1)]).sort((x, y) => x - y);
+        med.push(vals.length ? vals[vals.length >> 1] : 0);
+      }
+      const tips = [];
+      for (let i = 0; i < maxLen; i++) tips.push('Day ' + (i + 1) + ' — ★ this video: ' + (latest[i] != null ? fmt.format(latest[i]) : '—') + ' · typical launch: ' + fmt.format(med[i] || 0));
+      const series = [
+        ...others.map(a => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .3 })),
+        { pts: med, color: 'var(--gold)', width: 1.5 },
+        ...(latest.length > 1 ? [{ pts: latest, color: 'var(--live)', width: 2.5 }] : [])
+      ];
+      holder.innerHTML = '<div class="dsection"><h4>Launch curves — every video’s first 14 days, aligned by age</h4>' +
+        '<p class="explain">Grey lines are your previous launches (total views by days since each one’s own upload), gold is your typical launch, red is this video. Red above gold = beating your usual start.</p>' +
+        multiLineHtml(series, tips, { label: 'Launch curves', x0: 'day 1', x1: 'day ' + maxLen }) + '</div>';
+    } catch (e) { holder.innerHTML = ''; }
   }
 
   /* ---------- same-age comparison ---------- */
@@ -1548,6 +1714,37 @@
       mcell('Subscribers', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost from this video') +
       '</div>';
 
+    // live scorecard — fair comparisons regardless of video age, zero extra quota
+    const svid = currentVideo;
+    const pv = perVideo[svid] || { views: 0, likes: 0, comments: 0 };
+    const ageD2 = Math.max(1, (Date.now() - new Date(meta[svid].publishedAt)) / 864e5);
+    const vpd = pv.views / ageD2;
+    const allRates = videoIds.filter(id => perVideo[id] && meta[id]).map(id => perVideo[id].views / Math.max(1, (Date.now() - new Date(meta[id].publishedAt)) / 864e5)).sort((a, b) => a - b);
+    const medRate = allRates.length ? allRates[allRates.length >> 1] : 0;
+    let ctrMap = {};
+    try { ctrMap = (JSON.parse(localStorage.getItem('cc:ctr:v1') || '{}').map) || {}; } catch (e) {}
+    html += '<div class="dsection"><h4>Scorecard</h4><p class="explain">Computed live — age doesn’t distort these, so old and new videos compare fairly.</p><div class="metric-grid">' +
+      mcell('Engagement', pv.views ? (pv.likes / pv.views * 100).toFixed(1) + '%' : '–', 'likes per view') +
+      mcell('Comments /1k views', pv.views ? (pv.comments / pv.views * 1000).toFixed(1) : '–') +
+      mcell('Views per day', fmt.format(Math.round(vpd)), 'since upload') +
+      (medRate ? mcell('Performance index', Math.round(vpd / medRate * 100) + '%', '100% = your typical video') : '') +
+      (ctrMap[svid] ? mcell('Impressions', fmt.format(ctrMap[svid].imp), 'from Studio CSV') + mcell('CTR', ctrMap[svid].ctr.toFixed(1) + '%', 'from Studio CSV') : '') +
+      '</div></div>';
+
+    // hour-by-hour history from the repo's snapshot robot
+    if (hist && hist.videos && hist.videos[svid] && hist.videos[svid].length > 2) {
+      const harr = hist.videos[svid].slice(-169);
+      const hPts = [], hTips2 = [];
+      for (let i = 1; i < harr.length; i++) {
+        const dv = Math.max(0, harr[i][1] - harr[i - 1][1]);
+        hPts.push(dv);
+        hTips2.push('+' + fmt.format(dv) + ' views — ' + new Date(harr[i][0]).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric' }));
+      }
+      if (hPts.length > 1) html += '<div class="dsection"><h4>Views per hour — recorded history</h4>' +
+        '<p class="explain">From the repo’s hourly snapshot robot — the hour-by-hour view YouTube never provides. Hover for exact hours.</p>' +
+        lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views per hour' }) + '</div>';
+    }
+
     if (r.daily && r.daily.rows && r.daily.rows.length > 1) {
       const pts = r.daily.rows.map(x => x[1]);
       const dTips = r.daily.rows.map(x => fmt.format(x[1]) + ' views — ' + friendlyDate(x[0]));
@@ -1681,6 +1878,46 @@
         }
         alert('Imported ' + n + ' saved items. Reload the page to use them.');
       } catch (err) { alert('That file didn’t look right: ' + err.message); }
+    };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
+  // Studio CSV import — brings in impressions + CTR, which no API provides
+  $('cwordsBtn').addEventListener('click', analyzeComments);
+  $('csvBtn').addEventListener('click', () => $('csvFile').click());
+  $('csvFile').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const rowsC = [];
+        let row = [], cur = '', q = false;
+        const text = String(rd.result);
+        for (let i = 0; i < text.length; i++) {
+          const ch2 = text[i];
+          if (q) { if (ch2 === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch2; }
+          else if (ch2 === '"') q = true;
+          else if (ch2 === ',') { row.push(cur); cur = ''; }
+          else if (ch2 === '\n' || ch2 === '\r') { if (cur !== '' || row.length) { row.push(cur); rowsC.push(row); row = []; cur = ''; } }
+          else cur += ch2;
+        }
+        if (cur !== '' || row.length) { row.push(cur); rowsC.push(row); }
+        const head = rowsC[0].map(h2 => h2.trim().toLowerCase());
+        const iC = head.findIndex(h2 => h2 === 'content' || h2 === 'video');
+        const iI = head.findIndex(h2 => h2 === 'impressions');
+        const iR = head.findIndex(h2 => h2.includes('click-through') || h2.includes('click through'));
+        if (iC < 0 || iI < 0 || iR < 0) { alert('That CSV doesn’t have Content / Impressions / click-through columns. In YouTube Studio: Analytics → Advanced mode → Export current view → CSV, with those columns visible.'); return; }
+        const map = {};
+        for (const r2 of rowsC.slice(1)) {
+          const id = (r2[iC] || '').trim();
+          if (!/^[\w-]{11}$/.test(id)) continue;
+          map[id] = { imp: +String(r2[iI]).replace(/[^\d]/g, '') || 0, ctr: parseFloat(String(r2[iR]).replace('%', '')) || 0 };
+        }
+        if (!Object.keys(map).length) { alert('No video rows recognised in that CSV.'); return; }
+        cacheSet('cc:ctr:v1', { map });
+        alert('Imported impressions & CTR for ' + Object.keys(map).length + ' videos — open any video’s Full breakdown to see them in the Scorecard.');
+      } catch (err) { alert('Couldn’t read that CSV: ' + err.message); }
     };
     rd.readAsText(f);
     e.target.value = '';
