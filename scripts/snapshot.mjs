@@ -30,7 +30,7 @@ try { h = { ...h, ...JSON.parse(fs.readFileSync(HIST, 'utf8')) }; } catch {}
 const ch = await api('channels', { part: 'statistics,contentDetails', id: CHANNEL });
 if (!ch.items || !ch.items.length) throw new Error('CHANNEL_ID not found');
 const c = ch.items[0];
-h.channel.push([now, +c.statistics.subscriberCount, +c.statistics.viewCount]);
+h.channel.push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
 
 const uploads = c.contentDetails.relatedPlaylists.uploads;
 let ids = [], pageToken = '';
@@ -52,16 +52,18 @@ for (let i = 0; i < ids.length; i += 50) {
 if (BENCH.length) {
   const d = await api('channels', { part: 'snippet,statistics', id: BENCH.join(',') });
   for (const it of d.items || []) {
-    (h.bench[it.id] = h.bench[it.id] || []).push([now, +it.statistics.subscriberCount, +it.statistics.viewCount]);
+    (h.bench[it.id] = h.bench[it.id] || []).push([now, +it.statistics.subscriberCount || 0, +it.statistics.viewCount || 0]);
     h.benchMeta[it.id] = it.snippet.title;
   }
 }
 
-// prune: hourly for 14 days, then one sample per UTC day
+// prune: hourly for 14 days, then one sample per UTC day, nothing past 400 days
 const cutoff = now - 14 * 864e5;
+const maxAge = now - 400 * 864e5;
 const prune = arr => {
   const out = [], seen = new Set();
   for (const s of arr) {
+    if (s[0] < maxAge) continue;
     if (s[0] >= cutoff) { out.push(s); continue; }
     const day = new Date(s[0]).toISOString().slice(0, 10);
     if (!seen.has(day)) { seen.add(day); out.push(s); }

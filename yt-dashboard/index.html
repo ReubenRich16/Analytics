@@ -1424,12 +1424,14 @@
       const curves = {};
       for (const vid of vids) {
         const key = 'cc:launch:v1:' + vid;
-        let c = cacheGet(key, vid === latestVid ? 6 * 3600 * 1000 : 0);
+        // permanent cache only once the 14-day window is complete; otherwise refresh every 6h
+        let c = cacheGet(key, 6 * 3600 * 1000);
+        if (!c) { const full = cacheGet(key); if (full && full.done) c = full; }
         if (!c) {
           const pub = (meta[vid].publishedAt || '').slice(0, 10);
           const end = iso(new Date(Math.min(Date.now(), new Date(pub).getTime() + 13 * 864e5)));
           const r = await tryApi({ startDate: pub, endDate: end, metrics: 'views', dimensions: 'day', sort: 'day', filters: 'video==' + vid });
-          c = { rows: (r && r.rows) || [] };
+          c = { rows: (r && r.rows) || [], done: (Date.now() - new Date(meta[vid].publishedAt)) / 864e5 >= 15 };
           cacheSet(key, c);
         }
         let cum = 0;
