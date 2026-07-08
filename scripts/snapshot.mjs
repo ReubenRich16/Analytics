@@ -5,9 +5,9 @@
 import fs from 'fs';
 
 const KEY = process.env.YT_API_KEY;
-const CHANNEL = process.env.CHANNEL_ID;
+const CHANNELS = (process.env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
 const BENCH = (process.env.BENCH_CHANNELS || '').split(',').map(s => s.trim()).filter(Boolean);
-if (!KEY || !CHANNEL) {
+if (!KEY || !CHANNELS.length) {
   console.log('YT_API_KEY / CHANNEL_ID secrets not set — skipping snapshot.');
   process.exit(0);
 }
@@ -23,29 +23,36 @@ const api = async (ep, params) => {
 
 const now = Date.now();
 const HIST = 'data/history.json';
-let h = { channel: [], videos: {}, bench: {}, benchMeta: {}, lastAlerts: {} };
+let h = { channels: {}, channelMeta: {}, videos: {}, bench: {}, benchMeta: {}, lastAlerts: {} };
 try { h = { ...h, ...JSON.parse(fs.readFileSync(HIST, 'utf8')) }; } catch {}
+// migrate the old single-channel shape, and guard against missing keys
+if (Array.isArray(h.channel)) { if (CHANNELS[0]) h.channels[CHANNELS[0]] = h.channel; delete h.channel; }
+if (!h.channels) h.channels = {};
+if (!h.channelMeta) h.channelMeta = {};
 
-// own channel + uploads
-const ch = await api('channels', { part: 'statistics,contentDetails', id: CHANNEL });
-if (!ch.items || !ch.items.length) throw new Error('CHANNEL_ID not found');
-const c = ch.items[0];
-h.channel.push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
-
-const uploads = c.contentDetails.relatedPlaylists.uploads;
-let ids = [], pageToken = '';
-while (ids.length < 200) {
-  const d = await api('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, ...(pageToken ? { pageToken } : {}) });
-  ids.push(...d.items.map(i => i.contentDetails.videoId));
-  pageToken = d.nextPageToken;
-  if (!pageToken) break;
-}
-for (let i = 0; i < ids.length; i += 50) {
-  const d = await api('videos', { part: 'statistics', id: ids.slice(i, i + 50).join(',') });
-  for (const it of d.items) {
-    const s = it.statistics;
-    (h.videos[it.id] = h.videos[it.id] || []).push([now, +(s.viewCount || 0), +(s.likeCount || 0), +(s.commentCount || 0)]);
+// own channel(s) + uploads — all channels fetched in one call
+const ch = await api('channels', { part: 'snippet,statistics,contentDetails', id: CHANNELS.join(',') });
+if (!ch.items || !ch.items.length) throw new Error('No CHANNEL_ID channels found');
+let vidCount = 0;
+for (const c of ch.items) {
+  h.channelMeta[c.id] = c.snippet.title;
+  (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
+  const uploads = c.contentDetails.relatedPlaylists.uploads;
+  let ids = [], pageToken = '';
+  while (ids.length < 200) {
+    const d = await api('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, ...(pageToken ? { pageToken } : {}) });
+    ids.push(...d.items.map(i => i.contentDetails.videoId));
+    pageToken = d.nextPageToken;
+    if (!pageToken) break;
   }
+  for (let i = 0; i < ids.length; i += 50) {
+    const d = await api('videos', { part: 'statistics', id: ids.slice(i, i + 50).join(',') });
+    for (const it of d.items) {
+      const s = it.statistics;
+      (h.videos[it.id] = h.videos[it.id] || []).push([now, +(s.viewCount || 0), +(s.likeCount || 0), +(s.commentCount || 0)]);
+    }
+  }
+  vidCount += ids.length;
 }
 
 // benchmark channels (optional)
@@ -70,7 +77,7 @@ const prune = arr => {
   }
   return out;
 };
-h.channel = prune(h.channel);
+for (const k of Object.keys(h.channels)) h.channels[k] = prune(h.channels[k]);
 for (const k of Object.keys(h.videos)) h.videos[k] = prune(h.videos[k]);
 for (const k of Object.keys(h.bench)) h.bench[k] = prune(h.bench[k]);
 
@@ -80,12 +87,13 @@ try { alerts = JSON.parse(fs.readFileSync('data/alerts.json', 'utf8')); } catch 
 const newAlerts = [];
 const atOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
 
-if (h.channel.length >= 2) {
-  const prev = h.channel[h.channel.length - 2][1], cur = h.channel[h.channel.length - 1][1];
+for (const [cid, arr] of Object.entries(h.channels)) {
+  if (arr.length < 2) continue;
+  const prev = arr[arr.length - 2][1], cur = arr[arr.length - 1][1];
   if (cur > prev) {
     const step = Math.max(10, Math.pow(10, Math.floor(Math.log10(Math.max(10, cur)))) / 10);
     if (Math.floor(cur / step) > Math.floor(prev / step)) {
-      newAlerts.push({ ts: now, type: 'subs', text: 'Channel crossed ' + (Math.floor(cur / step) * step).toLocaleString() + ' subscribers (now ' + cur.toLocaleString() + ')' });
+      newAlerts.push({ ts: now, type: 'subs', text: (h.channelMeta[cid] || 'Channel') + ' crossed ' + (Math.floor(cur / step) * step).toLocaleString() + ' subscribers (now ' + cur.toLocaleString() + ')' });
     }
   }
 }
@@ -108,4 +116,4 @@ fs.mkdirSync('data', { recursive: true });
 fs.writeFileSync(HIST, JSON.stringify(h));
 fs.writeFileSync('data/alerts.json', JSON.stringify(alerts, null, 1));
 if (newAlerts.length) fs.writeFileSync('new-alerts.txt', newAlerts.map(a => a.text).join('\n'));
-console.log('Snapshot ok: ' + ids.length + ' videos, ' + BENCH.length + ' benchmark channels, ' + newAlerts.length + ' new alerts.');
+console.log('Snapshot ok: ' + CHANNELS.length + ' channel(s), ' + vidCount + ' videos, ' + BENCH.length + ' benchmark channels, ' + newAlerts.length + ' new alerts.');

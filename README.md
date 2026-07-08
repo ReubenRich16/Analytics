@@ -68,9 +68,14 @@ on a plain **API key** — public data only. To switch them on:
 3. **Add repo secrets**: GitHub → this repo → Settings → Secrets and
    variables → Actions → New repository secret:
    - `YT_API_KEY` — the API key
-   - `CHANNEL_ID` — your channel ID (starts with `UC`)
+   - `CHANNEL_ID` — your channel ID (starts with `UC`). To fully track more
+     than one channel (e.g. yours and a partner's), list them
+     comma-separated: `UCyours,UCpartners`. Each gets its own subscriber
+     history, per-video hourly stats, milestones and acceleration; the
+     dashboard shows whichever one is signed in.
    - `BENCH_CHANNELS` *(optional)* — comma-separated channel IDs of 2–3
-     similar channels to benchmark against
+     similar channels to benchmark against (growth comparison only, not full
+     per-video history)
 4. **Pick search keywords** *(optional)*: edit `data/keywords.json` and list
    up to 10 search phrases to track weekly (each costs 100 units/week).
 5. Run the "Hourly stats snapshot" workflow once manually from the Actions

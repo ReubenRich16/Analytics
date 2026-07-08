@@ -3,10 +3,10 @@
 import fs from 'fs';
 
 const KEY = process.env.YT_API_KEY;
-const CHANNEL = process.env.CHANNEL_ID;
+const CHANset = new Set((process.env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean));
 let kws = [];
 try { kws = JSON.parse(fs.readFileSync('data/keywords.json', 'utf8')).keywords || []; } catch {}
-if (!KEY || !CHANNEL || !kws.length) {
+if (!KEY || !CHANset.size || !kws.length) {
   console.log('Secrets or data/keywords.json keywords missing — skipping rank check.');
   process.exit(0);
 }
@@ -25,7 +25,7 @@ try { ranks = JSON.parse(fs.readFileSync('data/ranks.json', 'utf8')); } catch {}
 
 for (const q of kws.slice(0, 10)) {
   const d = await api('search', { part: 'snippet', type: 'video', q, maxResults: 50, order: 'relevance' });
-  const pos = (d.items || []).findIndex(it => it.snippet && it.snippet.channelId === CHANNEL);
+  const pos = (d.items || []).findIndex(it => it.snippet && CHANset.has(it.snippet.channelId));
   const hit = pos >= 0
     ? { rank: pos + 1, videoId: d.items[pos].id.videoId, title: d.items[pos].snippet.title }
     : { rank: null };

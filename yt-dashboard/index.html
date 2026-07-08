@@ -1077,8 +1077,8 @@
     }
 
     // recorded history sections (from the repo's hourly snapshot job)
-    if (hist && hist.channel && hist.channel.length > 1) {
-      const chn = hist.channel;
+    const chn = hist && ((hist.channels && hist.channels[chanId]) || hist.channel);
+    if (chn && chn.length > 1) {
       const sPts = chn.map(s2 => s2[1]);
       const sTips = chn.map(s2 => fmt.format(s2[1]) + ' subs — ' + new Date(s2[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
       html += section('Subscriber history — recorded hourly', 'From the repo’s snapshot robot. YouTube publicly shows rounded subscriber counts, so the line moves in steps — this is the only free way to see movement between days.',
