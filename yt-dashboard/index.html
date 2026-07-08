@@ -1105,7 +1105,7 @@
         if (!arr.length) continue;
         const last = arr[arr.length - 1], prevR = arr.length > 1 ? arr[arr.length - 2] : null;
         const delta = prevR && prevR.rank && last.rank ? prevR.rank - last.rank : 0;
-        rr += '<p class="dnote" style="margin-bottom:6px">“' + esc(kw) + '” — ' + (last.rank ? ('<b style="color:var(--text)">#' + last.rank + '</b>' + (delta ? ' <b style="color:' + (delta > 0 ? 'var(--up)' : 'var(--down)') + '">' + (delta > 0 ? '▲' : '▼') + Math.abs(delta) + '</b>' : '')) : 'not in top 50') + (last.title ? ' · ' + esc(last.title) : '') + '</p>';
+        rr += '<p class="dnote" style="margin-bottom:6px">“' + esc(kw) + '” — ' + (last.rank ? ('<b style="color:var(--text)">#' + last.rank + '</b>' + (delta ? ' <b style="color:' + (delta > 0 ? 'var(--up)' : 'var(--down)') + '">' + (delta > 0 ? '▲' : '▼') + Math.abs(delta) + '</b>' : '')) : 'not in top ' + (last.checkedDepth || 50)) + (last.title ? ' · ' + esc(last.title) : '') + '</p>';
       }
       if (rr) html += section('Search rank tracker — weekly', 'Where your videos rank in YouTube search for your target keywords. Edit data/keywords.json in the repo to choose them (max 10).', rr);
     }
