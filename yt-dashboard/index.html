@@ -495,10 +495,13 @@
     try { localStorage.setItem('cc_tok', JSON.stringify({ t: accessToken, e: tokenExp })); } catch (e) {}
     scheduleRefresh();
   }
+  function renewToken() {
+    try { if (tokenClient) tokenClient.requestAccessToken({ prompt: '' }); } catch (e) {}
+  }
   function scheduleRefresh() {
     if (refreshTimer) clearTimeout(refreshTimer);
     const ms = Math.max(30000, tokenExp - Date.now() - 5 * 60 * 1000);
-    refreshTimer = setTimeout(() => { try { if (tokenClient && !document.hidden) tokenClient.requestAccessToken({ prompt: '' }); } catch (e) {} }, ms);
+    refreshTimer = setTimeout(renewToken, ms);
   }
   function ensureTokenClient(cid) {
     if (tokenClient || !window.google || !google.accounts) return;
@@ -531,10 +534,8 @@
   async function api(url) {
     const res = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
     if (res.status === 401) {
-      accessToken = null;
-      try { localStorage.removeItem('cc_tok'); } catch (e) {}
-      if (tokenClient) tokenClient.requestAccessToken({ prompt: '' });
-      throw new Error('Reconnecting to Google — if this message stays, tap it to sign back in.');
+      if (tokenClient) { setStatus('reconnecting…'); tokenClient.requestAccessToken({ prompt: '' }); }
+      const e = new Error('Reconnecting to Google…'); e.reauth = true; throw e;
     }
     const data = await res.json();
     if (!res.ok) {
@@ -755,6 +756,7 @@
       requestAnimationFrame(() => requestAnimationFrame(() => st.classList.remove('tick')));
     } catch (err) {
       $('liveDot').classList.remove('on');
+      if (err && err.reauth) { setStatus('reconnecting…'); return; }
       setStatus('error');
       showError(err.message);
     }
@@ -2007,8 +2009,10 @@
   // Quota saver: stop polling when the tab/screen isn't visible
   document.addEventListener('visibilitychange', () => {
     hiddenPaused = document.hidden;
-    if (!document.hidden && !paused) { setStatus('resuming…'); poll(); }
-    else if (document.hidden) setStatus('sleeping (tab hidden)');
+    if (!document.hidden) {
+      if (accessToken && tokenExp - Date.now() < 5 * 60 * 1000) renewToken();
+      if (!paused) { setStatus('resuming…'); poll(); }
+    } else setStatus('sleeping (tab hidden)');
   });
 
   // Prefill client id: URL ?client_id=... wins, then the one remembered on this device, then the built-in default.
