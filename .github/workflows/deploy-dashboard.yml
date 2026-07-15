@@ -7,6 +7,7 @@ on:
       - claude/youtube-dashboard-setup-8tcx30
     paths:
       - 'yt-dashboard/**'
+      - 'data/**'
       - '.github/workflows/deploy-dashboard.yml'
   workflow_dispatch:
 
@@ -24,6 +25,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Publish yt-dashboard/ to the gh-pages branch
         run: |
+          # bundle recorded data into the published site so the dashboard reads it
+          # from its own origin (data/), independent of any source-branch name
+          cp -r data yt-dashboard/data 2>/dev/null || true
           cd yt-dashboard
           rm -f publish.sh
           touch .nojekyll

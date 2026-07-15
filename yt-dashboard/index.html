@@ -424,8 +424,10 @@
     } catch (e) {}
     return null;
   };
-  // repo-recorded history (written hourly by the snapshot GitHub Action)
-  const DATA_RAW = 'https://raw.githubusercontent.com/ReubenRich16/Analytics/claude/youtube-dashboard-setup-8tcx30/data/';
+  // repo-recorded history (written hourly by the snapshot Action, bundled into the
+  // deployed site by deploy-dashboard.yml). Same-origin relative path so it never
+  // depends on a source-branch name that could be merged/renamed away.
+  const DATA_RAW = 'data/';
   let hist = null, histAlerts = [], histRanks = null, accelSet = new Set();
   const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
   async function loadHistory() {
@@ -449,12 +451,13 @@
 
   const cacheSet = (k, obj) => {
     obj.fetchedAt = new Date().toISOString();
-    try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {
-      try {
-        Object.keys(localStorage).filter(x => x.startsWith('cc:analytics:')).forEach(x => localStorage.removeItem(x));
-        localStorage.setItem(k, JSON.stringify(obj));
-      } catch (e2) {}
+    try { localStorage.setItem(k, JSON.stringify(obj)); return true; } catch (e) {}
+    // on quota error, evict the cheap-to-refetch caches (never cc:kwcache — that cost 100 units)
+    for (const prefix of ['cc:analytics:', 'cc:launch:', 'cc:rollup:', 'cc:cwords']) {
+      Object.keys(localStorage).filter(x => x.startsWith(prefix) && x !== k).forEach(x => localStorage.removeItem(x));
+      try { localStorage.setItem(k, JSON.stringify(obj)); return true; } catch (e2) {}
     }
+    return false;
   };
   const setStatus = t => $('statusText').textContent = t;
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
@@ -480,7 +483,8 @@
   const OS_NAMES = { ANDROID:'Android', IOS:'iPhone / iPad', WINDOWS:'Windows PC', MACINTOSH:'Mac', LINUX:'Linux', SMART_TV:'Smart TV', PLAYSTATION:'PlayStation', XBOX:'Xbox', CHROMECAST:'Chromecast', TIZEN:'Samsung TV', WEBOS:'LG TV', KAIOS:'KaiOS phone' };
   const LOCATION_NAMES = { WATCH:'YouTube watch page', EMBEDDED:'Embedded on other websites', CHANNEL:'Channel page', EXTERNAL_APP:'Other apps', BROWSE:'Home / browse feed', SEARCH:'Search results page', MOBILE:'Mobile site (legacy)', YT_OTHER:'Other YouTube pages' };
   const CONTENT_NAMES = { shorts:'Shorts', videoOnDemand:'Regular videos', liveStream:'Live streams', story:'Stories', post:'Posts' };
-  const SUB_NAMES = { subscribed:'Subscribers', unsubscribed:'Non-subscribers (new audience)' };
+  // subscribedStatus dimension returns UPPERCASE values; keep both casings so labels resolve
+  const SUB_NAMES = { SUBSCRIBED:'Subscribers', UNSUBSCRIBED:'Non-subscribers (new audience)', subscribed:'Subscribers', unsubscribed:'Non-subscribers (new audience)' };
 
   /* ---------- auth ---------- */
   // Google's browser tokens last ~1 hour. To stop constant "logged out":
@@ -516,7 +520,9 @@
         } else { clearError(); poll(); }
       },
       error_callback: () => {
-        if (bootstrapped) showError('Your Google session needs a quick renew — tap this message to reconnect.');
+        // silent renewal was refused (e.g. third-party cookies blocked) — null the token
+        // so the reconnect banner's !accessToken guard passes and the tap actually works
+        if (bootstrapped) { accessToken = null; showError('Your Google session needs a quick renew — tap this message to reconnect.'); }
       }
     });
   }
@@ -635,11 +641,10 @@
     if (timer) clearInterval(timer);
     await poll();
     timer = setInterval(poll, intervalMs);
-    loadTrends();
     loadLatest();
     loadRollup();
     spawnBalls();
-    loadHistory();
+    loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
   }
 
   // floating thumbnail balls background
@@ -684,9 +689,12 @@
   /* ---------- live polling ---------- */
   function flash(el) { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); }
 
+  let polling = false;
   async function poll(force) {
     if (!accessToken) return;
     if ((paused || hiddenPaused) && !force) return;
+    if (polling) return; // re-entrancy guard: overlapping polls double-count velocity/deltas
+    polling = true;
     setStatus('fetching…');
     try {
       const results = [];
@@ -696,14 +704,26 @@
       }
       const totals = { views: 0, likes: 0, comments: 0 };
       const firstRun = !sessionStart;
+      const seen = new Set();
+      const newlySeen = { views: 0, likes: 0, comments: 0 };
       for (const it of results) {
+        seen.add(it.id);
         const s = it.statistics;
         const cur = { views: +(s.viewCount || 0), likes: +(s.likeCount || 0), comments: +(s.commentCount || 0) };
         const p = perVideo[it.id];
+        // a video first seen mid-session (e.g. a new upload) carries a pre-existing view
+        // count that must NOT count as session gain or a velocity spike
+        if (!p && !firstRun) { newlySeen.views += cur.views; newlySeen.likes += cur.likes; newlySeen.comments += cur.comments; }
         perVideo[it.id] = { ...cur, tickV: p ? cur.views - p.views : 0, sessV: p ? cur.views - (p.views - (p.sessV || 0)) : 0 };
         totals.views += cur.views; totals.likes += cur.likes; totals.comments += cur.comments;
       }
+      // any tracked video the API omitted this tick: clear its stale "+N tick" so it stops rendering as a green mover
+      for (const id of videoIds) { if (!seen.has(id) && perVideo[id]) perVideo[id].tickV = 0; }
       if (firstRun) { sessionStart = { ...totals }; sessionTime = Date.now(); }
+      else if (newlySeen.views || newlySeen.likes || newlySeen.comments) {
+        sessionStart.views += newlySeen.views; sessionStart.likes += newlySeen.likes; sessionStart.comments += newlySeen.comments;
+        if (prevTotals) { prevTotals.views += newlySeen.views; prevTotals.likes += newlySeen.likes; prevTotals.comments += newlySeen.comments; }
+      }
 
       [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
         const el = $(n);
@@ -759,6 +779,8 @@
       if (err && err.reauth) { setStatus('reconnecting…'); return; }
       setStatus('error');
       showError(err.message);
+    } finally {
+      polling = false;
     }
   }
 
@@ -784,7 +806,9 @@
     renderTable();
   }
 
+  let hideThumbZoom = null;
   function renderTable() {
+    if (hideThumbZoom) hideThumbZoom(); // a poll re-render can destroy the hovered thumb — close any open zoom
     const mode = $('sortMode').value;
     const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id], ru: rollupMap[id] || {}, pace: perVideo[id] ? perVideo[id].views / Math.max(1, (Date.now() - new Date(meta[id].publishedAt)) / 864e5) : 0 })).filter(r => r.views !== undefined);
     if (mode === 'views') rows.sort((a, b) => b.views - a.views);
@@ -830,7 +854,11 @@
   const fmtHours = mins => mins >= 6000 ? fmt.format(Math.round(mins / 60)) + ' h' : fmt.format(Math.round(mins)) + ' min';
 
   /* ---------- interactive charts: axes + hover/touch tooltips ---------- */
-  const chartReg = [];
+  // Map keyed by a monotonic id, pruned to the most recent ~400 charts so it can't
+  // grow unbounded across the app's lifetime of re-renders (was an append-only array leak).
+  const chartReg = new Map();
+  let chartCi = 0;
+  const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };
   const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const friendlyDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' }); } catch (e) { return d; } };
   const shortDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); } catch (e) { return d; } };
@@ -838,20 +866,24 @@
   function lineChartHtml(pts, tips, color, opts) {
     opts = opts || {};
     const w = 560, h = 132, L = 46, R = 10, T = 12, B = 24;
-    const max = Math.max(1, ...pts);
     const n = pts.length;
+    const max = Math.max(1, ...pts);
+    // opts.zoom auto-scales the y-axis to min..max so small day-to-day movement is visible
+    // (e.g. subscriber totals that barely change against a big absolute number)
+    const lo = opts.zoom ? Math.min(...pts) : 0;
+    const span = Math.max(1, max - lo);
     const xs = pts.map((_, i) => L + i * (w - L - R) / Math.max(1, n - 1));
-    const ys = pts.map(v => h - B - (v / max) * (h - T - B));
-    const ci = chartReg.length;
-    chartReg.push({ tips, xs, ys, L, R, w });
+    const ys = pts.map(v => h - B - ((v - lo) / span) * (h - T - B));
+    const ci = chartPush({ tips, xs, ys, L, R, w });
     let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
     for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
     const yLab = opts.yMaxLabel || fmt.format(Math.round(max));
+    const yLo = opts.zoom ? fmt.format(Math.round(lo)) : '0';
     return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
       '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLab) + '</text>' +
-      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">0</text>' +
+      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLo) + '</text>' +
       (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
       (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '') +
       (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (h - B) + ' L' + xs[0].toFixed(1) + ',' + (h - B) + ' Z" style="fill:' + color + ';opacity:.12"/>' : '') +
@@ -864,8 +896,7 @@
     const maxAbs = Math.max(1, ...values.map(v => Math.abs(v)));
     const zero = (h - T - B) / 2 + T;
     const bw = Math.max(1.5, (w - L - R) / values.length - 1.5);
-    const ci = chartReg.length;
-    chartReg.push({ tips, L, R, w, bars: true });
+    const ci = chartPush({ tips, L, R, w, bars: true });
     let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (label || 'chart') + '">' +
       '<line x1="' + L + '" y1="' + zero + '" x2="' + (w - R) + '" y2="' + zero + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">+' + fmt.format(maxAbs) + '</text>' +
@@ -887,8 +918,7 @@
     const maxV = Math.max(1, ...series.flatMap(s => s.pts));
     const X = i => L + i * (w - L - R) / (maxLen - 1);
     const Y = v => h - B - (v / maxV) * (h - T - B);
-    const ci = chartReg.length;
-    chartReg.push({ tips, L, R, w });
+    const ci = chartPush({ tips, L, R, w });
     let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
       '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
@@ -914,7 +944,7 @@
       document.querySelectorAll('svg.chart .cdot').forEach(c => c.style.display = 'none');
       return;
     }
-    const d = chartReg[+svg.dataset.ci];
+    const d = chartReg.get(+svg.dataset.ci);
     if (!d || !d.tips || !d.tips.length) return;
     const rect = svg.getBoundingClientRect();
     const xv = (e.clientX - rect.left) / rect.width * d.w;
@@ -1084,7 +1114,7 @@
       const sPts = chn.map(s2 => s2[1]);
       const sTips = chn.map(s2 => fmt.format(s2[1]) + ' subs — ' + new Date(s2[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
       html += section('Subscriber history — recorded hourly', 'From the repo’s snapshot robot. YouTube publicly shows rounded subscriber counts, so the line moves in steps — this is the only free way to see movement between days.',
-        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
+        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', zoom: true, x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
       const bIds = Object.keys(hist.bench || {});
       if (bIds.length) {
         const cut = Date.now() - 30 * 864e5;
@@ -1348,6 +1378,7 @@
       }
       $('commentsList').innerHTML = html;
     } catch (e) {
+      if (e && e.reauth) { $('commentsList').innerHTML = '<p class="dnote">reconnecting…</p>'; return; }
       if (/insufficient authentication scopes/i.test(e.message || '')) {
         $('commentsList').innerHTML = '<p class="dnote">Comments need one extra permission that your current sign-in doesn’t have yet — tap <b>Sign out</b>, then sign in again and approve the new item on Google’s screen. One-time thing.</p>';
       } else {
@@ -1367,10 +1398,11 @@
         c = { texts: (d.items || []).map(it => it.snippet.topLevelComment.snippet.textDisplay || '') };
         cacheSet('cc:cwords:v1', c);
       }
-      const STOP2 = new Set(['the','and','this','that','you','your','for','was','are','have','has','with','not','but','just','like','love','video','videos','really','much','more','very','one','can','all','out','get','its','it’s','his','her','him','she','they','them','from','what','when','how','who','why','will','would','could','been','had','did','does','omg','wow','nice','good','great','amazing','best','make','made','watch','watching','youtube','channel','please','thanks','thank']);
+      const STOP2 = new Set(['the','and','this','that','you','your','for','was','are','have','has','with','not','but','just','like','love','video','videos','really','much','more','very','one','can','all','out','get','its',"it's",'his','her','him','she','they','them','from','what','when','how','who','why','will','would','could','been','had','did','does','omg','wow','nice','good','great','amazing','best','make','made','watch','watching','youtube','channel','please','thanks','thank']);
       const uni = {}, bi = {};
       for (const t of c.texts) {
-        const ws = (t.toLowerCase().match(/[\p{L}']{3,}/gu) || []).filter(w2 => !STOP2.has(w2));
+        // normalise curly apostrophes to straight so contractions tokenize as one word
+        const ws = (t.toLowerCase().replace(/’/g, "'").match(/[\p{L}']{3,}/gu) || []).filter(w2 => !STOP2.has(w2));
         for (const w2 of new Set(ws)) uni[w2] = (uni[w2] || 0) + 1;
         for (let i = 0; i < ws.length - 1; i++) { const b = ws[i] + ' ' + ws[i + 1]; bi[b] = (bi[b] || 0) + 1; }
       }
@@ -1381,7 +1413,7 @@
           bits.map(([w2, n2]) => '<span class="chip missing">' + esc(w2) + ' <b>×' + n2 + '</b></span>').join('') +
           unis.map(([w2, n2]) => '<span class="chip">' + esc(w2) + ' <b>×' + n2 + '</b></span>').join('') + '</div>'
         : '<p class="dnote">Not enough comment text yet to find patterns — check back when there are more comments.</p>';
-    } catch (e) { out.innerHTML = '<p class="dnote">' + esc(e.message) + '</p>'; }
+    } catch (e) { out.innerHTML = e && e.reauth ? '<p class="dnote">reconnecting…</p>' : '<p class="dnote">' + esc(e.message) + '</p>'; }
   }
 
   /* ---------- hashtag & keyword rankings ---------- */
@@ -1433,7 +1465,10 @@
           const pub = (meta[vid].publishedAt || '').slice(0, 10);
           const end = iso(new Date(Math.min(Date.now(), new Date(pub).getTime() + 13 * 864e5)));
           const r = await tryApi({ startDate: pub, endDate: end, metrics: 'views', dimensions: 'day', sort: 'day', filters: 'video==' + vid });
-          c = { rows: (r && r.rows) || [], done: (Date.now() - new Date(meta[vid].publishedAt)) / 864e5 >= 15 };
+          const rows = (r && r.rows) || [];
+          // only freeze permanently once the window is settled (>=16d for the 48h lag) AND
+          // we actually got data — a transient failure must not cache an empty curve forever
+          c = { rows, done: (Date.now() - new Date(meta[vid].publishedAt)) / 864e5 >= 16 && rows.length > 0 };
           cacheSet(key, c);
         }
         let cum = 0;
@@ -1445,7 +1480,8 @@
       const maxLen = Math.max(latest.length, 2, ...others.map(a => a.length));
       const med = [];
       for (let i = 0; i < maxLen; i++) {
-        const vals = others.map(a => a[Math.min(i, a.length - 1)]).sort((x, y) => x - y);
+        // only curves that actually reach day i — don't extend short curves flat (biases the median down)
+        const vals = others.map(a => a[i]).filter(v => v != null).sort((x, y) => x - y);
         med.push(vals.length ? vals[vals.length >> 1] : 0);
       }
       const tips = [];
@@ -1606,16 +1642,20 @@
       const sr = await dataApi('search', { part: 'snippet', type: 'video', q: query, maxResults: '25', order: 'relevance' });
       const ids = (sr.items || []).filter(it => it.id && it.id.videoId && (!it.snippet || it.snippet.channelId !== chanId)).map(it => it.id.videoId);
       const similar = [];
-      for (const part of chunk(ids, 50)) {
-        const d = await dataApi('videos', { part: 'snippet,statistics', id: part.join(','), maxResults: '50' });
-        for (const it of d.items) similar.push({
-          videoId: it.id, title: it.snippet.title, channelTitle: it.snippet.channelTitle,
-          views: +((it.statistics && it.statistics.viewCount) || 0), publishedAt: it.snippet.publishedAt,
-          thumb: (it.snippet.thumbnails?.medium || it.snippet.thumbnails?.high || it.snippet.thumbnails?.default)?.url || '',
-          tags: (it.snippet.tags || []).map(t => t.toLowerCase()),
-          hashtags: extractHash(it.snippet.title + ' ' + (it.snippet.description || ''))
-        });
-      }
+      // the paid 100-unit search.list already succeeded; a failure in this cheap enrichment
+      // must NOT discard it and re-show the Research button, so cache whatever we gathered
+      try {
+        for (const part of chunk(ids, 50)) {
+          const d = await dataApi('videos', { part: 'snippet,statistics', id: part.join(','), maxResults: '50' });
+          for (const it of d.items) similar.push({
+            videoId: it.id, title: it.snippet.title, channelTitle: it.snippet.channelTitle,
+            views: +((it.statistics && it.statistics.viewCount) || 0), publishedAt: it.snippet.publishedAt,
+            thumb: (it.snippet.thumbnails?.medium || it.snippet.thumbnails?.high || it.snippet.thumbnails?.default)?.url || '',
+            tags: (it.snippet.tags || []).map(t => t.toLowerCase()),
+            hashtags: extractHash(it.snippet.title + ' ' + (it.snippet.description || ''))
+          });
+        }
+      } catch (e) { if (e && e.reauth) throw e; /* keep partial similar[] and cache below */ }
       similar.sort((x, y) => y.views - x.views);
       const ownTags = (meta[vid].tags || []).map(t => t.toLowerCase());
       const ownHashtags = meta[vid].hashtags || [];
@@ -1631,6 +1671,7 @@
       cacheSet('cc:kwcache:v1:' + vid, { query, ownTags, ownHashtags, similar, aggregate: { tagCounts, hashtagCounts, medianViews, missingTags, missingHashtags } });
       renderLab(vid);
     } catch (e) {
+      if (e && e.reauth) { setStatus('reconnecting…'); renderLab(vid); return; }
       wrap.innerHTML = '<div class="dsection"><h4>Keyword &amp; Tag Lab</h4><p class="dnote">' + esc(e.message) + '</p></div>';
     }
   }
@@ -1650,9 +1691,11 @@
     currentVideo = null;
   }
 
+  let analyticsSeq = 0;
   async function loadAnalytics() {
     if (!currentVideo) return;
     const vid = currentVideo;
+    const seq = ++analyticsSeq; // newest range/video wins; a slower earlier response must not render over it
     $('dLoading').style.display = 'block';
     $('dContent').innerHTML = '';
     const rangeKey = currentDays === 0 ? 'lifetime' : String(currentDays);
@@ -1661,7 +1704,7 @@
     if (cachedAc && cachedAc.reports) {
       const rep = cachedAc.reports;
       await ensureVideoTitles(rep.suggested && rep.suggested.rows ? rep.suggested.rows.map(r => r[0]) : []);
-      if (vid !== currentVideo) return;
+      if (vid !== currentVideo || seq !== analyticsSeq) return;
       renderAnalytics(rep);
       $('dLoading').style.display = 'none';
       return;
@@ -1687,13 +1730,14 @@
         tryApi({ ...base, metrics: 'shares', dimensions: 'sharingService', sort: '-shares', maxResults: '8' }),
         tryApi({ ...base, metrics: 'cardImpressions,cardClicks,cardClickRate' })
       ]);
-      if (vid !== currentVideo) return;
+      if (vid !== currentVideo || seq !== analyticsSeq) return;
       await ensureVideoTitles(suggested && suggested.rows ? suggested.rows.map(r => r[0]) : []);
-      if (vid !== currentVideo) return;
+      if (vid !== currentVideo || seq !== analyticsSeq) return;
       const reports = { summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards };
       cacheSet(acKey, { reports });
       renderAnalytics(reports);
     } catch (err) {
+      if (err && err.reauth) { setStatus('reconnecting…'); $('dContent').innerHTML = '<p class="dnote">Reconnecting to Google — reopen this in a moment.</p>'; return; }
       $('dContent').innerHTML = '<p class="dnote">' + esc(err.message) + '</p>';
     } finally {
       $('dLoading').style.display = 'none';
@@ -1848,11 +1892,14 @@
   $('switchBtn').addEventListener('click', () => initAuth('select_account'));
   $('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') initAuth(); });
   $('signOutBtn').addEventListener('click', () => {
+    try { if (accessToken && google.accounts?.oauth2?.revoke) google.accounts.oauth2.revoke(accessToken); } catch (e) {}
     try { localStorage.removeItem('cc_tok'); } catch (e) {}
     location.reload();
   });
+  // Tapping the error banner is an explicit reconnect request — force an interactive
+  // prompt so it works even if the token wasn't cleared and even if silent renew is blocked.
   $('errorBox').addEventListener('click', () => {
-    if (!accessToken && tokenClient) tokenClient.requestAccessToken({ prompt: '' });
+    if (tokenClient) { clearError(); setStatus('reconnecting…'); tokenClient.requestAccessToken({ prompt: '' }); }
   });
   // Export/import all saved data (caches, keyword research, minute-race history, theme) — never the session token
   $('exportBtn').addEventListener('click', () => {
@@ -1950,6 +1997,7 @@
   if (window.matchMedia && matchMedia('(hover: hover)').matches) {
     let zoomTimer = null, zoomEl = null;
     const hideZoom = () => { clearTimeout(zoomTimer); zoomTimer = null; if (zoomEl) zoomEl.style.display = 'none'; };
+    hideThumbZoom = hideZoom; // let renderTable dismiss the zoom when it rebuilds the table
     document.addEventListener('pointerover', e => {
       const img = e.target.closest ? e.target.closest('img.vthumb') : null;
       if (!img || !img.src || img.id === 'dThumbBig') return;
@@ -2010,6 +2058,9 @@
   document.addEventListener('visibilitychange', () => {
     hiddenPaused = document.hidden;
     if (!document.hidden) {
+      // if the token is already expired, only renew — its callback re-polls; polling now
+      // would fire against a dead token and trigger a second concurrent renewal
+      if (accessToken && tokenExp - Date.now() <= 0) { setStatus('reconnecting…'); renewToken(); return; }
       if (accessToken && tokenExp - Date.now() < 5 * 60 * 1000) renewToken();
       if (!paused) { setStatus('resuming…'); poll(); }
     } else setStatus('sleeping (tab hidden)');

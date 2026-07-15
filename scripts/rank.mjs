@@ -1,5 +1,7 @@
-// Weekly search-rank tracker. Each keyword costs 100 quota units (search.list),
-// so keywords are capped at 10 and this runs once a week.
+// Weekly search-rank tracker. search.list costs 100 quota units PER PAGE, and a
+// keyword the channel doesn't rank for pages deep — so worst case is
+// MAX_PAGES*100 units per non-ranking keyword. A shared RUN_PAGE_BUDGET caps the
+// whole run so it can't drain the daily quota that the hourly snapshot job shares.
 import fs from 'fs';
 
 const KEY = process.env.YT_API_KEY;
@@ -23,14 +25,18 @@ const api = async (ep, params) => {
 let ranks = {};
 try { ranks = JSON.parse(fs.readFileSync('data/ranks.json', 'utf8')); } catch {}
 
-// YouTube search.list returns at most ~500-600 results total, 50 per page (100 units/page).
-// Page down until the channel is found (early exit = cheap once ranking) or results run out.
-const MAX_PAGES = 10;
+// Page down until the channel is found (early exit = cheap once ranking) or limits hit.
+// MAX_PAGES per keyword (~top 400), RUN_PAGE_BUDGET across the whole run so a Monday
+// where nothing ranks tops out at 4000 units, leaving the daily quota for the snapshot job.
+const MAX_PAGES = 8;
+const RUN_PAGE_BUDGET = 40;
+let pagesUsed = 0;
 for (const q of kws.slice(0, 10)) {
   let pageToken = '', base = 0, hit = { rank: null }, checked = 0;
   try {
-    for (let p = 0; p < MAX_PAGES; p++) {
+    for (let p = 0; p < MAX_PAGES && pagesUsed < RUN_PAGE_BUDGET; p++) {
       const d = await api('search', { part: 'snippet', type: 'video', q, maxResults: 50, order: 'relevance', ...(pageToken ? { pageToken } : {}) });
+      pagesUsed++;
       const items = d.items || [];
       const pos = items.findIndex(it => it.snippet && CHANset.has(it.snippet.channelId));
       checked += items.length;

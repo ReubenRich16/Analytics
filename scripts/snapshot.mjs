@@ -21,6 +21,16 @@ const api = async (ep, params) => {
   return r.json();
 };
 
+const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+const channelsById = async ids => {
+  const items = [];
+  for (const part of chunk(ids, 50)) {
+    const d = await api('channels', { part: 'snippet,statistics,contentDetails', id: part.join(',') });
+    items.push(...(d.items || []));
+  }
+  return items;
+};
+
 const now = Date.now();
 const HIST = 'data/history.json';
 let h = { channels: {}, channelMeta: {}, videos: {}, bench: {}, benchMeta: {}, lastAlerts: {} };
@@ -30,11 +40,11 @@ if (Array.isArray(h.channel)) { if (CHANNELS[0]) h.channels[CHANNELS[0]] = h.cha
 if (!h.channels) h.channels = {};
 if (!h.channelMeta) h.channelMeta = {};
 
-// own channel(s) + uploads — all channels fetched in one call
-const ch = await api('channels', { part: 'snippet,statistics,contentDetails', id: CHANNELS.join(',') });
-if (!ch.items || !ch.items.length) throw new Error('No CHANNEL_ID channels found');
+// own channel(s) + uploads — chunked so >50 channels still work
+const ownItems = await channelsById(CHANNELS);
+if (!ownItems.length) throw new Error('No CHANNEL_ID channels found');
 let vidCount = 0;
-for (const c of ch.items) {
+for (const c of ownItems) {
   h.channelMeta[c.id] = c.snippet.title;
   (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
   const uploads = c.contentDetails.relatedPlaylists.uploads;
@@ -55,10 +65,9 @@ for (const c of ch.items) {
   vidCount += ids.length;
 }
 
-// benchmark channels (optional)
+// benchmark channels (optional) — chunked so >50 still work
 if (BENCH.length) {
-  const d = await api('channels', { part: 'snippet,statistics', id: BENCH.join(',') });
-  for (const it of d.items || []) {
+  for (const it of await channelsById(BENCH)) {
     (h.bench[it.id] = h.bench[it.id] || []).push([now, +it.statistics.subscriberCount || 0, +it.statistics.viewCount || 0]);
     h.benchMeta[it.id] = it.snippet.title;
   }
@@ -89,12 +98,14 @@ const atOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <
 
 for (const [cid, arr] of Object.entries(h.channels)) {
   if (arr.length < 2) continue;
-  const prev = arr[arr.length - 2][1], cur = arr[arr.length - 1][1];
-  if (cur > prev) {
-    const step = Math.max(10, Math.pow(10, Math.floor(Math.log10(Math.max(10, cur)))) / 10);
-    if (Math.floor(cur / step) > Math.floor(prev / step)) {
-      newAlerts.push({ ts: now, type: 'subs', text: (h.channelMeta[cid] || 'Channel') + ' crossed ' + (Math.floor(cur / step) * step).toLocaleString() + ' subscribers (now ' + cur.toLocaleString() + ')' });
-    }
+  const cur = arr[arr.length - 1][1];
+  const step = Math.max(10, Math.pow(10, Math.floor(Math.log10(Math.max(10, cur)))) / 10);
+  const milestone = Math.floor(cur / step) * step;
+  const key = 'subs:' + cid;
+  // only fire when we cross a HIGHER milestone than last announced (dedup across oscillation)
+  if (milestone > (h.lastAlerts[key] || 0) && arr.length >= 2 && arr[arr.length - 2][1] < milestone) {
+    h.lastAlerts[key] = milestone;
+    newAlerts.push({ ts: now, type: 'subs', text: (h.channelMeta[cid] || 'Channel') + ' crossed ' + milestone.toLocaleString() + ' subscribers (now ' + cur.toLocaleString() + ')' });
   }
 }
 for (const [vid, arr] of Object.entries(h.videos)) {
@@ -104,7 +115,8 @@ for (const [vid, arr] of Object.entries(h.videos)) {
   if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
   const r1 = nowS[1] - d1[1], r0 = d1[1] - d2[1];
   const key = 'accel:' + vid;
-  if (r1 >= 100 && r1 >= r0 * 2 && (now - (h.lastAlerts[key] || 0)) > 3 * 864e5) {
+  // require a positive prior baseline so YouTube view corrections (negative r0) don't fire a fake alert
+  if (r1 >= 100 && r0 > 0 && r1 >= r0 * 2 && (now - (h.lastAlerts[key] || 0)) > 3 * 864e5) {
     h.lastAlerts[key] = now;
     newAlerts.push({ ts: now, type: 'accel', vid, text: 'Video https://youtu.be/' + vid + ' is accelerating: ' + r1.toLocaleString() + ' views in the last 24h (previous 24h: ' + r0.toLocaleString() + ')' });
   }
