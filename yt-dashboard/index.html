@@ -1640,7 +1640,7 @@
   let geminiKey = '';
   try { geminiKey = localStorage.getItem('cc_gemini') || ''; } catch (e) {}
   const looksLikeGeminiKey = k => /^AIza[0-9A-Za-z_\-]{20,}$/.test(k || '');
-  const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']; // 2.0/1.5 have 0 free-tier quota on new projects
+  const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3-flash', 'gemini-2.5-flash-lite']; // separate free quotas stack; 2.0/1.5 are 0 on new projects
   const IDEA_STOP = new Set(['the','and','for','with','your','you','this','that','from','out','new','asmr','video','tapping','sounds','sound','not','feat','ft','part','pt','ep','vol']);
   const EMOJI_RE = /\p{Extended_Pictographic}/gu;
   const titleCase = s => (s || '').replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
@@ -1686,9 +1686,12 @@
     if (st.phrases.length) L.push('Recurring signature phrases: ' + st.phrases.join(', ') + '.');
     if (st.topEmoji.length) L.push('Common emoji: ' + st.topEmoji.join(' ') + '.');
     L.push('Typical title length: about ' + st.avgLen + ' characters.');
-    if (st.topWords.length) L.push('Best-performing title keywords (by average views): ' + st.topWords.slice(0, 12).map(w => w.w).join(', ') + '.');
-    if (st.topTags.length) L.push('Best tags (by average views): ' + st.topTags.slice(0, 15).map(t => t.label).join(', ') + '.');
-    const recent = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 8).map(id => meta[id].title);
+    if (st.topWords.length) L.push('Best-performing title keywords (by average views): ' + st.topWords.slice(0, 20).map(w => w.w).join(', ') + '.');
+    if (st.topTags.length) L.push('Best tags (by average views): ' + st.topTags.slice(0, 25).map(t => t.label).join(', ') + '.');
+    // include the actual top-performing titles as few-shot examples of the winning style
+    const topTitles = videoIds.slice().filter(id => perVideo[id]).sort((a, b) => perVideo[b].views - perVideo[a].views).slice(0, 8).map(id => meta[id].title);
+    if (topTitles.length) L.push('Highest-viewed titles (mimic what works here): ' + topTitles.map(t => '"' + t + '"').join('; ') + '.');
+    const recent = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 12).map(id => meta[id].title);
     if (recent.length) L.push('Recent video titles: ' + recent.map(t => '"' + t + '"').join('; ') + '.');
     return L.join('\n');
   }
@@ -1783,7 +1786,7 @@
     const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
       'CHANNEL STYLE:\n' + styleSummaryText(st) + '\n\n' +
       'NEW VIDEO:\n"' + desc + '"\n\n' +
-      'Return JSON only, with keys: "titles" (6 title strings in their style), "onscreenText" (6 punchy on-screen text hooks, max 6 words each), "tags" (15 lowercase tag strings), "videoIdeas" (5 objects each {"title","why"} where why is one short reason it should work for this channel).';
+      'Give a generous, varied set (plenty of token budget but few requests, so pack this response). Return JSON only, with keys: "titles" (12 title strings in their style), "onscreenText" (12 punchy on-screen text hooks, max 6 words each), "tags" (30 lowercase tag strings), "videoIdeas" (10 objects each {"title","why"} where why is one short reason it should work for this channel).';
     const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
     let lastErr = null;
     for (const model of GEMINI_MODELS) {

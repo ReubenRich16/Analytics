@@ -33,10 +33,11 @@ const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
-// tried in order; different models have separate free-tier quota pools, so a 429 on one
-// may still succeed on the next. NOTE: gemini-2.0-flash / -lite have a free-tier quota of
-// 0 on new projects (they 429 instantly); the 2.5 models carry the real free allowance.
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+// Tried in order. Each model has its OWN separate free-tier daily quota, and the loop
+// below falls through on a 429 — so the effective free budget is the SUM across this list
+// (roughly ~20 requests/day each → ~60/day here), at $0. gemini-2.0-flash / -lite are
+// omitted because their free quota is 0 on new projects.
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3-flash', 'gemini-2.5-flash-lite'];
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -199,7 +200,7 @@ async function aiHandler(request, env) {
   const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
     'CHANNEL STYLE:\n' + style + '\n\n' +
     'NEW VIDEO:\n"' + desc + '"\n\n' +
-    'Return JSON only, with keys: "titles" (6 title strings in their style), "onscreenText" (6 punchy on-screen text hooks, max 6 words each), "tags" (15 lowercase tag strings), "videoIdeas" (5 objects each {"title","why"} where why is one short reason it should work for this channel).';
+    'Give a generous, varied set (the caller has plenty of token budget but few requests, so pack this response). Return JSON only, with keys: "titles" (12 title strings in their style), "onscreenText" (12 punchy on-screen text hooks, max 6 words each), "tags" (30 lowercase tag strings), "videoIdeas" (10 objects each {"title","why"} where why is one short reason it should work for this channel).';
   try { return json(await callGemini(env.GEMINI_KEY, prompt)); }
   catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
