@@ -73,7 +73,7 @@
     display:flex; flex-direction:column; align-items:center;
     padding:24px 14px 60px; min-height:100vh;
   }
-  .wrap { width:100%; max-width:1020px; position:relative; z-index:1; }
+  .wrap { width:100%; max-width:1224px; position:relative; z-index:1; }
 
   /* floating thumbnail balls background */
   #bgBalls { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
@@ -358,9 +358,14 @@
 
   <!-- LATEST UPLOAD -->
   <div class="card" id="latestCard" style="display:none">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Latest upload — how it's doing since it went live</div>
-      <button class="ghost" id="latestMore" style="margin-left:auto">Full breakdown</button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="ghost" id="latestPrev" title="Older upload" style="padding:6px 11px">◀</button>
+        <span id="latestPos" style="font-size:11px;color:var(--muted);min-width:30px;text-align:center"></span>
+        <button class="ghost" id="latestNext" title="Newer upload" style="padding:6px 11px">▶</button>
+        <button class="ghost" id="latestMore">Full breakdown</button>
+      </div>
     </div>
     <div style="display:flex;gap:12px;align-items:flex-start;margin-top:10px">
       <img id="latestThumb" class="vthumb" loading="lazy" alt="" src="" style="width:104px;flex:none;display:none">
@@ -501,6 +506,7 @@
   let prevTotals = null, sessionStart = null, sessionTime = 0, history = [];
   let channelPublished = '2005-01-01';
   let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null, pollCount = 0;
+  let slotVid = null, slotIdx = 0; // which recent upload the "Latest upload" card is currently showing
   let chanId = '', raceMode = 'latest';
   const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
@@ -727,18 +733,13 @@
     setGeminiState(); // now that we're signed in, reflect Worker-provided AI if configured
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
-    $('latestTitle').textContent = meta[latestVid].title;
-    const lt = $('latestThumb');
-    if (meta[latestVid].thumb) { lt.src = meta[latestVid].thumb; lt.style.display = 'block'; } else lt.style.display = 'none';
-    const pubDate = new Date(meta[latestVid].publishedAt);
-    $('latestMetaLine').innerHTML = 'Published ' + esc(pubDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
     $('latestCard').style.display = 'block';
 
     intervalMs = +$('interval').value;
     if (timer) clearInterval(timer);
     await poll();
     timer = setInterval(poll, intervalMs);
-    loadLatest();
+    showSlot(0); // fills the Latest-upload card header + analytics for the newest video
     loadRollup();
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
@@ -893,11 +894,7 @@
       $('rateText').textContent = pm >= 0.05 ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min' : '';
 
       renderTable();
-      if (latestVid && perVideo[latestVid]) {
-        const lv = perVideo[latestVid];
-        const el = $('latestLive');
-        if (el) el.textContent = fmt.format(lv.views) + ' views · ' + fmt.format(lv.likes) + ' likes · ' + fmt.format(lv.comments) + ' comments right now';
-      }
+      updateLatestLive();
       recordSnaps();
       renderLiveRace();
       renderKeywords();
@@ -1418,21 +1415,48 @@
         const nl = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
         if (nl !== latestVid) {
           latestVid = nl;
-          $('latestTitle').textContent = meta[nl].title;
-          const lt2 = $('latestThumb');
-          if (meta[nl].thumb) { lt2.src = meta[nl].thumb; lt2.style.display = 'block'; } else lt2.style.display = 'none';
-          const pd = new Date(meta[nl].publishedAt);
-          $('latestMetaLine').innerHTML = 'Published ' + esc(pd.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
-          loadLatest();
+          showSlot(0); // jump the card to the brand-new upload
         }
       }
     } catch (e) {}
   }
 
   /* ---------- latest upload ---------- */
-  async function loadLatest() {
-    if (!latestVid) return;
-    const vid = latestVid;
+  // live "…views · …likes · …comments right now" line, keyed to the card's current slot
+  function updateLatestLive() {
+    if (!slotVid || !perVideo[slotVid]) return;
+    const el = $('latestLive');
+    if (el) { const lv = perVideo[slotVid]; el.textContent = fmt.format(lv.views) + ' views · ' + fmt.format(lv.likes) + ' likes · ' + fmt.format(lv.comments) + ' comments right now'; }
+  }
+  // the last 4 uploads, newest first — what the ◀ ▶ cycler steps through
+  function recentSlots() {
+    return videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 4);
+  }
+  function renderSlotHeader(vid) {
+    $('latestTitle').textContent = meta[vid].title;
+    const lt = $('latestThumb');
+    if (meta[vid].thumb) { lt.src = meta[vid].thumb; lt.style.display = 'block'; } else lt.style.display = 'none';
+    const pd = new Date(meta[vid].publishedAt);
+    const tag = vid === latestVid ? 'Latest upload' : 'Earlier upload';
+    $('latestMetaLine').innerHTML = tag + ' · published ' + esc(pd.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) + ' · <b id="latestLive" style="color:var(--text)"></b>';
+    const slots = recentSlots();
+    $('latestPos').textContent = (slotIdx + 1) + ' / ' + slots.length;
+    $('latestPrev').disabled = slotIdx >= slots.length - 1;
+    $('latestNext').disabled = slotIdx <= 0;
+    updateLatestLive();
+  }
+  // show the i-th recent upload (0 = newest) in the Latest-upload card
+  function showSlot(i) {
+    const slots = recentSlots();
+    if (!slots.length) return;
+    slotIdx = Math.max(0, Math.min(i, slots.length - 1));
+    slotVid = slots[slotIdx];
+    renderSlotHeader(slotVid);
+    loadLatest(slotVid);
+  }
+  async function loadLatest(vid) {
+    if (!vid) return;
+    const isNewest = vid === latestVid;
     $('latestLoading').style.display = 'block';
     try {
       const pub = (meta[vid].publishedAt || '').slice(0, 10) || channelPublished;
@@ -1444,17 +1468,18 @@
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ startDate: pub, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==YT_SEARCH', metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '6' })
       ]);
-      const liveRaceHtml = '<div class="dsection"><h4>Live race — minute by minute</h4>' +
+      // the minute-by-minute live race only makes sense for the actual newest upload
+      const liveRaceHtml = isNewest ? '<div class="dsection"><h4>Live race — minute by minute</h4>' +
         '<p class="explain">Real-time: this video right now vs what your previous uploads had when they were exactly the same age. Updates with every refresh.</p>' +
         '<div class="range-row" id="raceModeRow">' +
         '<button class="ghost' + (raceMode === 'latest' ? ' active' : '') + '" data-mode="latest">Latest 10</button>' +
         '<button class="ghost' + (raceMode === 'best' ? ' active' : '') + '" data-mode="best">Best 10 openings</button>' +
         '</div>' +
-        '<div id="liveRaceContent"><p class="dnote">warming up…</p></div></div>';
+        '<div id="liveRaceContent"><p class="dnote">warming up…</p></div></div>' : '';
       let html = '';
       const s = summary && summary.rows && summary.rows[0];
       if (!s) {
-        html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h. The live counters and race above are real-time.</p>';
+        html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h.' + (isNewest ? ' The live counters and race above are real-time.' : '') + '</p>';
       } else {
         html += liveRaceHtml;
         html += '<div class="metric-grid">' +
@@ -1496,12 +1521,11 @@
           '<div class="loading" id="compareLoading" style="display:none">comparing…</div>' +
           '<div id="compareContent"></div></div>';
 
-        html += '<div id="launchWrap"></div>';
+        if (isNewest) html += '<div id="launchWrap"></div>';
         html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
       }
       $('latestContent').innerHTML = html;
-      loadLaunchCurves();
-      renderLiveRace();
+      if (isNewest) { loadLaunchCurves(); renderLiveRace(); }
       const rm = $('raceModeRow');
       if (rm) rm.addEventListener('click', e => {
         const b = e.target.closest('button[data-mode]');
@@ -1786,7 +1810,7 @@
     const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
       'CHANNEL STYLE:\n' + styleSummaryText(st) + '\n\n' +
       'NEW VIDEO:\n"' + desc + '"\n\n' +
-      'Give a generous, varied set (plenty of token budget but few requests, so pack this response). Return JSON only, with keys: "titles" (12 title strings in their style), "onscreenText" (12 punchy on-screen text hooks, max 6 words each), "tags" (30 lowercase tag strings), "videoIdeas" (10 objects each {"title","why"} where why is one short reason it should work for this channel).';
+      'Give a large, varied set (plenty of token budget but few requests, so pack this response fully). Return JSON only, with keys: "titles" (20 title strings in their style), "onscreenText" (20 punchy on-screen text hooks, max 6 words each), "tags" (40 lowercase tag strings), "videoIdeas" (15 objects each {"title","why"} where why is one short reason it should work for this channel).';
     const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
     let lastErr = null;
     for (const model of GEMINI_MODELS) {
@@ -2513,7 +2537,9 @@
     loadTrends();
   });
 
-  $('latestMore').addEventListener('click', () => { if (latestVid) openDrawer(latestVid); });
+  $('latestMore').addEventListener('click', () => { const v = slotVid || latestVid; if (v) openDrawer(v); });
+  $('latestPrev').addEventListener('click', () => showSlot(slotIdx + 1));
+  $('latestNext').addEventListener('click', () => showSlot(slotIdx - 1));
 
   // In-app browsers (Messenger, Instagram, TikTok…) can't do Google sign-in — warn up front
   const ua = navigator.userAgent || '';

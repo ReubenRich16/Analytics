@@ -200,7 +200,7 @@ async function aiHandler(request, env) {
   const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
     'CHANNEL STYLE:\n' + style + '\n\n' +
     'NEW VIDEO:\n"' + desc + '"\n\n' +
-    'Give a generous, varied set (the caller has plenty of token budget but few requests, so pack this response). Return JSON only, with keys: "titles" (12 title strings in their style), "onscreenText" (12 punchy on-screen text hooks, max 6 words each), "tags" (30 lowercase tag strings), "videoIdeas" (10 objects each {"title","why"} where why is one short reason it should work for this channel).';
+    'Give a large, varied set (the caller has plenty of token budget but few requests, so pack this response fully). Return JSON only, with keys: "titles" (20 title strings in their style), "onscreenText" (20 punchy on-screen text hooks, max 6 words each), "tags" (40 lowercase tag strings), "videoIdeas" (15 objects each {"title","why"} where why is one short reason it should work for this channel).';
   try { return json(await callGemini(env.GEMINI_KEY, prompt)); }
   catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
