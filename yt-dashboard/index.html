@@ -112,6 +112,8 @@
   }
   button.ghost:hover { color:var(--text); border-color:var(--muted); }
   button.ghost[disabled] { opacity:.35; cursor:not-allowed; }
+  #soundBtn { transition:border-color .2s, color .2s; }
+  #soundBtn.on { color:var(--accent); border-color:var(--accent); }
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
   .field { flex:1 1 260px; }
 
@@ -124,16 +126,26 @@
   .channel-banner .controls { margin-left:auto; display:flex; gap:8px; flex:none; flex-wrap:wrap; }
   .channel-banner select { width:auto; padding:8px 10px; font-size:12px; }
 
-  .grid { display:none; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:14px; }
-  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .grid { display:none; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+  .stat:hover { transform:translateY(-2px); border-color:var(--accent); box-shadow:0 6px 18px rgba(0,0,0,.14); }
   .stat .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
   .stat-num { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:clamp(20px,4vw,32px); margin-top:7px; font-variant-numeric:tabular-nums; transition:color .8s ease; }
   .stat-num.flash { color:var(--up); transition:color 0s; }
   @keyframes bumpUp { 0% { transform:translateY(8px); opacity:.35; } 100% { transform:none; opacity:1; } }
   .stat-num.bump { animation:bumpUp .5s ease; }
+  @keyframes pop { 0%{transform:scale(1);} 40%{transform:scale(1.14);} 100%{transform:scale(1);} }
+  .stat.hit { animation:pop .45s ease; }
   header .status { transition:color 1.4s ease; }
   header .status.tick { color:var(--up); transition:none; }
-  @media (prefers-reduced-motion:reduce){ .stat-num.bump { animation:none; } }
+  /* gentle entrance for cards + panels */
+  @keyframes cardIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+  .card, .grid, .footer-tools { animation:cardIn .5s cubic-bezier(.22,.61,.36,1) both; }
+  @media (prefers-reduced-motion:reduce){
+    .stat-num.bump, .stat.hit, .card, .grid, .footer-tools { animation:none; }
+    .stat:hover { transform:none; }
+    svg.chart path.line { stroke-dashoffset:0 !important; animation:none !important; }
+  }
   #chartTip { position:fixed; z-index:99; display:none; pointer-events:none; background:var(--panel-2); border:1px solid var(--line); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:11px; padding:5px 9px; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:240px; }
   .stat .delta { font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:5px; color:var(--muted); min-height:15px; }
   .stat .delta.up { color:var(--up); }
@@ -200,7 +212,13 @@
   .bignums { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .bignums .mcell { flex:1 1 120px; }
 
-  svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:8px; }
+  svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:10px; }
+  svg.chart path.line { stroke-linejoin:round; stroke-linecap:round; }
+  @keyframes drawLine { to { stroke-dashoffset:0; } }
+  svg.chart path.line.anim { stroke-dasharray:1; stroke-dashoffset:1; animation:drawLine 1s ease forwards; }
+  svg.chart .grid-line { stroke:var(--line); stroke-width:1; opacity:.5; }
+  svg.chart .end-dot { animation:dotIn .5s .5s ease both; }
+  @keyframes dotIn { from { opacity:0; r:0; } to { opacity:1; } }
   .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
   .hbar-row .hlabel { flex:0 0 148px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .hbar-row .htrack { flex:1; height:14px; background:var(--ink); border-radius:4px; overflow:hidden; }
@@ -234,7 +252,7 @@
   .mcell .sub { font-size:10px; color:var(--muted); margin-top:3px; line-height:1.4; }
 
   @media (max-width:620px) {
-    .grid { grid-template-columns:repeat(3,1fr); gap:8px; }
+    .grid { grid-template-columns:repeat(2,1fr); gap:8px; }
     .stat { padding:12px 10px; }
     .channel-banner { flex-wrap:wrap; }
     .channel-banner .controls { margin-left:0; width:100%; }
@@ -305,6 +323,7 @@
         <option value="120000">2m refresh</option>
         <option value="300000">5m refresh</option>
       </select>
+      <button class="ghost" id="soundBtn" title="Sound on new likes / subscribers">🔊</button>
       <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
       <button class="ghost" id="pauseBtn">Pause</button>
       <button class="ghost" id="signOutBtn">Sign out</button>
@@ -315,6 +334,7 @@
   <div class="grid" id="statsGrid">
     <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
     <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
+    <div class="stat"><div class="label">Subscribers</div><div class="stat-num" id="subsNum">–</div><div class="delta" id="subsDelta"></div></div>
     <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
   </div>
 
@@ -724,6 +744,36 @@
     }
   }
 
+  /* ---------- sound: gentle synthesized chimes on new likes / subscribers ---------- */
+  let soundOn = true; try { soundOn = localStorage.getItem('cc_sound') !== 'off'; } catch (e) {}
+  let audioCtx = null; const lastChime = {};
+  function unlockAudio() {
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
+  }
+  function chime(freqs, dur) {
+    if (!soundOn || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    freqs.forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      const t = t0 + i * 0.085;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t); o.stop(t + dur + 0.03);
+    });
+  }
+  function playFor(kind) {
+    if (!soundOn) return;
+    const now = Date.now();
+    if (now - (lastChime[kind] || 0) < 1200) return; // throttle bursts
+    lastChime[kind] = now;
+    unlockAudio();
+    if (kind === 'like') chime([880, 1174.66], 0.17);              // bright two-note blip
+    else if (kind === 'sub') chime([523.25, 659.25, 783.99], 0.34); // C-E-G celebratory arpeggio
+  }
+
   /* ---------- live polling ---------- */
   function flash(el) { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); }
 
@@ -740,7 +790,10 @@
         const d = await dataApi('videos', { part: 'statistics', id: ids.join(','), maxResults: '50' });
         results.push(...d.items);
       }
-      const totals = { views: 0, likes: 0, comments: 0 };
+      // live subscriber count (channel stats) — enables the subscriber tile + its chime (+1 unit/tick)
+      let subCount = null;
+      try { const cd = await dataApi('channels', { part: 'statistics', id: chanId }); subCount = cd.items && cd.items[0] ? +cd.items[0].statistics.subscriberCount : null; } catch (e) {}
+      const totals = { views: 0, likes: 0, comments: 0, subs: 0 };
       const firstRun = !sessionStart;
       const seen = new Set();
       const newlySeen = { views: 0, likes: 0, comments: 0 };
@@ -755,6 +808,8 @@
         perVideo[it.id] = { ...cur, tickV: p ? cur.views - p.views : 0, sessV: p ? cur.views - (p.views - (p.sessV || 0)) : 0 };
         totals.views += cur.views; totals.likes += cur.likes; totals.comments += cur.comments;
       }
+      // subs come from channel stats, not summed video stats; carry forward if the fetch failed
+      totals.subs = subCount != null ? subCount : (prevTotals ? prevTotals.subs : 0);
       // any tracked video the API omitted this tick: clear its stale "+N tick" so it stops rendering as a green mover
       for (const id of videoIds) { if (!seen.has(id) && perVideo[id]) perVideo[id].tickV = 0; }
       if (firstRun) { sessionStart = { ...totals }; sessionTime = Date.now(); }
@@ -763,11 +818,15 @@
         if (prevTotals) { prevTotals.views += newlySeen.views; prevTotals.likes += newlySeen.likes; prevTotals.comments += newlySeen.comments; }
       }
 
-      [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
+      [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['subsNum','subsDelta','subs'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
         const el = $(n);
         animateNum(el, prevTotals ? prevTotals[k] : null, totals[k]);
         const d = prevTotals ? totals[k] - prevTotals[k] : null;
-        if (d > 0) { flash(el); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+        if (d > 0) {
+          flash(el); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+          const tile = el.closest('.stat'); if (tile) { tile.classList.remove('hit'); void tile.offsetWidth; tile.classList.add('hit'); }
+          if (k === 'likes') playFor('like'); else if (k === 'subs') playFor('sub');
+        }
         const de = $(dl);
         if (d === null) { de.textContent = ''; de.className = 'delta'; }
         else if (d > 0) { de.textContent = '+' + fmt.format(d); de.className = 'delta up'; }
@@ -917,15 +976,24 @@
     for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
     const yLab = opts.yMaxLabel || fmt.format(Math.round(max));
     const yLo = opts.zoom ? fmt.format(Math.round(lo)) : '0';
+    const gid = 'lg' + ci;
+    // two faint gridlines at 1/3 and 2/3 height for easier reading
+    let grid = '';
+    for (const f of [1 / 3, 2 / 3]) { const gy = (T + (h - B - T) * f).toFixed(1); grid += '<line class="grid-line" x1="' + L + '" y1="' + gy + '" x2="' + (w - R) + '" y2="' + gy + '"/>'; }
+    const drawCls = reducedMotion ? 'line' : 'line anim';
     return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
+      '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + color + '" stop-opacity="0.28"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.02"/></linearGradient></defs>' +
+      grid +
       '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
       '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLab) + '</text>' +
       '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLo) + '</text>' +
       (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
       (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '') +
-      (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (h - B) + ' L' + xs[0].toFixed(1) + ',' + (h - B) + ' Z" style="fill:' + color + ';opacity:.12"/>' : '') +
-      (n > 1 ? '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' : '') +
+      (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (h - B) + ' L' + xs[0].toFixed(1) + ',' + (h - B) + ' Z" fill="url(#' + gid + ')"/>' : '') +
+      (n > 1 ? '<path class="' + drawCls + '" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2.2"/>' : '') +
+      (n > 1 ? '<circle class="end-dot" cx="' + xs[n - 1].toFixed(1) + '" cy="' + ys[n - 1].toFixed(1) + '" r="3.2" style="fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/>' : '') +
       '<circle class="cdot" r="4" style="display:none;fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/></svg>';
   }
 
@@ -968,7 +1036,7 @@
       if (s.pts.length < 2) continue;
       let d = 'M' + X(0).toFixed(1) + ',' + Y(s.pts[0]).toFixed(1);
       for (let i = 1; i < s.pts.length; i++) d += ' L' + X(i).toFixed(1) + ',' + Y(s.pts[i]).toFixed(1);
-      out += '<path d="' + d + '" style="fill:none;stroke:' + s.color + ';stroke-width:' + (s.width || 1.5) + ';opacity:' + (s.opacity != null ? s.opacity : 1) + '"/>';
+      out += '<path class="line" d="' + d + '" style="fill:none;stroke:' + s.color + ';stroke-width:' + (s.width || 1.5) + ';opacity:' + (s.opacity != null ? s.opacity : 1) + '"/>';
     }
     return out + '</svg>';
   }
@@ -2183,6 +2251,19 @@
   let savedTheme = 'midnight';
   try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
   applyTheme(savedTheme);
+
+  // Sound toggle — chime on a new like/subscriber. Remembered per device.
+  $('soundBtn').textContent = soundOn ? '🔊' : '🔇';
+  $('soundBtn').classList.toggle('on', soundOn);
+  $('soundBtn').addEventListener('click', () => {
+    soundOn = !soundOn;
+    try { localStorage.setItem('cc_sound', soundOn ? 'on' : 'off'); } catch (e) {}
+    $('soundBtn').textContent = soundOn ? '🔊' : '🔇';
+    $('soundBtn').classList.toggle('on', soundOn);
+    if (soundOn) { unlockAudio(); playFor('like'); } // preview + satisfy the browser's gesture requirement
+  });
+  // Browsers only allow audio after a user gesture — arm the context on the first interaction.
+  document.addEventListener('pointerdown', unlockAudio, { once: true });
 
   // Quota saver: stop polling when the tab/screen isn't visible
   document.addEventListener('visibilitychange', () => {
