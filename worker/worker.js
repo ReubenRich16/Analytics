@@ -33,11 +33,14 @@ const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
-// Tried in order. Each model has its OWN separate free-tier daily quota, and the loop
-// below falls through on a 429 — so the effective free budget is the SUM across this list
-// (roughly ~20 requests/day each → ~60/day here), at $0. gemini-2.0-flash / -lite are
-// omitted because their free quota is 0 on new projects.
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3-flash', 'gemini-2.5-flash-lite'];
+// Seed list of text chat models, tried in order. Each has its OWN free-tier daily quota and
+// the loop below skips any that fail (wrong id / no quota / incompatible), so the effective
+// free budget is the SUM across the models that work, at $0. The "-latest" entries are stable
+// aliases Google keeps pointing at a current flash model.
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.0-flash'];
+// Models that can't do plain text generateContent (speech / image / audio / specialised) —
+// excluded from auto-discovery so a text request never hits a 400 modality error.
+const NON_TEXT_MODEL = /tts|image|audio|lyria|nano-banana|robotics|computer-use|deep-research|antigravity|embedding|gemma|vision|omni/i;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -196,9 +199,13 @@ async function callGemini(env, prompt) {
     seen.add(model);
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; return undefined; }
-    if (r.status === 429) { sawQuota = true; lastErr = 'quota'; return undefined; }
-    if (!r.ok) throw new Error('Gemini HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
+    // Skip ANY model that doesn't return OK — wrong id (404), no free quota (429), or an
+    // incompatible model that rejects a text request (400) — and try the next one.
+    if (!r.ok) {
+      if (r.status === 429) sawQuota = true;
+      lastErr = model + ' → HTTP ' + r.status;
+      return undefined;
+    }
     const j = await r.json();
     const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
     const parsed = JSON.parse(txt);
@@ -208,8 +215,8 @@ async function callGemini(env, prompt) {
 
   // 1) cached winner, then the seed list
   for (const m of [cached, ...GEMINI_MODELS]) { const out = await attempt(m); if (out !== undefined) return out; }
-  // 2) discover what this key really offers, flash models first (free-tier friendly)
-  const discovered = await listGenerateModels(key);
+  // 2) discover what this key really offers — text models only, flash first (free-tier friendly)
+  const discovered = (await listGenerateModels(key)).filter(m => !NON_TEXT_MODEL.test(m));
   const ordered = [...discovered.filter(m => /flash/i.test(m)), ...discovered.filter(m => !/flash/i.test(m))];
   for (const m of ordered) { const out = await attempt(m); if (out !== undefined) return out; }
 
