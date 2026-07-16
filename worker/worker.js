@@ -33,7 +33,9 @@ const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+// tried in order; different models have separate free-tier quota pools, so a 429 on one
+// may still succeed on a lighter one
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -165,16 +167,18 @@ async function verifyOwner(token, channels) {
 
 async function callGemini(key, prompt) {
   const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
-  let lastErr = 'no response';
+  let sawQuota = false, lastErr = 'no response';
   for (const model of GEMINI_MODELS) {
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; continue; } // try next model
+    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; continue; }   // model gone → next
+    if (r.status === 429) { sawQuota = true; lastErr = 'quota'; continue; }             // rate/quota → try a lighter model
     if (!r.ok) throw new Error('Gemini HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
     const j = await r.json();
     const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
     return JSON.parse(txt);
   }
+  if (sawQuota) throw new Error("Gemini's free API quota is used up for now (HTTP 429) — it resets on Google's schedule (per-minute limits clear in ~a minute; the daily cap resets each day). Note: a Gemini app/chat subscription does NOT raise the API limit — the API free tier is separate.");
   throw new Error(lastErr);
 }
 
