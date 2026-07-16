@@ -1446,16 +1446,24 @@
     updateLatestLive();
   }
   // show the i-th recent upload (0 = newest) in the Latest-upload card
+  let slotSeq = 0, slotTimer = null;
   function showSlot(i) {
     const slots = recentSlots();
     if (!slots.length) return;
     slotIdx = Math.max(0, Math.min(i, slots.length - 1));
     slotVid = slots[slotIdx];
     renderSlotHeader(slotVid);
-    loadLatest(slotVid);
+    // header updates instantly; debounce the heavy analytics load so tapping ◀ ▶ several
+    // times only loads the upload you land on, not every one you pass through
+    const seq = ++slotSeq, vid = slotVid;
+    $('latestContent').innerHTML = '';
+    $('latestLoading').style.display = 'block';
+    clearTimeout(slotTimer);
+    slotTimer = setTimeout(() => loadLatest(vid, seq), 220);
   }
-  async function loadLatest(vid) {
+  async function loadLatest(vid, seq) {
     if (!vid) return;
+    if (seq == null) seq = slotSeq;
     const isNewest = vid === latestVid;
     $('latestLoading').style.display = 'block';
     try {
@@ -1524,6 +1532,7 @@
         if (isNewest) html += '<div id="launchWrap"></div>';
         html += '<p class="dnote">Official stats lag 24–48h behind the live counters. Tap <b>Full breakdown</b> for countries, devices, retention and more.</p>';
       }
+      if (seq !== slotSeq) return; // a newer upload was selected while this loaded — drop it
       $('latestContent').innerHTML = html;
       if (isNewest) { loadLaunchCurves(); renderLiveRace(); }
       const rm = $('raceModeRow');
@@ -1556,7 +1565,7 @@
         }
       }
     } finally {
-      $('latestLoading').style.display = 'none';
+      if (seq === slotSeq) $('latestLoading').style.display = 'none'; // keep spinner for the pending one
     }
   }
 
