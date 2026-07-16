@@ -245,6 +245,29 @@ async function aiHandler(request, env) {
   catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
 
+/* ---------- cross-device sync store (owner-locked), replaces Google Drive ---------- */
+// Stores each channel's device-local bundle (keyword research, Studio CTR, minute-race
+// history) in KV keyed by the channel id, and only serves it back to a signed-in owner of
+// that channel. Uses the YouTube login only — no Drive scope — so restricted accounts work.
+async function syncHandler(request, env) {
+  const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+  const auth = request.headers.get('Authorization') || '';
+  let token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  let body = null;
+  if (request.method === 'POST') { try { body = await request.json(); } catch (e) {} if (!token && body) token = body.token || ''; }
+  const owner = await verifyOwner(token, channels);
+  if (!owner) return json({ error: 'Not authorised — sign in with one of the tracked channels.' }, 401);
+  const key = 'sync:' + owner;
+  if (request.method === 'POST') {
+    if (!body || body.bundle === undefined) return json({ error: 'no bundle' }, 400);
+    try { await env.MINUTE.put(key, JSON.stringify(body.bundle)); } catch (e) { return json({ error: 'store failed' }, 502); }
+    return json({ ok: true });
+  }
+  let stored = '{}';
+  try { stored = (await env.MINUTE.get(key)) || '{}'; } catch (e) {}
+  return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(tick(env));
@@ -256,6 +279,11 @@ export default {
     if (url.pathname === '/ai') {
       if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
       return aiHandler(request, env);
+    }
+    // cross-device sync store (owner-locked): GET pulls the bundle, POST saves it
+    if (url.pathname === '/sync') {
+      if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
+      return syncHandler(request, env);
     }
     // manual trigger for testing: /run does one tick immediately
     if (url.pathname === '/run') {

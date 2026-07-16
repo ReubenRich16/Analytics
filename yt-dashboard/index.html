@@ -466,7 +466,7 @@
   </div>
 
   <div class="footer-tools">
-    <span id="syncStatus" title="Cross-device sync via your Google account's hidden Drive app-data folder"></span>
+    <span id="syncStatus" title="Cross-device sync via your private Worker storage, locked to your channel"></span>
     <button class="ghost" id="exportBtn">Export saved data</button>
     <button class="ghost" id="importBtn">Import saved data</button>
     <button class="ghost" id="csvBtn" title="Studio → Analytics → Advanced mode → Export CSV">Import Studio CSV (CTR)</button>
@@ -754,8 +754,7 @@
     loadRollup();
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
-    // Drive cross-device sync is disabled (its scope blocks restricted accounts from signing in).
-    // Data stays per-device; the Export / Import buttons still move it between devices manually.
+    syncPull();    // cross-device sync via the Worker's private KV (no Drive scope); no-ops without a Worker
   }
 
   // floating thumbnail balls background
@@ -2315,38 +2314,22 @@
     c.innerHTML = html;
   }
 
-  /* ---------- cross-device sync (Google Drive hidden app-data folder) ---------- */
+  /* ---------- cross-device sync (via the owner-locked Worker's KV) ---------- */
   // Syncs the device-local, valuable data (paid keyword research, Studio CTR import,
-  // minute-race recordings) to a sandboxed per-account Drive folder, so every device
-  // signed into the same Google account shares it. Fails silent → local-only fallback.
-  const SYNC_FILE = 'channel-command-sync.json';
-  let syncFileId = null, syncOn = false, syncTimer = null;
+  // minute-race recordings) through the Worker's private KV, keyed by channel and gated by
+  // YouTube-channel ownership — so every device signed into the same channel shares it, with
+  // NO Drive permission (which blocks restricted accounts). Fails silent → local-only fallback.
+  let syncOn = false, syncTimer = null;
+  const syncAvailable = () => !!(workerUrl && accessToken);
   const setSyncStatus = t => { const e = $('syncStatus'); if (!e) return; e.textContent = t === 'on' ? '☁ synced' : (t === 'busy' ? '☁ syncing…' : ''); e.className = t === 'on' ? 'on' : ''; };
-  const driveGet = path => fetch('https://www.googleapis.com/drive/v3/' + path, { headers: { Authorization: 'Bearer ' + accessToken } });
 
-  async function driveFindFile() {
-    const r = await driveGet('files?spaces=appDataFolder&fields=' + encodeURIComponent('files(id,name)'));
-    if (!r.ok) throw new Error('drive ' + r.status);
-    const d = await r.json();
-    const f = (d.files || []).find(x => x.name === SYNC_FILE);
-    return f ? f.id : null;
-  }
-  async function driveWrite(obj) {
-    const body = JSON.stringify(obj);
-    if (syncFileId) {
-      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + syncFileId + '?uploadType=media', {
-        method: 'PATCH', headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }, body });
-      if (!r.ok) throw new Error('drive write ' + r.status);
-    } else {
-      const bound = '----ccsync-boundary';
-      const meta = JSON.stringify({ name: SYNC_FILE, parents: ['appDataFolder'] });
-      const multipart = '--' + bound + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
-        '\r\n--' + bound + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + bound + '--';
-      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'multipart/related; boundary=' + bound }, body: multipart });
-      if (!r.ok) throw new Error('drive create ' + r.status);
-      syncFileId = (await r.json()).id;
-    }
+  async function syncWrite() {
+    const r = await fetch(workerUrl + '/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+      body: JSON.stringify({ bundle: collectBundle() })
+    });
+    if (!r.ok) throw new Error('sync write ' + r.status);
   }
   function collectBundle() {
     const kw = {};
@@ -2387,21 +2370,23 @@
     return changed;
   }
   async function syncPull() {
-    if (!accessToken) return;
+    if (!syncAvailable()) return;
     setSyncStatus('busy');
     try {
-      syncFileId = await driveFindFile();
-      const remote = syncFileId ? await (await driveGet('files/' + syncFileId + '?alt=media')).json() : null;
+      const r = await fetch(workerUrl + '/sync', { headers: { Authorization: 'Bearer ' + accessToken } });
+      if (!r.ok) throw new Error('sync ' + r.status);
+      const remote = await r.json().catch(() => null);
       const changed = mergeBundle(remote);
       syncOn = true; setSyncStatus('on');
-      await driveWrite(collectBundle()); // write union back (and create the file first time)
+      await syncWrite(); // write the merged union back
       if (changed) { try { renderTable(); renderKeywords(); renderLiveRace(); } catch (e) {} }
     } catch (e) { syncOn = false; setSyncStatus('off'); }
   }
   function syncPush() {
     if (!syncOn) return;
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(() => { driveWrite(collectBundle()).catch(() => {}); }, 4000);
+    // 15s debounce keeps KV writes well within the free tier even during active use
+    syncTimer = setTimeout(() => { syncWrite().catch(() => {}); }, 15000);
   }
 
   /* ---------- events ---------- */
