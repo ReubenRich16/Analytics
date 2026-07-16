@@ -9,12 +9,12 @@ compatibility_date = "2024-11-01"
 [triggers]
 crons = ["* * * * *"]
 
-# A KV namespace stores the recorded minute samples. After you create one with
-#   npx wrangler kv namespace create MINUTE
-# paste the printed id below (replacing PUT_YOUR_KV_NAMESPACE_ID_HERE).
+# A KV namespace stores the recorded minute samples. This id points at the
+# "MINUTE" namespace already created on the account — no need to change it.
+# (A KV namespace id is not a secret; it's just an identifier scoped to your account.)
 [[kv_namespaces]]
 binding = "MINUTE"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+id = "24a3e8ab02904af499a07b6928687b48"
 
 # Secrets (set with the commands below, never in this file or git):
 #   npx wrangler secret put YT_API_KEY    # public YouTube key (per-minute tracker)
