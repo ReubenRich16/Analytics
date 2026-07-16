@@ -1,0 +1,48 @@
+name: Deploy per-minute Worker to Cloudflare
+
+# Deploys worker/ to Cloudflare and pushes the runtime secrets from GitHub secrets,
+# so the keys live only in GitHub (for the robot) and Cloudflare (as encrypted Worker
+# secrets) — never in the repo. Runs on any change to the Worker, or on demand.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Deploy first so the Worker exists (this also applies the KV binding and the
+      # every-minute cron trigger from wrangler.toml).
+      - name: Deploy Worker
+        run: npx wrangler@latest deploy
+      # Then push the runtime secrets from GitHub secrets (idempotent — overwrites).
+      - name: Sync runtime secrets
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        run: |
+          printf '%s' "$YT_API_KEY" | npx wrangler@latest secret put YT_API_KEY
+          printf '%s' "$CHANNEL_ID" | npx wrangler@latest secret put CHANNEL_ID
+          printf '%s' "$GEMINI_KEY" | npx wrangler@latest secret put GEMINI_KEY

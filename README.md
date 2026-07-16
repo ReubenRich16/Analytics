@@ -181,6 +181,30 @@ To check it's alive, visit `https://…workers.dev/run` — it does one recordin
 pass immediately and shows how many videos it's tracking. If you skip all this,
 nothing breaks; the 5-minute robot still captures every upload.
 
+### Deploy the Worker from GitHub instead (no Cloudflare CLI/dashboard)
+
+If you'd rather not run wrangler or click through Cloudflare, the
+[`deploy-worker.yml`](.github/workflows/deploy-worker.yml) workflow deploys the
+Worker for you and pushes the runtime secrets from your GitHub secrets. One-time
+setup:
+
+1. **Cloudflare API token:** Cloudflare dashboard → My Profile → **API Tokens** →
+   **Create Token** → use the **"Edit Cloudflare Workers"** template → Create →
+   copy it.
+2. **Account ID:** Cloudflare → Workers & Pages → copy the **Account ID** shown
+   in the right sidebar.
+3. **Add both as GitHub repo secrets** (Settings → Secrets and variables →
+   Actions): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. (You already
+   have `YT_API_KEY`, `CHANNEL_ID` and — for AI — `GEMINI_KEY` there.)
+4. Run the **"Deploy per-minute Worker to Cloudflare"** workflow from the Actions
+   tab (or just push any change under `worker/`). It deploys the Worker, applies
+   the KV binding + every-minute cron from `wrangler.toml`, and uploads the three
+   secrets. The keys stay only in GitHub and as encrypted Cloudflare secrets —
+   never in the repo.
+
+If you set this up, don't also connect the repo on the Cloudflare side (Workers
+Builds) — pick one so two deploys don't fight.
+
 ## Alternative: standalone repo via CLI
 
 `yt-dashboard/publish.sh` is the original one-shot publisher. If you'd rather
