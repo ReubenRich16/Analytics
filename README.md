@@ -91,6 +91,25 @@ Content, Impressions and click-through-rate columns), then use **Import
 Studio CSV** at the bottom of the dashboard. Impressions & CTR then show in
 each video's Scorecard.
 
+## Cross-device sync (optional) — same Google account, same data everywhere
+
+The dashboard can sync its device-local data (paid keyword research, the
+Studio CTR import, and the minute-race recordings) through a **sandboxed
+hidden folder in your Google Drive** — so every device signed into the same
+Google account shares it automatically. It's free and needs no backend. The
+`☁ synced` badge at the bottom of the page shows when it's active.
+
+One-time setup:
+1. **Enable the Drive API**: Google Cloud Console → same project → APIs &
+   Services → Library → **Google Drive API** → **Enable**.
+2. **Re-consent**: sign out of the dashboard and sign back in. Google will
+   ask to approve one new item — access to its own hidden app-data folder.
+   Approve it. (This scope is *sandboxed*: the app can only see the single
+   JSON file it writes, never your real Drive files.)
+
+If you skip this, nothing breaks — the dashboard just stays local-only and
+the manual **Export / Import** buttons still work.
+
 ## Alternative: standalone repo via CLI
 
 `yt-dashboard/publish.sh` is the original one-shot publisher. If you'd rather

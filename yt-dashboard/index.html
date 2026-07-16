@@ -169,7 +169,9 @@
   .simrow .st { flex:1; line-height:1.35; }
   .simrow .st span { color:var(--muted); font-size:11px; }
   .simrow .sv { flex:none; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
-  .footer-tools { display:flex; gap:8px; justify-content:center; margin-top:4px; }
+  .footer-tools { display:flex; gap:8px; justify-content:center; align-items:center; margin-top:4px; flex-wrap:wrap; }
+  #syncStatus { font-size:11px; color:var(--muted); font-family:'IBM Plex Mono',monospace; }
+  #syncStatus.on { color:var(--up); }
   .bignums { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .bignums .mcell { flex:1 1 120px; }
 
@@ -364,6 +366,7 @@
   </div>
 
   <div class="footer-tools">
+    <span id="syncStatus" title="Cross-device sync via your Google account's hidden Drive app-data folder"></span>
     <button class="ghost" id="exportBtn">Export saved data</button>
     <button class="ghost" id="importBtn">Import saved data</button>
     <button class="ghost" id="csvBtn" title="Studio → Analytics → Advanced mode → Export CSV">Import Studio CSV (CTR)</button>
@@ -398,8 +401,9 @@
   const fmt = new Intl.NumberFormat('en-AU');
   const DATA = 'https://www.googleapis.com/youtube/v3/';
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
-  // youtube.force-ssl is required by YouTube for ANY comments call, even read-only ones
-  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl';
+  // youtube.force-ssl: required by YouTube for ANY comments call.
+  // drive.appdata: sandboxed hidden per-Google-account folder for cross-device sync (can't see real Drive files).
+  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/drive.appdata';
   const DEFAULT_CLIENT_ID = '766052665664-qk83b8i8fm9ns8b9m41m9u051idb1ksk.apps.googleusercontent.com';
   const looksLikeClientId = v => /\.apps\.googleusercontent\.com$/.test((v || '').trim());
 
@@ -645,6 +649,7 @@
     loadRollup();
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
+    syncPull();    // pull cross-device data from the Google-account Drive folder, then keep it in sync
   }
 
   // floating thumbnail balls background
@@ -1177,6 +1182,7 @@
       const keep = new Set(ids.slice(0, 15));
       for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
       try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
+      syncPush();
     }
   }
   function viewsAtAge(vid, t) {
@@ -1669,6 +1675,7 @@
       const missingTags = Object.keys(tagCounts).filter(t => tagCounts[t] >= 2 && !ownTags.includes(t));
       const missingHashtags = Object.keys(hashtagCounts).filter(h => hashtagCounts[h] >= 2 && !ownHashtags.includes(h));
       cacheSet('cc:kwcache:v1:' + vid, { query, ownTags, ownHashtags, similar, aggregate: { tagCounts, hashtagCounts, medianViews, missingTags, missingHashtags } });
+      syncPush();
       renderLab(vid);
     } catch (e) {
       if (e && e.reauth) { setStatus('reconnecting…'); renderLab(vid); return; }
@@ -1887,6 +1894,95 @@
     c.innerHTML = html;
   }
 
+  /* ---------- cross-device sync (Google Drive hidden app-data folder) ---------- */
+  // Syncs the device-local, valuable data (paid keyword research, Studio CTR import,
+  // minute-race recordings) to a sandboxed per-account Drive folder, so every device
+  // signed into the same Google account shares it. Fails silent → local-only fallback.
+  const SYNC_FILE = 'channel-command-sync.json';
+  let syncFileId = null, syncOn = false, syncTimer = null;
+  const setSyncStatus = t => { const e = $('syncStatus'); if (!e) return; e.textContent = t === 'on' ? '☁ synced' : (t === 'busy' ? '☁ syncing…' : ''); e.className = t === 'on' ? 'on' : ''; };
+  const driveGet = path => fetch('https://www.googleapis.com/drive/v3/' + path, { headers: { Authorization: 'Bearer ' + accessToken } });
+
+  async function driveFindFile() {
+    const r = await driveGet('files?spaces=appDataFolder&fields=' + encodeURIComponent('files(id,name)'));
+    if (!r.ok) throw new Error('drive ' + r.status);
+    const d = await r.json();
+    const f = (d.files || []).find(x => x.name === SYNC_FILE);
+    return f ? f.id : null;
+  }
+  async function driveWrite(obj) {
+    const body = JSON.stringify(obj);
+    if (syncFileId) {
+      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + syncFileId + '?uploadType=media', {
+        method: 'PATCH', headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }, body });
+      if (!r.ok) throw new Error('drive write ' + r.status);
+    } else {
+      const bound = '----ccsync-boundary';
+      const meta = JSON.stringify({ name: SYNC_FILE, parents: ['appDataFolder'] });
+      const multipart = '--' + bound + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
+        '\r\n--' + bound + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + bound + '--';
+      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'multipart/related; boundary=' + bound }, body: multipart });
+      if (!r.ok) throw new Error('drive create ' + r.status);
+      syncFileId = (await r.json()).id;
+    }
+  }
+  function collectBundle() {
+    const kw = {};
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('cc:kwcache:v1:')) kw[k] = localStorage.getItem(k); }
+    return { v: 1, kw, ctr: localStorage.getItem('cc:ctr:v1') || null, snaps: localStorage.getItem(SNAP_KEY) || null, savedAt: Date.now() };
+  }
+  function mergeBundle(remote) {
+    if (!remote) return false;
+    let changed = false;
+    const older = (a, b) => { try { return new Date(a) < new Date(b); } catch (e) { return false; } };
+    // keyword research: per-video, keep the newer fetchedAt
+    for (const [k, v] of Object.entries(remote.kw || {})) {
+      const local = localStorage.getItem(k);
+      if (!local) { localStorage.setItem(k, v); changed = true; continue; }
+      try { if (older(JSON.parse(local).fetchedAt, JSON.parse(v).fetchedAt)) { localStorage.setItem(k, v); changed = true; } } catch (e) {}
+    }
+    // Studio CTR import: whole-object, keep newer
+    if (remote.ctr) {
+      const local = localStorage.getItem('cc:ctr:v1');
+      try { if (!local || older(JSON.parse(local).fetchedAt, JSON.parse(remote.ctr).fetchedAt)) { localStorage.setItem('cc:ctr:v1', remote.ctr); changed = true; } }
+      catch (e) { if (!local) { localStorage.setItem('cc:ctr:v1', remote.ctr); changed = true; } }
+    }
+    // minute-race recordings: union the samples per video (denser curve across devices)
+    if (remote.snaps) {
+      try {
+        const rem = JSON.parse(remote.snaps) || {};
+        let loc = {}; try { loc = JSON.parse(localStorage.getItem(SNAP_KEY) || '{}') || {}; } catch (e) {}
+        for (const [vid, arr] of Object.entries(rem)) {
+          const byAge = {};
+          for (const s of (loc[vid] || [])) byAge[s[0]] = s;
+          for (const s of arr) { if (!byAge[s[0]] || s[1] > byAge[s[0]][1]) byAge[s[0]] = s; }
+          loc[vid] = Object.values(byAge).sort((a, b) => a[0] - b[0]);
+        }
+        localStorage.setItem(SNAP_KEY, JSON.stringify(loc));
+        snaps = loc; changed = true;
+      } catch (e) {}
+    }
+    return changed;
+  }
+  async function syncPull() {
+    if (!accessToken) return;
+    setSyncStatus('busy');
+    try {
+      syncFileId = await driveFindFile();
+      const remote = syncFileId ? await (await driveGet('files/' + syncFileId + '?alt=media')).json() : null;
+      const changed = mergeBundle(remote);
+      syncOn = true; setSyncStatus('on');
+      await driveWrite(collectBundle()); // write union back (and create the file first time)
+      if (changed) { try { renderTable(); renderKeywords(); renderLiveRace(); } catch (e) {} }
+    } catch (e) { syncOn = false; setSyncStatus('off'); }
+  }
+  function syncPush() {
+    if (!syncOn) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => { driveWrite(collectBundle()).catch(() => {}); }, 4000);
+  }
+
   /* ---------- events ---------- */
   $('signInBtn').addEventListener('click', () => initAuth());
   $('switchBtn').addEventListener('click', () => initAuth('select_account'));
@@ -1967,6 +2063,7 @@
         }
         if (!Object.keys(map).length) { alert('No video rows recognised in that CSV.'); return; }
         cacheSet('cc:ctr:v1', { map });
+        syncPush();
         alert('Imported impressions & CTR for ' + Object.keys(map).length + ' videos — open any video’s Full breakdown to see them in the Scorecard.');
       } catch (err) { alert('Couldn’t read that CSV: ' + err.message); }
     };
