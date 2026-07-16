@@ -1640,7 +1640,7 @@
   let geminiKey = '';
   try { geminiKey = localStorage.getItem('cc_gemini') || ''; } catch (e) {}
   const looksLikeGeminiKey = k => /^AIza[0-9A-Za-z_\-]{20,}$/.test(k || '');
-  const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']; // 2.0/1.5 have 0 free-tier quota on new projects
   const IDEA_STOP = new Set(['the','and','for','with','your','you','this','that','from','out','new','asmr','video','tapping','sounds','sound','not','feat','ft','part','pt','ep','vol']);
   const EMOJI_RE = /\p{Extended_Pictographic}/gu;
   const titleCase = s => (s || '').replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));

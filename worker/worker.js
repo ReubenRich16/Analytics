@@ -34,8 +34,9 @@ const KEEP_DAYS   = 3;      // drop samples older than this from the served bund
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
 // tried in order; different models have separate free-tier quota pools, so a 429 on one
-// may still succeed on a lighter one
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+// may still succeed on the next. NOTE: gemini-2.0-flash / -lite have a free-tier quota of
+// 0 on new projects (they 429 instantly); the 2.5 models carry the real free allowance.
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
