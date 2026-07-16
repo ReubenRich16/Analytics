@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/youtube-dashboard-setup-8tcx30
     paths:
       - 'yt-dashboard/**'
       - 'data/**'
