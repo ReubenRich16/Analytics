@@ -134,6 +134,20 @@
   @media (max-width:640px) { .idea-cols, .idea-list.grid2 { grid-template-columns:1fr; } }
   .chiprow { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
   .chip { background:var(--panel-2); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:12px; color:var(--text); }
+  /* report card (per-video grade) */
+  .reportcard { display:flex; gap:16px; align-items:center; background:var(--panel-2); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:6px 0 12px; flex-wrap:wrap; }
+  .grade-badge { flex:none; width:66px; height:66px; border-radius:15px; display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-size:27px; font-weight:700; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.2); }
+  .grade-meta { flex:1; min-width:190px; }
+  .grade-meta .big { font-size:15px; font-weight:700; color:var(--text); }
+  .grade-bars { display:flex; flex-direction:column; gap:5px; margin-top:9px; }
+  .gbar { display:flex; align-items:center; gap:8px; font-size:11px; }
+  .gbar .gl { width:88px; color:var(--muted); flex:none; }
+  .gbar .gt { flex:1; height:6px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .gbar .gf { display:block; height:100%; border-radius:4px; }
+  .gbar .gv { width:52px; text-align:right; color:var(--text); font-family:'IBM Plex Mono',monospace; flex:none; }
+  .tips { margin:8px 0 2px; padding:0; list-style:none; }
+  .tips li { padding:8px 10px 8px 32px; margin:5px 0; background:var(--panel-2); border:1px solid var(--line); border-radius:7px; font-size:12.5px; line-height:1.45; position:relative; }
+  .tips li::before { content:'💡'; position:absolute; left:9px; top:7px; }
   .hint { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
   .hint a { color:var(--text); }
   .hint code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:11px; }
@@ -454,6 +468,13 @@
     </details>
   </div>
 
+  <!-- COACHING -->
+  <div class="card" id="coachCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
+    <p class="explain" style="margin-top:8px">Personalised tips from your own catalogue: your best day and time to post, your winning keywords, and how your hits compare. Open any video's <b>Full breakdown</b> for its individual Report Card grade.</p>
+    <div id="coachContent"><p class="dnote">crunching your history…</p></div>
+  </div>
+
   <!-- CHANNEL TRENDS -->
   <div class="card trends" id="trendsCard">
     <div class="thead">
@@ -768,6 +789,7 @@
     $('commentsCard').style.display = 'block';
     $('keywordsCard').style.display = 'block';
     $('ideasCard').style.display = 'block';
+    $('coachCard').style.display = 'block';
     setGeminiState(); // now that we're signed in, reflect Worker-provided AI if configured
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
@@ -936,6 +958,7 @@
       recordSnaps();
       renderLiveRace();
       renderKeywords();
+      renderCoaching();
       pollCount++;
       if (workerUrl && (!workerPulled || pollCount % 3 === 0)) pullWorkerMinutes();
       if (pollCount % 5 === 1) loadComments();
@@ -1638,6 +1661,100 @@
     }
   }
 
+  /* ---------- video grading & channel coaching ---------- */
+  const DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const HOUR_BANDS = [
+    { label: 'Morning (5am–11am)', test: h => h >= 5 && h < 11 },
+    { label: 'Midday (11am–3pm)', test: h => h >= 11 && h < 15 },
+    { label: 'Afternoon (3pm–7pm)', test: h => h >= 15 && h < 19 },
+    { label: 'Evening (7pm–11pm)', test: h => h >= 19 && h < 23 },
+    { label: 'Late night (11pm–5am)', test: h => h >= 23 || h < 5 }
+  ];
+  // per-video, age-fair metrics for the whole catalogue (live counts — no extra quota)
+  function catalogueMetrics() {
+    const now = Date.now(), rows = [];
+    for (const id of videoIds) {
+      const m = meta[id], p = perVideo[id];
+      if (!m || !p) continue;
+      const d = new Date(m.publishedAt);
+      const ageD = Math.max(1, (now - d.getTime()) / 864e5);
+      rows.push({ id, vpd: p.views / ageD, eng: p.views ? p.likes / p.views : 0, cmt: p.views ? p.comments / p.views : 0, dow: d.getDay(), hour: d.getHours(), pub: d.getTime(), tags: [...new Set((m.tags || []).map(t => t.toLowerCase()))] });
+    }
+    return rows;
+  }
+  const pctBelow = (arr, v) => { if (!arr.length) return 0; let b = 0; for (const x of arr) if (x < v) b++; return b / arr.length * 100; };
+  const letterFor = p => p >= 95 ? 'A+' : p >= 85 ? 'A' : p >= 72 ? 'A-' : p >= 58 ? 'B+' : p >= 45 ? 'B' : p >= 30 ? 'C' : p >= 15 ? 'D' : 'F';
+  const gradeColor = g => g[0] === 'A' ? 'var(--up)' : g[0] === 'B' ? 'var(--accent)' : g[0] === 'C' ? 'var(--gold)' : 'var(--down)';
+  function avgVpdBy(rows, keyfn, minN) {
+    const g = {}; for (const r of rows) { const k = keyfn(r); if (k == null) continue; (g[k] = g[k] || []).push(r.vpd); }
+    const out = {}; for (const [k, a] of Object.entries(g)) if (a.length >= (minN || 2)) out[k] = a.reduce((x, y) => x + y, 0) / a.length;
+    return out;
+  }
+  function topTagsByVpd(rows) {
+    const m = {}; for (const r of rows) for (const t of r.tags) { const e = m[t] || (m[t] = { n: 0, s: 0 }); e.n++; e.s += r.vpd; }
+    return Object.entries(m).filter(([t, e]) => e.n >= 2).map(([t, e]) => ({ tag: t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg);
+  }
+  // grade one video vs the channel's own catalogue; avgPct is retention from analytics (optional)
+  function gradeVideo(vid, avgPct) {
+    const rows = catalogueMetrics();
+    if (rows.length < 4) return null;
+    const me = rows.find(r => r.id === vid);
+    if (!me) return null;
+    const vpds = rows.map(r => r.vpd), engs = rows.map(r => r.eng), cmts = rows.map(r => r.cmt);
+    const pReach = pctBelow(vpds, me.vpd), pEng = pctBelow(engs, me.eng), pCmt = pctBelow(cmts, me.cmt);
+    const composite = pReach * 0.6 + pEng * 0.25 + pCmt * 0.15;
+    const grade = letterFor(composite);
+    const tips = [];
+    const dowAvg = avgVpdBy(rows, r => r.dow);
+    const best = Object.entries(dowAvg).sort((a, b) => b[1] - a[1])[0];
+    if (best && dowAvg[me.dow] && +best[0] !== me.dow && best[1] >= dowAvg[me.dow] * 1.4)
+      tips.push('Posted on a ' + DAYFULL[me.dow] + '. Your ' + DAYFULL[+best[0]] + ' uploads average ' + (best[1] / dowAvg[me.dow]).toFixed(1) + '× the views/day — try that slot next time.');
+    const myTags = new Set(me.tags);
+    const missing = topTagsByVpd(rows).filter(t => !myTags.has(t.tag)).slice(0, 3);
+    if (missing.length) tips.push('Add your winning tags it’s missing: ' + missing.map(t => t.tag).join(', ') + '.');
+    if (pEng < 40 && pReach > 55) tips.push('Strong reach, but engagement runs low for you — a clear “like & comment” ask could lift it.');
+    if (avgPct && avgPct < 30) tips.push('Only ~' + Math.round(avgPct) + '% of the video gets watched — tighten the first 10–15 seconds to hold viewers.');
+    if (!tips.length && composite >= 72) tips.push('This one is firing on all cylinders — study what you did here and repeat it.');
+    return { grade, pct: composite, color: gradeColor(grade), parts: [{ label: 'Reach', pct: pReach }, { label: 'Engagement', pct: pEng }, { label: 'Comments', pct: pCmt }], tips };
+  }
+  function reportCardHtml(vid, avgPct) {
+    const rc = gradeVideo(vid, avgPct);
+    if (!rc) return '';
+    const bars = rc.parts.map(p => '<div class="gbar"><span class="gl">' + p.label + '</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(p.pct)) + '%;background:' + gradeColor(letterFor(p.pct)) + '"></span></span><span class="gv">top ' + Math.max(1, Math.round(100 - p.pct)) + '%</span></div>').join('');
+    return '<div class="dsection"><h4>Report card</h4><p class="explain">How this video ranks against your own catalogue — age-adjusted, so new and old compare fairly.</p>' +
+      '<div class="reportcard"><div class="grade-badge" style="background:' + rc.color + '">' + rc.grade + '</div>' +
+      '<div class="grade-meta"><div class="big">Beats ' + Math.round(rc.pct) + '% of your uploads</div><div class="grade-bars">' + bars + '</div></div></div>' +
+      (rc.tips.length ? '<ul class="tips">' + rc.tips.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul>' : '') + '</div>';
+  }
+  const noteSection = (title, body) => '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + body + '</p></div>';
+  function renderCoaching() {
+    const el = $('coachContent');
+    if (!el) return;
+    const rows = catalogueMetrics();
+    if (rows.length < 4) { el.innerHTML = '<p class="dnote">Once a few videos are tracked, personalised coaching appears here.</p>'; return; }
+    let html = '';
+    const dowRows = Object.entries(avgVpdBy(rows, r => r.dow)).map(([d, v]) => ({ label: DAYFULL[+d], val: Math.round(v) })).sort((a, b) => b.val - a.val);
+    if (dowRows.length >= 2) html += section('Best day to post', 'Average views/day of the uploads you’ve posted on each weekday — your strongest is <b>' + esc(dowRows[0].label) + '</b>.', hbarList(dowRows, { color: 'var(--up)' }));
+    const bandRows = [];
+    for (const b of HOUR_BANDS) { const a = rows.filter(r => b.test(r.hour)).map(r => r.vpd); if (a.length >= 2) bandRows.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length) }); }
+    bandRows.sort((a, b) => b.val - a.val);
+    if (bandRows.length >= 2) html += section('Best time to post', 'When your uploads go live, by average views/day.', hbarList(bandRows, { color: 'var(--accent)' }));
+    const pubs = rows.map(r => r.pub).sort((a, b) => a - b), gaps = [];
+    for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
+    if (gaps.length >= 3) {
+      const g2 = gaps.slice().sort((a, b) => a - b), medGap = g2[g2.length >> 1], sameDay = gaps.filter(x => x < 0.5).length;
+      let note = 'You upload roughly every <b>' + (medGap < 1 ? Math.round(medGap * 24) + ' hours' : medGap.toFixed(1) + ' days') + '</b>.';
+      if (sameDay >= 2) note += ' You’ve bunched ' + sameDay + ' uploads into a single day a few times — spreading them out gives each its own launch window and push from YouTube.';
+      html += noteSection('Posting rhythm', note);
+    }
+    const tt = topTagsByVpd(rows).slice(0, 8);
+    if (tt.length) html += section('Keywords to lean into', 'Tags your best-performing videos use — put these on more uploads.', '<div class="chiprow">' + tt.map(t => '<span class="chip">' + esc(t.tag) + '</span>').join('') + '</div>');
+    const sorted = rows.slice().sort((a, b) => b.vpd - a.vpd), topN = Math.max(1, Math.round(sorted.length * 0.2));
+    const topAvg = sorted.slice(0, topN).reduce((x, r) => x + r.vpd, 0) / topN, rest = sorted.slice(topN);
+    if (rest.length) html += noteSection('Your hits vs the rest', 'Your top 20% average <b>' + fmt.format(Math.round(topAvg)) + '</b> views/day vs <b>' + fmt.format(Math.round(rest.reduce((x, r) => x + r.vpd, 0) / rest.length)) + '</b> for the rest. Open any video’s <b>Full breakdown</b> for its Report Card to see what the winners share.');
+    el.innerHTML = html || '<p class="dnote">Not enough spread in your uploads yet for clear patterns — check back as you post more.</p>';
+  }
+
   /* ---------- recent comments ---------- */
   const timeAgo = iso2 => {
     const s = (Date.now() - new Date(iso2)) / 1000;
@@ -2256,6 +2373,7 @@
     const medRate = allRates.length ? allRates[allRates.length >> 1] : 0;
     let ctrMap = {};
     try { ctrMap = (JSON.parse(localStorage.getItem('cc:ctr:v1') || '{}').map) || {}; } catch (e) {}
+    html += reportCardHtml(svid, avgPct);
     html += '<div class="dsection"><h4>Scorecard</h4><p class="explain">Computed live — age doesn’t distort these, so old and new videos compare fairly.</p><div class="metric-grid">' +
       mcell('Engagement', pv.views ? (pv.likes / pv.views * 100).toFixed(1) + '%' : '–', 'likes per view') +
       mcell('Comments /1k views', pv.views ? (pv.comments / pv.views * 1000).toFixed(1) : '–') +
