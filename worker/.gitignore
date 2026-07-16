@@ -1,0 +1,5 @@
+# Cloudflare Wrangler local artifacts — never commit these
+.wrangler/
+node_modules/
+.dev.vars
+wrangler.toml.bak

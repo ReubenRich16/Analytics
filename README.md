@@ -110,6 +110,52 @@ One-time setup:
 If you skip this, nothing breaks — the dashboard just stays local-only and
 the manual **Export / Import** buttons still work.
 
+## Per-minute offline tracker (optional) — catch a launch minute-by-minute
+
+The GitHub robot snapshots every 5 minutes, and the dashboard records its own
+minute-by-minute race only while it's open. If you want a **brand-new upload
+tracked every single minute even when nobody has the dashboard open**, deploy
+the tiny Cloudflare Worker in [`worker/`](worker/). It runs on Cloudflare's
+free cron, records the launch, and the dashboard merges those minutes into the
+race the next time it opens.
+
+It's **free and safe**: it uses the *same public API key* as the robot — no
+sign-in, no OAuth, no account access, just public view counts. It only writes
+while a video is inside its first few hours (`HOT_HOURS`, default 6), so it
+stays well inside the free tier.
+
+One-time setup (~5 minutes, needs [Node.js](https://nodejs.org)):
+
+1. **Make a free Cloudflare account** at dash.cloudflare.com (no card needed).
+2. In a terminal, from the `worker/` folder:
+   ```bash
+   cd worker
+   npx wrangler login                       # opens the browser to authorise
+   npx wrangler kv namespace create MINUTE  # prints an id="..."
+   ```
+   Paste the printed `id` into `wrangler.toml` (replace
+   `PUT_YOUR_KV_NAMESPACE_ID_HERE`).
+3. **Set the two secrets** (they never touch git):
+   ```bash
+   npx wrangler secret put YT_API_KEY     # paste the same API key as the robot
+   npx wrangler secret put CHANNEL_ID     # UCyours  (or UCyours,UCpartners)
+   ```
+4. **Deploy:**
+   ```bash
+   npx wrangler deploy
+   ```
+   Wrangler prints the Worker URL, e.g.
+   `https://yt-minute-tracker.<you>.workers.dev`.
+5. **Point the dashboard at it** — open it once with the URL appended (it's
+   remembered forever on that device, so re-bookmark it):
+   ```
+   https://reubenrich16.github.io/Analytics/?worker=https://yt-minute-tracker.<you>.workers.dev
+   ```
+
+To check it's alive, visit `https://…workers.dev/run` — it does one recording
+pass immediately and shows how many videos it's tracking. If you skip all this,
+nothing breaks; the 5-minute robot still captures every upload.
+
 ## Alternative: standalone repo via CLI
 
 `yt-dashboard/publish.sh` is the original one-shot publisher. If you'd rather

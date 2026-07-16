@@ -1,0 +1,22 @@
+# Cloudflare Worker config for the per-minute offline tracker.
+# Deploy steps are in ../README.md ("Per-minute offline tracker").
+
+name = "yt-minute-tracker"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Runs the tracker every minute. Cloudflare's free plan allows cron triggers.
+[triggers]
+crons = ["* * * * *"]
+
+# A KV namespace stores the recorded minute samples. After you create one with
+#   npx wrangler kv namespace create MINUTE
+# paste the printed id below (replacing PUT_YOUR_KV_NAMESPACE_ID_HERE).
+[[kv_namespaces]]
+binding = "MINUTE"
+id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+
+# YT_API_KEY and CHANNEL_ID are set as *secrets*, not here — see the README so the
+# key never lands in this file or in git:
+#   npx wrangler secret put YT_API_KEY
+#   npx wrangler secret put CHANNEL_ID

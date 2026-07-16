@@ -485,6 +485,10 @@
   // commits never trigger a site redeploy. (main is the permanent default branch, so this
   // is not the ephemeral-branch coupling the audit flagged.)
   const DATA_RAW = 'https://raw.githubusercontent.com/ReubenRich16/Analytics/main/data/';
+  // Optional per-minute offline tracker (a Cloudflare Worker). If set, the dashboard pulls
+  // the minute samples it recorded while no browser was open and merges them into the race.
+  let workerUrl = '';
+  const looksLikeWorkerUrl = u => /^https:\/\/[^ "'<>]+$/.test(u || '');
   let hist = null, histAlerts = [], histRanks = null, accelSet = new Set();
   const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
   async function loadHistory() {
@@ -862,6 +866,7 @@
       renderLiveRace();
       renderKeywords();
       pollCount++;
+      if (workerUrl && (!workerPulled || pollCount % 3 === 0)) pullWorkerMinutes();
       if (pollCount % 5 === 1) loadComments();
       if (pollCount % 30 === 0) checkNewUploads();
       prevTotals = totals;
@@ -1296,6 +1301,43 @@
       return { v: Math.round(prev[1] + (s[1] - prev[1]) * f), stale: false };
     }
     return { v: prev[1], stale: t - prev[0] > 30 };
+  }
+  // Merge samples recorded by the optional Cloudflare Worker (captured while no browser was
+  // open) into the local minute-race history. The Worker stores absolute timestamps; we
+  // convert each to "minutes since publish" — the same shape the on-device recorder uses.
+  let workerPulled = false;
+  async function pullWorkerMinutes() {
+    if (!workerUrl) return;
+    let bundle = null;
+    try { const r = await fetch(workerUrl, { cache: 'no-store' }); bundle = r.ok ? await r.json() : null; } catch (e) { return; }
+    if (!bundle || !bundle.videos) return;
+    let changed = false;
+    for (const [vid, rec] of Object.entries(bundle.videos)) {
+      if (!rec || !rec.pub || !Array.isArray(rec.s) || !rec.s.length) continue;
+      const pubMs = new Date(rec.pub).getTime();
+      if (!pubMs) continue;
+      // give the video a minimal meta entry so it can appear in the race even if the
+      // signed-in account didn't fetch it (e.g. a partner channel the Worker also tracks)
+      if (!meta[vid]) meta[vid] = { title: rec.title || vid, publishedAt: rec.pub, thumb: '' };
+      const arr = snaps[vid] || (snaps[vid] = []);
+      const byAge = new Map(arr.map(p => [p[0], p]));
+      for (const smp of rec.s) {
+        const age = Math.round((smp[0] - pubMs) / 60000);
+        if (age < 0) continue;
+        const ex = byAge.get(age);
+        if (!ex) { const p = [age, smp[1]]; byAge.set(age, p); changed = true; }
+        else if (smp[1] > ex[1]) { ex[1] = smp[1]; changed = true; } // trust the higher (later) count
+      }
+      if (changed) snaps[vid] = [...byAge.values()].sort((a, b) => a[0] - b[0]);
+    }
+    if (changed) {
+      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
+      const keep = new Set(ids.slice(0, 15));
+      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
+      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
+      if (latestVid) renderLiveRace();
+    }
+    workerPulled = true;
   }
   function renderLiveRace() {
     const el = $('liveRaceContent');
@@ -2293,6 +2335,13 @@
   } else {
     $('clientId').value = savedId || DEFAULT_CLIENT_ID;
   }
+
+  // Optional per-minute Worker URL: ?worker=https://... wins and is remembered; then the
+  // value stored on this device. Bookmark the URL with ?worker=... once and it sticks.
+  try { workerUrl = localStorage.getItem('cc_worker') || ''; } catch (e) {}
+  const urlWorker = (params.get('worker') || '').trim().replace(/\/+$/, '');
+  if (looksLikeWorkerUrl(urlWorker)) { workerUrl = urlWorker; try { localStorage.setItem('cc_worker', workerUrl); } catch (e) {} }
+  if (workerUrl && !looksLikeWorkerUrl(workerUrl)) { workerUrl = ''; try { localStorage.removeItem('cc_worker'); } catch (e) {} }
 
   // Try a silent (no-click) sign-in on load. If the browser allows Google's session
   // cookie it signs the user in with no tap; only if that's refused does the sign-in
