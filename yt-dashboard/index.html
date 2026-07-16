@@ -558,7 +558,7 @@
         if (nowS[1] - d1[1] >= 50 && nowS[1] - d1[1] >= (d1[1] - d2[1]) * 1.5) accelSet.add(vid);
       }
     }
-    if (videoIds.length) { renderTable(); loadTrends(); }
+    if (videoIds.length) { seedSnapsFromHistory(); renderTable(); loadTrends(); }
   }
 
   const cacheSet = (k, obj) => {
@@ -1333,6 +1333,37 @@
       for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
       try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
       syncPush();
+    }
+  }
+  // Reconstruct launch curves for PAST videos from the robot's history.json: convert each
+  // recorded [ts, views] to [ageMinutes, views] and seed the race. Resolution is the robot's
+  // (≈5 min during a launch, hourly after) — only videos launched while the robot was running
+  // have any launch-window samples; older ones simply have no early data to reconstruct.
+  function seedSnapsFromHistory() {
+    if (!hist || !hist.videos) return;
+    let any = false;
+    for (const [vid, arr] of Object.entries(hist.videos)) {
+      if (!meta[vid] || !Array.isArray(arr) || !arr.length) continue;
+      const pubMs = new Date(meta[vid].publishedAt).getTime();
+      if (!pubMs) continue;
+      const cur = snaps[vid] || (snaps[vid] = []);
+      const byAge = new Map(cur.map(p => [p[0], p]));
+      let vidChanged = false;
+      for (const s of arr) {
+        const age = Math.round((s[0] - pubMs) / 60000);
+        if (age < 0 || age > SNAP_MAX_AGE) continue; // only the launch window
+        const ex = byAge.get(age);
+        if (!ex) { byAge.set(age, [age, s[1]]); vidChanged = true; }
+        else if (s[1] > ex[1]) { ex[1] = s[1]; vidChanged = true; } // trust the higher (later) count
+      }
+      if (vidChanged) { snaps[vid] = [...byAge.values()].sort((a, b) => a[0] - b[0]); any = true; }
+    }
+    if (any) {
+      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
+      const keep = new Set(ids.slice(0, 15));
+      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
+      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
+      if (latestVid) renderLiveRace();
     }
   }
   function viewsAtAge(vid, t) {
