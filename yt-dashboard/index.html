@@ -73,7 +73,7 @@
     display:flex; flex-direction:column; align-items:center;
     padding:24px 14px 60px; min-height:100vh;
   }
-  .wrap { width:100%; max-width:1224px; position:relative; z-index:1; }
+  .wrap { width:100%; max-width:1460px; position:relative; z-index:1; }
 
   /* floating thumbnail balls background */
   #bgBalls { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
@@ -105,6 +105,12 @@
   .idea-list { margin:6px 0 2px; padding:0; list-style:none; }
   .idea-list li { padding:7px 10px; margin:5px 0; background:var(--panel-2); border:1px solid var(--line); border-radius:7px; font-size:13px; line-height:1.45; }
   .idea-list li .why { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  /* Idea Studio layout: Titles | On-screen text side by side; video ideas in two columns */
+  .idea-cols { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .idea-cols .dsection { margin-bottom:14px; }
+  .idea-list.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+  .idea-list.grid2 li { margin:0; }
+  @media (max-width:640px) { .idea-cols, .idea-list.grid2 { grid-template-columns:1fr; } }
   .chiprow { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
   .chip { background:var(--panel-2); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:12px; color:var(--text); }
   .hint { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
@@ -254,7 +260,9 @@
   .range-row { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
   .range-row button { flex:1; min-width:70px; }
   .range-row button.active { color:var(--text); border-color:var(--accent); }
-  .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:18px; }
+  .metric-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(138px,1fr)); gap:10px; margin-bottom:18px; }
+  /* the 8-tile "how it's doing" grids show all 8 on one row on a wide screen */
+  @media (min-width:1180px) { .metric-grid.m8 { grid-template-columns:repeat(8,1fr); } }
   .mcell { background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:12px; }
   .mcell .label { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
   .mcell .val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:5px; font-variant-numeric:tabular-nums; }
@@ -1490,7 +1498,7 @@
         html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h.' + (isNewest ? ' The live counters and race above are real-time.' : '') + '</p>';
       } else {
         html += liveRaceHtml;
-        html += '<div class="metric-grid">' +
+        html += '<div class="metric-grid m8">' +
           mcell('Views', fmt.format(s[0])) +
           mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
           mcell('Avg watched', fmtDur(s[2]), 'how long a typical viewer stays') +
@@ -1673,7 +1681,7 @@
   let geminiKey = '';
   try { geminiKey = localStorage.getItem('cc_gemini') || ''; } catch (e) {}
   const looksLikeGeminiKey = k => /^AIza[0-9A-Za-z_\-]{20,}$/.test(k || '');
-  const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3-flash', 'gemini-2.5-flash-lite']; // separate free quotas stack; 2.0/1.5 are 0 on new projects
+  const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.0-flash']; // text models with free quota (used only for a personal on-device key; the Worker self-discovers)
   const IDEA_STOP = new Set(['the','and','for','with','your','you','this','that','from','out','new','asmr','video','tapping','sounds','sound','not','feat','ft','part','pt','ep','vol']);
   const EMOJI_RE = /\p{Extended_Pictographic}/gu;
   const titleCase = s => (s || '').replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
@@ -1748,6 +1756,8 @@
     if (st.topWords[0]) pushT([pre, trigger, titleCase(st.topWords[0].w)].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
     pushT([pre, trigger + ' for Deep Sleep'].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
     if (st.topWords[1]) pushT([pre, titleCase(st.topWords[1].w) + ' + ' + trigger].filter(Boolean).join(sep));
+    pushT([pre, trigger, 'Tingles'].filter(Boolean).join(sep) + (emoji2 ? ' ' + emoji2 : ''));
+    pushT([pre, trigger + ' (1 Hour)'].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
 
     const hooks = [
       trigger + '…',
@@ -1774,12 +1784,15 @@
     for (const w of evergreen) if (vidIdeas.length < 5) vidIdeas.push({ t: titleCase(w.w) + ' (extended / 1 hour)', why: 'Consistent performer at ' + fmt.format(Math.round(w.avg)) + ' avg views — a long version suits sleep viewers.' });
 
     const listT = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
-    const listV = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x.t) + '<span class="why">' + esc(x.why) + '</span></li>').join('') + '</ul>';
+    const listV = items => '<ul class="idea-list grid2">' + items.map(x => '<li>' + esc(x.t) + '<span class="why">' + esc(x.why) + '</span></li>').join('') + '</ul>';
     const chips = items => '<div class="chiprow">' + items.map(x => '<span class="chip">' + esc(x) + '</span>').join('') + '</div>';
 
     let html = '<div class="dsection"><h4>📊 From your own data</h4><p class="explain">Built from your titles, tags and view counts — no AI, just your trends.</p></div>';
-    html += section('Title ideas', 'Templates matching your naming style' + (pre ? ' (starts with “' + esc(pre) + '”)' : '') + '.', listT(titleIdeas));
-    html += section('On-screen text hooks', 'Short starters for the first seconds — tweak to taste.', listT(hooks));
+    // Title ideas and on-screen text hooks side by side (6 each)
+    html += '<div class="idea-cols">' +
+      section('Title ideas', 'Matching your naming style' + (pre ? ' (starts with “' + esc(pre) + '”)' : '') + '.', listT(titleIdeas.slice(0, 6))) +
+      section('On-screen text hooks', 'Starters for the first seconds — tweak to taste.', listT(hooks.slice(0, 6))) +
+      '</div>';
     html += section('Tags to add', 'Your best-performing tags plus keywords from the description.', chips(tagSuggest));
     if (vidIdeas.length) html += section('Next-video ideas', 'Gaps and combinations from your best themes.', listV(vidIdeas));
     return html;
@@ -1789,13 +1802,14 @@
     const arr = k => Array.isArray(ai[k]) ? ai[k] : [];
     const listT = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(String(x)) + '</li>').join('') + '</ul>';
     const chips = items => '<div class="chiprow">' + items.map(x => '<span class="chip">' + esc(String(x)) + '</span>').join('') + '</div>';
-    const listV = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x && x.title ? x.title : String(x)) + (x && x.why ? '<span class="why">' + esc(x.why) + '</span>' : '') + '</li>').join('') + '</ul>';
+    const listV = items => '<ul class="idea-list grid2">' + items.map(x => '<li>' + esc(x && x.title ? x.title : String(x)) + (x && x.why ? '<span class="why">' + esc(x.why) + '</span>' : '') + '</li>').join('') + '</ul>';
     let html = '<h4>✨ AI ideas</h4><p class="explain">Creative variations from Gemini, guided by your style.</p>';
-    if (arr('titles').length) html += section('Title ideas', '', listT(arr('titles')));
-    if (arr('onscreenText').length) html += section('On-screen text hooks', '', listT(arr('onscreenText')));
+    const titlesHtml = arr('titles').length ? section('Title ideas', '', listT(arr('titles'))) : '';
+    const hooksHtml = arr('onscreenText').length ? section('On-screen text hooks', '', listT(arr('onscreenText'))) : '';
+    if (titlesHtml || hooksHtml) html += '<div class="idea-cols">' + titlesHtml + hooksHtml + '</div>';
     if (arr('tags').length) html += section('Tags', '', chips(arr('tags')));
     if (arr('videoIdeas').length) html += section('Next-video ideas', '', listV(arr('videoIdeas')));
-    return html || '<h4>✨ AI ideas</h4><p class="dnote">No ideas came back — try rephrasing the description.</p>';
+    return html;
   }
 
   // AI is available either through the owner-locked Worker (preferred — key stays server-side
@@ -2161,7 +2175,7 @@
     const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8];
     let html = '';
 
-    html += '<div class="metric-grid">' +
+    html += '<div class="metric-grid m8">' +
       mcell('Views', fmt.format(views)) +
       mcell('Watch time', fmtHours(minsWatched), 'total time people spent watching') +
       mcell('Avg watched', fmtDur(avgDur), 'how long a typical viewer stays') +
