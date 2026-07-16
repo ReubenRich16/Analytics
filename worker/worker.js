@@ -167,21 +167,54 @@ async function verifyOwner(token, channels) {
   } catch (e) { return null; }
 }
 
-async function callGemini(key, prompt) {
+// Ask Google which models this key can actually call with generateContent.
+async function listGenerateModels(key) {
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(key));
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => (m.name || '').replace('models/', ''))
+      .filter(Boolean);
+  } catch (e) { return []; }
+}
+
+// Call Gemini, self-healing across models: try the cached/known-good model, then the
+// seed list, then whatever the key actually offers (flash first). 404 = wrong id → skip;
+// 429 = no free quota on that model → skip. Remembers the winner in KV so later calls are
+// a single request.
+async function callGemini(env, prompt) {
+  const key = env.GEMINI_KEY;
   const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
-  let sawQuota = false, lastErr = 'no response';
-  for (const model of GEMINI_MODELS) {
+  let sawQuota = false, lastErr = 'no response', cached = null;
+  try { cached = await env.MINUTE.get('ai-model'); } catch (e) {}
+
+  const seen = new Set();
+  const attempt = async (model) => {
+    if (!model || seen.has(model)) return undefined;
+    seen.add(model);
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; continue; }   // model gone → next
-    if (r.status === 429) { sawQuota = true; lastErr = 'quota'; continue; }             // rate/quota → try a lighter model
+    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; return undefined; }
+    if (r.status === 429) { sawQuota = true; lastErr = 'quota'; return undefined; }
     if (!r.ok) throw new Error('Gemini HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
     const j = await r.json();
     const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
-    return JSON.parse(txt);
-  }
+    const parsed = JSON.parse(txt);
+    if (model !== cached) { try { await env.MINUTE.put('ai-model', model); } catch (e) {} } // remember the winner
+    return parsed;
+  };
+
+  // 1) cached winner, then the seed list
+  for (const m of [cached, ...GEMINI_MODELS]) { const out = await attempt(m); if (out !== undefined) return out; }
+  // 2) discover what this key really offers, flash models first (free-tier friendly)
+  const discovered = await listGenerateModels(key);
+  const ordered = [...discovered.filter(m => /flash/i.test(m)), ...discovered.filter(m => !/flash/i.test(m))];
+  for (const m of ordered) { const out = await attempt(m); if (out !== undefined) return out; }
+
   if (sawQuota) throw new Error("Gemini's free API quota is used up for now (HTTP 429) — it resets on Google's schedule (per-minute limits clear in ~a minute; the daily cap resets each day). Note: a Gemini app/chat subscription does NOT raise the API limit — the API free tier is separate.");
-  throw new Error(lastErr);
+  throw new Error(lastErr + ' — no usable Gemini model found for this key.');
 }
 
 async function aiHandler(request, env) {
@@ -201,7 +234,7 @@ async function aiHandler(request, env) {
     'CHANNEL STYLE:\n' + style + '\n\n' +
     'NEW VIDEO:\n"' + desc + '"\n\n' +
     'Give a large, varied set (the caller has plenty of token budget but few requests, so pack this response fully). Return JSON only, with keys: "titles" (20 title strings in their style), "onscreenText" (20 punchy on-screen text hooks, max 6 words each), "tags" (40 lowercase tag strings), "videoIdeas" (15 objects each {"title","why"} where why is one short reason it should work for this channel).';
-  try { return json(await callGemini(env.GEMINI_KEY, prompt)); }
+  try { return json(await callGemini(env, prompt)); }
   catch (e) { return json({ error: String(e.message || e) }, 502); }
 }
 
@@ -221,6 +254,12 @@ export default {
     if (url.pathname === '/run') {
       const r = await tick(env);
       return json(r);
+    }
+    // diagnostic: which Gemini models this key can call, plus the remembered winner
+    if (url.pathname === '/models') {
+      if (!env.GEMINI_KEY) return json({ error: 'no GEMINI_KEY set' }, 501);
+      let picked = null; try { picked = await env.MINUTE.get('ai-model'); } catch (e) {}
+      return json({ picked, generateContentModels: await listGenerateModels(env.GEMINI_KEY) });
     }
     // default: serve the recorded minute bundle for the dashboard to merge
     let body = '{}';
