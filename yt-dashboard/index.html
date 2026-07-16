@@ -724,6 +724,7 @@
     $('commentsCard').style.display = 'block';
     $('keywordsCard').style.display = 'block';
     $('ideasCard').style.display = 'block';
+    setGeminiState(); // now that we're signed in, reflect Worker-provided AI if configured
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
     $('latestTitle').textContent = meta[latestVid].title;
@@ -1761,7 +1762,24 @@
     return html || '<h4>✨ AI ideas</h4><p class="dnote">No ideas came back — try rephrasing the description.</p>';
   }
 
+  // AI is available either through the owner-locked Worker (preferred — key stays server-side
+  // and both of you get it with no per-device setup) or a personal on-device Gemini key.
+  const aiViaWorker = () => !!(workerUrl && accessToken);
+  const aiAvailable = () => aiViaWorker() || !!geminiKey;
+
   async function generateIdeasAI(desc, st) {
+    // preferred path: ask our own Worker, which holds the Gemini key as a secret and only
+    // answers requests carrying a login token for one of the tracked channels
+    if (aiViaWorker()) {
+      const r = await fetch(workerUrl + '/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+        body: JSON.stringify({ desc, style: styleSummaryText(st) })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j && j.error ? j.error : 'Worker HTTP ' + r.status);
+      return j;
+    }
     const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
       'CHANNEL STYLE:\n' + styleSummaryText(st) + '\n\n' +
       'NEW VIDEO:\n"' + desc + '"\n\n' +
@@ -1789,16 +1807,19 @@
     if (!videoIds.length) { out.innerHTML = '<p class="dnote">Sign in and let your videos load first.</p>'; return; }
     const st = analyzeStyle();
     out.innerHTML = renderLocalIdeas(desc, st);
-    if (geminiKey) {
+    if (aiAvailable()) {
       out.insertAdjacentHTML('afterbegin', '<div id="aiIdeas" class="dsection"><h4>✨ AI ideas</h4><p class="dnote">thinking…</p></div>');
       try { const ai = await generateIdeasAI(desc, st); $('aiIdeas').innerHTML = renderAIIdeas(ai); }
-      catch (e) { $('aiIdeas').innerHTML = '<h4>✨ AI ideas</h4><p class="dnote">Couldn’t reach Gemini: ' + esc(e.message) + '. Check the key under ⚙ AI setup (or your free quota).</p>'; }
+      catch (e) { $('aiIdeas').innerHTML = '<h4>✨ AI ideas</h4><p class="dnote">Couldn’t get AI ideas: ' + esc(e.message) + '.</p>'; }
     }
   }
 
   function setGeminiState() {
     const s = $('geminiState');
-    if (s) s.innerHTML = geminiKey ? '<span style="color:var(--up)">✓ AI ideas on</span>' : '<span class="dnote">No key saved — free data-driven ideas still work.</span>';
+    if (!s) return;
+    if (aiViaWorker()) s.innerHTML = '<span style="color:var(--up)">✓ AI provided by your Worker — nothing to set up here.</span>';
+    else if (geminiKey) s.innerHTML = '<span style="color:var(--up)">✓ AI ideas on (this device)</span>';
+    else s.innerHTML = '<span class="dnote">No key saved — free data-driven ideas still work.</span>';
   }
 
   /* ---------- launch curves: every video's first 14 days, aligned by age ---------- */

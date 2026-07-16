@@ -7,9 +7,17 @@
  * minute-by-minute even when nobody is watching. When the dashboard next opens it
  * fetches this Worker and merges the samples into its own race history.
  *
- * Security: it uses ONLY the same public YouTube API key the GitHub robot uses —
- * no OAuth, no login token, no access to anyone's account. It reads public view
+ * Tracking security: the cron uses ONLY the same public YouTube API key the
+ * GitHub robot uses — no OAuth, no login token, no account access. Public view
  * counts and nothing else.
+ *
+ * Optional AI proxy (/ai): if GEMINI_KEY is set, the Worker also answers the
+ * dashboard's Idea Studio so the Gemini key lives here as a hidden secret and is
+ * never exposed in the public page. It is LOCKED to the channel owners: every
+ * /ai request must carry a valid YouTube login token whose channel is in
+ * CHANNEL_ID, so only you and your partner can ever spend the Gemini quota. The
+ * login token is used once to verify the channel, then discarded — never stored
+ * or logged.
  *
  * Cost: $0. It stays inside the Cloudflare Workers free tier by writing at most
  * once per minute and ONLY while a video is inside its "hot" launch window
@@ -25,13 +33,15 @@ const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Cache-Control': 'no-store',
 };
+const json = (obj, status) => new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json', ...CORS } });
 
 async function api(ep, params, key) {
   const u = new URL(YT + ep);
@@ -138,6 +148,57 @@ async function tick(env) {
   return { hot: hotIds.length, sampled };
 }
 
+/* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
+
+// Verify the caller's YouTube login token belongs to one of the tracked channels.
+// Returns the channel id on success, or null. The token is used once and discarded.
+async function verifyOwner(token, channels) {
+  if (!token) return null;
+  try {
+    const r = await fetch(YT + 'channels?part=id&mine=true', { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const id = d.items && d.items[0] && d.items[0].id;
+    return id && channels.includes(id) ? id : null;
+  } catch (e) { return null; }
+}
+
+async function callGemini(key, prompt) {
+  const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
+  let lastErr = 'no response';
+  for (const model of GEMINI_MODELS) {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (r.status === 404) { lastErr = 'model ' + model + ' unavailable'; continue; } // try next model
+    if (!r.ok) throw new Error('Gemini HTTP ' + r.status + ': ' + (await r.text()).slice(0, 160));
+    const j = await r.json();
+    const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
+    return JSON.parse(txt);
+  }
+  throw new Error(lastErr);
+}
+
+async function aiHandler(request, env) {
+  const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!env.GEMINI_KEY) return json({ error: 'AI is not configured on this Worker (no GEMINI_KEY secret).' }, 501);
+  // login token: Authorization header preferred, body fallback
+  let payload = {};
+  try { payload = await request.json(); } catch (e) {}
+  const auth = request.headers.get('Authorization') || '';
+  const token = (auth.startsWith('Bearer ') ? auth.slice(7) : '') || payload.token || '';
+  const owner = await verifyOwner(token, channels);
+  if (!owner) return json({ error: 'Not authorised — sign in with one of the tracked channels.' }, 401);
+  const desc = String(payload.desc || '').slice(0, 2000);
+  const style = String(payload.style || '').slice(0, 6000);
+  if (!desc) return json({ error: 'No description provided.' }, 400);
+  const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
+    'CHANNEL STYLE:\n' + style + '\n\n' +
+    'NEW VIDEO:\n"' + desc + '"\n\n' +
+    'Return JSON only, with keys: "titles" (6 title strings in their style), "onscreenText" (6 punchy on-screen text hooks, max 6 words each), "tags" (15 lowercase tag strings), "videoIdeas" (5 objects each {"title","why"} where why is one short reason it should work for this channel).';
+  try { return json(await callGemini(env.GEMINI_KEY, prompt)); }
+  catch (e) { return json({ error: String(e.message || e) }, 502); }
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(tick(env));
@@ -145,10 +206,15 @@ export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
+    // AI proxy for the Idea Studio (owner-locked)
+    if (url.pathname === '/ai') {
+      if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
+      return aiHandler(request, env);
+    }
     // manual trigger for testing: /run does one tick immediately
     if (url.pathname === '/run') {
       const r = await tick(env);
-      return new Response(JSON.stringify(r), { headers: { 'Content-Type': 'application/json', ...CORS } });
+      return json(r);
     }
     // default: serve the recorded minute bundle for the dashboard to merge
     let body = '{}';

@@ -99,11 +99,17 @@ match your *own* channel. Two tiers:
 - **Free, no setup:** it reads your titles, tags and view counts and suggests
   title templates in your naming style, tags your best videos use, on-screen
   text starters, and next-video ideas from gaps in your best-performing themes.
-- **Optional AI (still free):** paste a free **Google Gemini API key** (from
-  [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free tier,
-  no card) under **⚙ AI setup** for creative variations. The key is stored
-  **only on that device** — never synced, never exported — and the request sends
-  only your public video info and your own stats, never your login.
+- **Optional AI:** creative variations from Google Gemini. Two ways to enable it:
+  - **Provided for you both (recommended):** set a `GEMINI_KEY` secret on the
+    Cloudflare Worker (see below). The key stays server-side and the Worker
+    answers only for a signed-in account listed in `CHANNEL_ID`, so **neither of
+    you pastes anything** and only the two of you can use it.
+  - **Per device:** paste your own free
+    [Gemini API key](https://aistudio.google.com/apikey) under **⚙ AI setup**.
+    It's stored **only on that device** — never synced or exported.
+
+  Either way the request sends only your public video info and your own stats,
+  never anything about your account beyond the channel-ownership check.
 
 ## Cross-device sync (optional) — same Google account, same data everywhere
 
@@ -149,11 +155,16 @@ One-time setup (~5 minutes, needs [Node.js](https://nodejs.org)):
    ```
    Paste the printed `id` into `wrangler.toml` (replace
    `PUT_YOUR_KV_NAMESPACE_ID_HERE`).
-3. **Set the two secrets** (they never touch git):
+3. **Set the secrets** (they never touch git):
    ```bash
    npx wrangler secret put YT_API_KEY     # paste the same API key as the robot
    npx wrangler secret put CHANNEL_ID     # UCyours  (or UCyours,UCpartners)
+   npx wrangler secret put GEMINI_KEY     # OPTIONAL — turns on the owner-locked AI ideas
    ```
+   `GEMINI_KEY` is only needed if you want the Worker to power the Idea Studio AI
+   for both of you. When set, the Worker answers the dashboard's `/ai` request
+   only when it carries a login token for a channel listed in `CHANNEL_ID` — so
+   the key stays secret and only you and your partner can spend the quota.
 4. **Deploy:**
    ```bash
    npx wrangler deploy

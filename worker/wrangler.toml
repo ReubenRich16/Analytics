@@ -16,7 +16,10 @@ crons = ["* * * * *"]
 binding = "MINUTE"
 id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
 
-# YT_API_KEY and CHANNEL_ID are set as *secrets*, not here — see the README so the
-# key never lands in this file or in git:
-#   npx wrangler secret put YT_API_KEY
-#   npx wrangler secret put CHANNEL_ID
+# Secrets (set with the commands below, never in this file or git):
+#   npx wrangler secret put YT_API_KEY    # public YouTube key (per-minute tracker)
+#   npx wrangler secret put CHANNEL_ID    # UCyours,UCpartners (tracked + AI-allowed channels)
+#   npx wrangler secret put GEMINI_KEY    # OPTIONAL — enables the owner-locked Idea Studio AI
+# GEMINI_KEY is only needed if you want the Worker to power the AI ideas. When set, the
+# Worker answers /ai only for a signed-in YouTube account listed in CHANNEL_ID, so the key
+# stays secret and only you and your partner can use it.
