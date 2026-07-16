@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'   # wrangler requires Node >= 22
       # Deploy first so the Worker exists (this also applies the KV binding and the
       # every-minute cron trigger from wrangler.toml).
       - name: Deploy Worker
