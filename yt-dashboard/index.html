@@ -503,7 +503,10 @@
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
   // youtube.force-ssl: required by YouTube for ANY comments call.
   // drive.appdata: sandboxed hidden per-Google-account folder for cross-device sync (can't see real Drive files).
-  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/drive.appdata';
+  // NOTE: drive.appdata (cross-device sync) is intentionally NOT requested. Supervised/managed
+  // Google accounts are blocked from Drive, and asking for it made Google refuse their whole
+  // sign-in ("Service unavailable"). YouTube-only scopes keep sign-in working for every account.
+  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl';
   const DEFAULT_CLIENT_ID = '766052665664-qk83b8i8fm9ns8b9m41m9u051idb1ksk.apps.googleusercontent.com';
   const looksLikeClientId = v => /\.apps\.googleusercontent\.com$/.test((v || '').trim());
 
@@ -751,7 +754,8 @@
     loadRollup();
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
-    syncPull();    // pull cross-device data from the Google-account Drive folder, then keep it in sync
+    // Drive cross-device sync is disabled (its scope blocks restricted accounts from signing in).
+    // Data stays per-device; the Export / Import buttons still move it between devices manually.
   }
 
   // floating thumbnail balls background
