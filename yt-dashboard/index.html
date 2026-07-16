@@ -38,8 +38,33 @@
     --text:#f4f4f5; --muted:#8b8b93; --live:#ff2d55; --up:#30d158; --down:#ff453a;
     --accent:#0a84ff; --purple:#bf5af2; --gold:#ffd60a;
   }
-  body[data-theme="blush"] .error, body[data-theme="lavender"] .error, body[data-theme="honey"] .error { background:rgba(244,63,142,.07); border-color:rgba(244,63,142,.35); color:#b4225f; }
-  body { transition:background .25s ease; }
+  /* refined palettes */
+  body[data-theme="rose"] {
+    --ink:#faf5f3; --panel:#ffffff; --panel-2:#f4e6e2; --line:#ecd8d2;
+    --text:#3d2b30; --muted:#9c7f83; --live:#c05a72; --up:#2f8f6b; --down:#c0506a;
+    --accent:#a86b8f; --purple:#8b6bb1; --gold:#b88a3e;
+  }
+  body[data-theme="sakura"] {
+    --ink:#fdf4f7; --panel:#ffffff; --panel-2:#fbe4ec; --line:#f4d2de;
+    --text:#4a2733; --muted:#a67d8b; --live:#e8698f; --up:#3a9b74; --down:#e05575;
+    --accent:#c76fd6; --purple:#9b6ad0; --gold:#c98a3a;
+  }
+  body[data-theme="pearl"] {
+    --ink:#f7f6f8; --panel:#ffffff; --panel-2:#efedf2; --line:#e5e2ea;
+    --text:#2e2a33; --muted:#8b8794; --live:#d1608a; --up:#2f9e6a; --down:#d15a72;
+    --accent:#b0729c; --purple:#8f74c4; --gold:#b3893f;
+  }
+  body[data-theme="mauve"] {
+    --ink:#1a1520; --panel:#241d2e; --panel-2:#2e2539; --line:#3a2f47;
+    --text:#f0e8f4; --muted:#a294b0; --live:#e77aa6; --up:#5fd0a0; --down:#f0728f;
+    --accent:#c99af0; --purple:#d0a0f5; --gold:#f0c67a;
+  }
+  /* light themes get a softer, on-palette error banner (dark themes keep the default red) */
+  body[data-theme="blush"] .error, body[data-theme="lavender"] .error, body[data-theme="honey"] .error,
+  body[data-theme="rose"] .error, body[data-theme="sakura"] .error, body[data-theme="pearl"] .error {
+    background:rgba(192,80,106,.08); border-color:rgba(192,80,106,.35); color:#a83553;
+  }
+  body { transition:background .25s ease, color .25s ease; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
     background:var(--ink); color:var(--text);
@@ -226,12 +251,20 @@
     <h1>Channel Command</h1>
     <div class="status" id="statusText">signed out</div>
     <select id="themeSel" title="Theme">
-      <option value="midnight">🌙 Midnight</option>
-      <option value="noir">🖤 Noir</option>
-      <option value="ocean">🌊 Ocean</option>
-      <option value="blush">🌸 Blush</option>
-      <option value="lavender">💜 Lavender</option>
-      <option value="honey">🍯 Honey</option>
+      <optgroup label="Soft &amp; sleek">
+        <option value="rose">🌷 Rosé</option>
+        <option value="sakura">🌸 Sakura</option>
+        <option value="pearl">🤍 Pearl</option>
+        <option value="mauve">💗 Mauve (dark)</option>
+      </optgroup>
+      <optgroup label="Original">
+        <option value="midnight">🌙 Midnight</option>
+        <option value="noir">🖤 Noir</option>
+        <option value="ocean">🌊 Ocean</option>
+        <option value="blush">🌺 Blush</option>
+        <option value="lavender">💜 Lavender</option>
+        <option value="honey">🍯 Honey</option>
+      </optgroup>
     </select>
   </header>
 
@@ -428,10 +461,10 @@
     } catch (e) {}
     return null;
   };
-  // repo-recorded history (written hourly by the snapshot Action, bundled into the
-  // deployed site by deploy-dashboard.yml). Same-origin relative path so it never
-  // depends on a source-branch name that could be merged/renamed away.
-  const DATA_RAW = 'data/';
+  // repo-recorded history, read straight from the stable main branch so frequent robot
+  // commits never trigger a site redeploy. (main is the permanent default branch, so this
+  // is not the ephemeral-branch coupling the audit flagged.)
+  const DATA_RAW = 'https://raw.githubusercontent.com/ReubenRich16/Analytics/main/data/';
   let hist = null, histAlerts = [], histRanks = null, accelSet = new Set();
   const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
   async function loadHistory() {
@@ -1795,9 +1828,9 @@
         hPts.push(dv);
         hTips2.push('+' + fmt.format(dv) + ' views — ' + new Date(harr[i][0]).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric' }));
       }
-      if (hPts.length > 1) html += '<div class="dsection"><h4>Views per hour — recorded history</h4>' +
-        '<p class="explain">From the repo’s hourly snapshot robot — the hour-by-hour view YouTube never provides. Hover for exact hours.</p>' +
-        lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views per hour' }) + '</div>';
+      if (hPts.length > 1) html += '<div class="dsection"><h4>Views over time — recorded history</h4>' +
+        '<p class="explain">From the snapshot robot, which records even when nobody has the dashboard open — hourly normally, and every ~5 min for the first 2 days of a new upload. The over-time view YouTube never provides. Hover for exact times.</p>' +
+        lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views over time' }) + '</div>';
     }
 
     if (r.daily && r.daily.rows && r.daily.rows.length > 1) {
@@ -2180,24 +2213,37 @@
     $('clientId').value = savedId || DEFAULT_CLIENT_ID;
   }
 
-  // Resume a still-valid session across reloads — no tap needed within the hour
+  // Try a silent (no-click) sign-in on load. If the browser allows Google's session
+  // cookie it signs the user in with no tap; only if that's refused does the sign-in
+  // screen wait for a manual click. This is what stops "click Sign in every time".
+  function autoSilentSignIn() {
+    if (!tokenClient || accessToken) return;
+    setStatus('signing in…');
+    try { tokenClient.requestAccessToken({ prompt: '' }); } catch (e) {}
+  }
+  // Resume a still-valid saved token instantly (no network round-trip) within its ~1h life
   let savedTok = null;
   try { savedTok = JSON.parse(localStorage.getItem('cc_tok') || 'null'); } catch (e) {}
-  if (savedTok && savedTok.e - Date.now() > 60000 && looksLikeClientId($('clientId').value)) {
+  const haveValidTok = savedTok && savedTok.e - Date.now() > 60000 && looksLikeClientId($('clientId').value);
+  if (haveValidTok) {
     accessToken = savedTok.t; tokenExp = savedTok.e;
     setStatus('resuming session…');
     bootstrap().then(() => { bootstrapped = true; scheduleRefresh(); }).catch(() => {
       accessToken = null;
       try { localStorage.removeItem('cc_tok'); } catch (e) {}
-      setStatus('signed out');
+      setStatus('signing in…'); autoSilentSignIn();
     });
   }
-  // The Google script loads async — prepare the token client for silent renewals as soon as it's ready
+  // The Google script loads async — prepare the token client and, if no live session yet,
+  // silently sign in as soon as it's ready
   const gisWait = setInterval(() => {
     if (window.google && google.accounts) {
       clearInterval(gisWait);
       const cid = $('clientId').value.trim();
-      if (looksLikeClientId(cid)) ensureTokenClient(cid);
+      if (looksLikeClientId(cid)) {
+        ensureTokenClient(cid);
+        if (!haveValidTok && !accessToken) autoSilentSignIn();
+      }
     }
   }, 400);
 })();

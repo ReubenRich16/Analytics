@@ -40,33 +40,42 @@ if (Array.isArray(h.channel)) { if (CHANNELS[0]) h.channels[CHANNELS[0]] = h.cha
 if (!h.channels) h.channels = {};
 if (!h.channelMeta) h.channelMeta = {};
 
-// own channel(s) + uploads — chunked so >50 channels still work
+// own channel(s) + uploads — chunked so >50 channels still work.
+// Runs every 5 min, but to keep quota + commits low it records ALL videos only on the
+// top-of-hour run and, in between, only FRESH uploads (<2 days old) — so a new video's
+// launch is captured minute-ish even when nobody has the dashboard open, while quiet
+// periods produce just one commit/hour.
+const topOfHour = new Date(now).getUTCMinutes() < 5;
+const FRESH_MS = 2 * 864e5;
 const ownItems = await channelsById(CHANNELS);
 if (!ownItems.length) throw new Error('No CHANNEL_ID channels found');
 let vidCount = 0;
 for (const c of ownItems) {
-  h.channelMeta[c.id] = c.snippet.title;
-  (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
   const uploads = c.contentDetails.relatedPlaylists.uploads;
-  let ids = [], pageToken = '';
-  while (ids.length < 200) {
+  const vids = []; let pageToken = '';
+  while (vids.length < 200) {
     const d = await api('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, ...(pageToken ? { pageToken } : {}) });
-    ids.push(...d.items.map(i => i.contentDetails.videoId));
+    for (const i of d.items) vids.push({ id: i.contentDetails.videoId, pub: i.contentDetails.videoPublishedAt });
     pageToken = d.nextPageToken;
     if (!pageToken) break;
   }
-  for (let i = 0; i < ids.length; i += 50) {
-    const d = await api('videos', { part: 'statistics', id: ids.slice(i, i + 50).join(',') });
+  const targets = (topOfHour ? vids : vids.filter(v => v.pub && (now - new Date(v.pub).getTime()) < FRESH_MS)).map(v => v.id);
+  if (!targets.length) continue; // nothing worth recording for this channel this run
+  h.channelMeta[c.id] = c.snippet.title;
+  (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
+  for (let i = 0; i < targets.length; i += 50) {
+    const d = await api('videos', { part: 'statistics', id: targets.slice(i, i + 50).join(',') });
     for (const it of d.items) {
       const s = it.statistics;
       (h.videos[it.id] = h.videos[it.id] || []).push([now, +(s.viewCount || 0), +(s.likeCount || 0), +(s.commentCount || 0)]);
     }
   }
-  vidCount += ids.length;
+  vidCount += targets.length;
 }
 
-// benchmark channels (optional) — chunked so >50 still work
-if (BENCH.length) {
+// benchmark channels (optional) — hourly only (channel-level growth needs no finer cadence),
+// which also keeps quiet-period runs from committing every 5 min
+if (BENCH.length && topOfHour) {
   for (const it of await channelsById(BENCH)) {
     (h.bench[it.id] = h.bench[it.id] || []).push([now, +it.statistics.subscriberCount || 0, +it.statistics.viewCount || 0]);
     h.benchMeta[it.id] = it.snippet.title;

@@ -2,7 +2,9 @@ name: Hourly stats snapshot
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    # every 5 min: the script only records (and commits) fresh uploads on the in-between
+    # runs and all videos hourly, so quiet periods stay at one commit/hour
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
