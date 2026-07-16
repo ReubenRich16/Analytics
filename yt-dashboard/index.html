@@ -59,6 +59,27 @@
     --text:#f0e8f4; --muted:#a294b0; --live:#e77aa6; --up:#5fd0a0; --down:#f0728f;
     --accent:#c99af0; --purple:#d0a0f5; --gold:#f0c67a;
   }
+  /* soft dark palettes for night / winding down (low glare, gentle accents) */
+  body[data-theme="twilight"] {
+    --ink:#12131f; --panel:#1b1d2e; --panel-2:#24263a; --line:#31344c;
+    --text:#e7e8f6; --muted:#9095b6; --live:#f08ab0; --up:#5fd0a0; --down:#f0728f;
+    --accent:#a6a0f0; --purple:#bfaef5; --gold:#f0cc84;
+  }
+  body[data-theme="berry"] {
+    --ink:#1b1319; --panel:#271923; --panel-2:#33222d; --line:#402b38;
+    --text:#f4e6ee; --muted:#b18b9c; --live:#e86a96; --up:#63c99a; --down:#ef6d8a;
+    --accent:#d488b4; --purple:#c58fd8; --gold:#e6b47a;
+  }
+  body[data-theme="rosenight"] {
+    --ink:#17141a; --panel:#211c24; --panel-2:#2b242e; --line:#372e3a;
+    --text:#f2e9ef; --muted:#a8929f; --live:#e08099; --up:#66c79a; --down:#e37088;
+    --accent:#cf90ab; --purple:#b48bcc; --gold:#dcb47e;
+  }
+  body[data-theme="dusk"] {
+    --ink:#141420; --panel:#1d1d2b; --panel-2:#262637; --line:#333349;
+    --text:#e9e7f2; --muted:#9896ad; --live:#d67ba4; --up:#5ecb9d; --down:#e07293;
+    --accent:#b39ce0; --purple:#c3a8e6; --gold:#e3c082;
+  }
   /* light themes get a softer, on-palette error banner (dark themes keep the default red) */
   body[data-theme="blush"] .error, body[data-theme="lavender"] .error, body[data-theme="honey"] .error,
   body[data-theme="rose"] .error, body[data-theme="sakura"] .error, body[data-theme="pearl"] .error {
@@ -246,7 +267,7 @@
   .overlay { display:none !important; }
   .drawer {
     display:none; position:fixed; z-index:50; inset:0 0 0 auto;
-    width:min(560px, 100%);
+    width:min(880px, 96vw);
     background:var(--panel); border-left:1px solid var(--line);
     box-shadow:-14px 0 44px rgba(0,0,0,.35);
     overflow-y:auto; -webkit-overflow-scrolling:touch;
@@ -290,7 +311,13 @@
         <option value="rose">🌷 Rosé</option>
         <option value="sakura">🌸 Sakura</option>
         <option value="pearl">🤍 Pearl</option>
-        <option value="mauve">💗 Mauve (dark)</option>
+      </optgroup>
+      <optgroup label="Dark &amp; dreamy 🌙">
+        <option value="mauve">💗 Mauve</option>
+        <option value="twilight">🌌 Twilight</option>
+        <option value="berry">🍇 Berry</option>
+        <option value="rosenight">🌹 Midnight Rose</option>
+        <option value="dusk">🌆 Dusk</option>
       </optgroup>
       <optgroup label="Original">
         <option value="midnight">🌙 Midnight</option>
