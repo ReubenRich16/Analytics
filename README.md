@@ -91,6 +91,20 @@ Content, Impressions and click-through-rate columns), then use **Import
 Studio CSV** at the bottom of the dashboard. Impressions & CTR then show in
 each video's Scorecard.
 
+## Idea Studio — title, on-screen text, tag & next-video ideas
+
+The **Idea Studio** card turns a one-line description of a video into ideas that
+match your *own* channel. Two tiers:
+
+- **Free, no setup:** it reads your titles, tags and view counts and suggests
+  title templates in your naming style, tags your best videos use, on-screen
+  text starters, and next-video ideas from gaps in your best-performing themes.
+- **Optional AI (still free):** paste a free **Google Gemini API key** (from
+  [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free tier,
+  no card) under **⚙ AI setup** for creative variations. The key is stored
+  **only on that device** — never synced, never exported — and the request sends
+  only your public video info and your own stats, never your login.
+
 ## Cross-device sync (optional) — same Google account, same data everywhere
 
 The dashboard can sync its device-local data (paid keyword research, the

@@ -97,7 +97,16 @@
     width:100%; background:var(--ink); border:1px solid var(--line); color:var(--text);
     border-radius:7px; padding:10px 12px; font-family:'IBM Plex Mono',monospace; font-size:13px;
   }
-  input:focus, select:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  textarea {
+    width:100%; background:var(--ink); border:1px solid var(--line); color:var(--text);
+    border-radius:7px; padding:10px 12px; font-family:'Inter',sans-serif; font-size:13px; resize:vertical; line-height:1.5;
+  }
+  .idea-list { margin:6px 0 2px; padding:0; list-style:none; }
+  .idea-list li { padding:7px 10px; margin:5px 0; background:var(--panel-2); border:1px solid var(--line); border-radius:7px; font-size:13px; line-height:1.45; }
+  .idea-list li .why { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  .chiprow { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .chip { background:var(--panel-2); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:12px; color:var(--text); }
   .hint { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
   .hint a { color:var(--text); }
   .hint code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:11px; }
@@ -378,6 +387,31 @@
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">What's working — top hashtags &amp; keywords</div>
     <p class="explain" style="margin-top:8px">Every hashtag and tag across your uploads, ranked by the <b>average views of the videos that use it</b> — so a tag on two hits beats a tag spread across ten duds. Use the winners in your next upload.</p>
     <div id="keywordsContent"><p class="dnote">crunching…</p></div>
+  </div>
+
+  <!-- IDEA STUDIO -->
+  <div class="card" id="ideasCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Idea Studio — titles, on-screen text, tags &amp; next-video ideas</div>
+    <p class="explain" style="margin-top:8px">Describe the video in a sentence and get ideas that match <b>your own</b> naming style and best-performing trends. Grounded suggestions come from your catalogue for free; switch on the optional AI for creative variations.</p>
+    <textarea id="ideaDesc" rows="2" placeholder="Describe the video, e.g. “slow tapping on a wooden box with long nails, no talking”…"></textarea>
+    <div class="row" style="margin-top:8px;gap:8px">
+      <button class="ghost" id="ideaLatest">↑ Use latest upload</button>
+      <button class="primary" id="ideaBtn">💡 Generate ideas</button>
+    </div>
+    <div id="ideaOut" style="margin-top:12px"></div>
+    <details id="aiSetup" style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:12px">⚙ AI setup — optional, free, private</summary>
+      <div class="hint" style="margin-top:10px">
+        For creative AI ideas, paste a free <b>Google Gemini API key</b> (get one at
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> — free tier, no card).
+        It's stored <b>only on this device</b>, never synced or exported, and the request sends only your public video info and your own stats — never your login.
+        <div class="row" style="margin-top:10px;gap:8px">
+          <input id="geminiKey" type="password" placeholder="AIza…" autocomplete="off" style="flex:1 1 240px;font-family:'IBM Plex Mono',monospace">
+          <button class="ghost" id="geminiSave">Save key</button>
+        </div>
+        <div id="geminiState" style="margin-top:8px"></div>
+      </div>
+    </details>
   </div>
 
   <!-- CHANNEL TRENDS -->
@@ -689,6 +723,7 @@
     $('tableCard').style.display = 'block';
     $('commentsCard').style.display = 'block';
     $('keywordsCard').style.display = 'block';
+    $('ideasCard').style.display = 'block';
 
     latestVid = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt))[0];
     $('latestTitle').textContent = meta[latestVid].title;
@@ -1598,6 +1633,174 @@
     el.innerHTML = html;
   }
 
+  /* ---------- Idea Studio: title / on-screen text / tag / next-video ideas ---------- */
+  // Tier 1 is pure heuristics over her own catalogue (free, private). Tier 2 sends a short
+  // style summary + the typed description to Google Gemini (optional, her own free key).
+  let geminiKey = '';
+  try { geminiKey = localStorage.getItem('cc_gemini') || ''; } catch (e) {}
+  const looksLikeGeminiKey = k => /^AIza[0-9A-Za-z_\-]{20,}$/.test(k || '');
+  const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const IDEA_STOP = new Set(['the','and','for','with','your','you','this','that','from','out','new','asmr','video','tapping','sounds','sound','not','feat','ft','part','pt','ep','vol']);
+  const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+  const titleCase = s => (s || '').replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
+  const ideaTokens = t => ((t || '').toLowerCase().replace(EMOJI_RE, ' ').match(/[a-z0-9']{3,}/g) || []).filter(w => !IDEA_STOP.has(w));
+
+  function analyzeStyle() {
+    const titles = videoIds.map(id => meta[id] && meta[id].title).filter(Boolean);
+    // most common separator
+    let sep = null, sepN = 0;
+    for (const s of [' | ', ' - ', ' • ', ' ｜ ', ' · ', ' — ']) { const n = titles.filter(t => t.includes(s)).length; if (n > sepN) { sepN = n; sep = s; } }
+    // most common first word (a prefix like "ASMR")
+    const firstW = {};
+    for (const t of titles) { const w = (t.trim().split(/\s+/)[0] || ''); if (w && !/\p{Extended_Pictographic}/u.test(w)) firstW[w] = (firstW[w] || 0) + 1; }
+    const pf = Object.entries(firstW).sort((a, b) => b[1] - a[1])[0];
+    const prefixWord = pf && pf[1] >= Math.max(3, titles.length * 0.3) ? pf[0] : '';
+    // emoji by frequency
+    const emo = {};
+    for (const t of titles) for (const e of (t.match(EMOJI_RE) || [])) emo[e] = (emo[e] || 0) + 1;
+    const topEmoji = Object.entries(emo).sort((a, b) => b[1] - a[1]).slice(0, 5).map(x => x[0]);
+    // title keywords ranked by avg views of the videos that use them, with last-used date
+    const wmap = {};
+    for (const id of videoIds) {
+      const m = meta[id], p = perVideo[id]; if (!m || !p) continue;
+      for (const w of new Set(ideaTokens(m.title))) { const e = wmap[w] || (wmap[w] = { n: 0, total: 0, last: 0 }); e.n++; e.total += p.views; e.last = Math.max(e.last, new Date(m.publishedAt).getTime()); }
+    }
+    const topWords = Object.entries(wmap).map(([w, e]) => ({ w, n: e.n, avg: e.total / e.n, last: e.last })).filter(x => x.n >= 2).sort((a, b) => b.avg - a.avg);
+    // signature phrases: frequent bigrams across titles
+    const big = {};
+    for (const t of titles) { const toks = ideaTokens(t); for (let i = 0; i < toks.length - 1; i++) { const b = toks[i] + ' ' + toks[i + 1]; big[b] = (big[b] || 0) + 1; } }
+    const phrases = Object.entries(big).filter(x => x[1] >= Math.max(2, titles.length * 0.12)).sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
+    // tags ranked by avg views
+    const tmap = {};
+    for (const id of videoIds) { const m = meta[id], p = perVideo[id]; if (!m || !p) continue; for (const raw of (m.tags || [])) { const k = raw.toLowerCase(); const e = tmap[k] || (tmap[k] = { label: raw, n: 0, total: 0 }); e.n++; e.total += p.views; } }
+    const topTags = Object.values(tmap).map(x => ({ ...x, avg: x.total / x.n })).sort((a, b) => b.avg - a.avg);
+    const avgLen = titles.length ? Math.round(titles.reduce((a, t) => a + t.length, 0) / titles.length) : 0;
+    return { titles, sep, prefixWord, topEmoji, topWords, phrases, topTags, avgLen };
+  }
+
+  function styleSummaryText(st) {
+    const L = [];
+    if (st.prefixWord) L.push('Titles usually start with "' + st.prefixWord + '".');
+    if (st.sep) L.push('Title separator: "' + st.sep.trim() + '".');
+    if (st.phrases.length) L.push('Recurring signature phrases: ' + st.phrases.join(', ') + '.');
+    if (st.topEmoji.length) L.push('Common emoji: ' + st.topEmoji.join(' ') + '.');
+    L.push('Typical title length: about ' + st.avgLen + ' characters.');
+    if (st.topWords.length) L.push('Best-performing title keywords (by average views): ' + st.topWords.slice(0, 12).map(w => w.w).join(', ') + '.');
+    if (st.topTags.length) L.push('Best tags (by average views): ' + st.topTags.slice(0, 15).map(t => t.label).join(', ') + '.');
+    const recent = videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 8).map(id => meta[id].title);
+    if (recent.length) L.push('Recent video titles: ' + recent.map(t => '"' + t + '"').join('; ') + '.');
+    return L.join('\n');
+  }
+
+  function renderLocalIdeas(desc, st) {
+    const dtok = [...new Set(ideaTokens(desc))];
+    // trigger phrase: keep domain words (e.g. "tapping") that the ranking stoplist drops,
+    // strip only grammatical filler, and take the first few meaningful words
+    const GRAM_STOP = new Set(['the','a','an','on','in','into','with','of','and','to','for','no','my','her','his','some','that','this','at','by','it','as','from']);
+    const meaningful = (desc.trim().toLowerCase().replace(EMOJI_RE, ' ').match(/[a-z0-9']+/g) || []).filter(w => w.length >= 3 && !GRAM_STOP.has(w));
+    const trigger = titleCase(meaningful.slice(0, 3).join(' ')) || (dtok[0] ? titleCase(dtok[0]) : 'This Trigger');
+    const sep = st.sep || ' | ';
+    const emoji1 = st.topEmoji[0] || '';
+    const emoji2 = st.topEmoji.slice(0, 2).join('');
+    const phrase = st.phrases[0] ? titleCase(st.phrases[0]) : '';
+    const pre = st.prefixWord || '';
+    const titleIdeas = [];
+    const pushT = t => { t = (t || '').replace(/\s+/g, ' ').trim(); if (t && !titleIdeas.includes(t)) titleIdeas.push(t); };
+    pushT([pre, trigger, phrase].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
+    pushT([pre, trigger].filter(Boolean).join(sep) + (emoji2 ? ' ' + emoji2 : ''));
+    if (st.topWords[0]) pushT([pre, trigger, titleCase(st.topWords[0].w)].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
+    pushT([pre, trigger + ' for Deep Sleep'].filter(Boolean).join(sep) + (emoji1 ? ' ' + emoji1 : ''));
+    if (st.topWords[1]) pushT([pre, titleCase(st.topWords[1].w) + ' + ' + trigger].filter(Boolean).join(sep));
+
+    const hooks = [
+      trigger + '…',
+      'POV: ' + (dtok[0] ? dtok[0] : 'pure') + ' tingles',
+      'Turn your volume up 🔊',
+      'Wait for it…',
+      (phrase || trigger) + ' 💤',
+      'Can you feel that?'
+    ].filter(Boolean).slice(0, 6);
+
+    const descSet = new Set(dtok);
+    const tagSuggest = [...new Set([...dtok, ...st.topTags.map(t => t.label)])].filter(Boolean).slice(0, 15);
+
+    const now = Date.now();
+    const gaps = st.topWords
+      .map(w => ({ ...w, days: Math.round((now - w.last) / 864e5) }))
+      .filter(w => !descSet.has(w.w))
+      .sort((a, b) => b.avg - a.avg);
+    const staleWinners = gaps.filter(w => w.days >= 21).slice(0, 3);
+    const evergreen = gaps.slice(0, 3);
+    const vidIdeas = [];
+    for (const w of staleWinners) vidIdeas.push({ t: titleCase(w.w) + ' — bring it back', why: 'Averages ' + fmt.format(Math.round(w.avg)) + ' views but you last used it ~' + w.days + ' days ago.' });
+    if (st.topWords[0] && st.topWords[1]) vidIdeas.push({ t: titleCase(st.topWords[0].w) + ' + ' + titleCase(st.topWords[1].w), why: 'Combine your two best-performing themes into one video.' });
+    for (const w of evergreen) if (vidIdeas.length < 5) vidIdeas.push({ t: titleCase(w.w) + ' (extended / 1 hour)', why: 'Consistent performer at ' + fmt.format(Math.round(w.avg)) + ' avg views — a long version suits sleep viewers.' });
+
+    const listT = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+    const listV = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x.t) + '<span class="why">' + esc(x.why) + '</span></li>').join('') + '</ul>';
+    const chips = items => '<div class="chiprow">' + items.map(x => '<span class="chip">' + esc(x) + '</span>').join('') + '</div>';
+
+    let html = '<div class="dsection"><h4>📊 From your own data</h4><p class="explain">Built from your titles, tags and view counts — no AI, just your trends.</p></div>';
+    html += section('Title ideas', 'Templates matching your naming style' + (pre ? ' (starts with “' + esc(pre) + '”)' : '') + '.', listT(titleIdeas));
+    html += section('On-screen text hooks', 'Short starters for the first seconds — tweak to taste.', listT(hooks));
+    html += section('Tags to add', 'Your best-performing tags plus keywords from the description.', chips(tagSuggest));
+    if (vidIdeas.length) html += section('Next-video ideas', 'Gaps and combinations from your best themes.', listV(vidIdeas));
+    return html;
+  }
+
+  function renderAIIdeas(ai) {
+    const arr = k => Array.isArray(ai[k]) ? ai[k] : [];
+    const listT = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(String(x)) + '</li>').join('') + '</ul>';
+    const chips = items => '<div class="chiprow">' + items.map(x => '<span class="chip">' + esc(String(x)) + '</span>').join('') + '</div>';
+    const listV = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(x && x.title ? x.title : String(x)) + (x && x.why ? '<span class="why">' + esc(x.why) + '</span>' : '') + '</li>').join('') + '</ul>';
+    let html = '<h4>✨ AI ideas</h4><p class="explain">Creative variations from Gemini, guided by your style.</p>';
+    if (arr('titles').length) html += section('Title ideas', '', listT(arr('titles')));
+    if (arr('onscreenText').length) html += section('On-screen text hooks', '', listT(arr('onscreenText')));
+    if (arr('tags').length) html += section('Tags', '', chips(arr('tags')));
+    if (arr('videoIdeas').length) html += section('Next-video ideas', '', listV(arr('videoIdeas')));
+    return html || '<h4>✨ AI ideas</h4><p class="dnote">No ideas came back — try rephrasing the description.</p>';
+  }
+
+  async function generateIdeasAI(desc, st) {
+    const prompt = 'You are a YouTube growth assistant. Using ONLY the channel\'s own style below, write ideas that sound like this creator for the new video described. Match their tone, separators and emoji habits.\n\n' +
+      'CHANNEL STYLE:\n' + styleSummaryText(st) + '\n\n' +
+      'NEW VIDEO:\n"' + desc + '"\n\n' +
+      'Return JSON only, with keys: "titles" (6 title strings in their style), "onscreenText" (6 punchy on-screen text hooks, max 6 words each), "tags" (15 lowercase tag strings), "videoIdeas" (5 objects each {"title","why"} where why is one short reason it should work for this channel).';
+    const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, responseMimeType: 'application/json' } });
+    let lastErr = null;
+    for (const model of GEMINI_MODELS) {
+      try {
+        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(geminiKey), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        if (r.status === 404) { lastErr = new Error('model ' + model + ' unavailable'); continue; } // try the next model
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + (await r.text()).slice(0, 160));
+        const j = await r.json();
+        const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
+        return JSON.parse(txt);
+      } catch (e) { lastErr = e; if (String(e.message).indexOf('model') !== 0) break; }
+    }
+    throw lastErr || new Error('no response');
+  }
+
+  async function runIdeas() {
+    const desc = ($('ideaDesc').value || '').trim();
+    const out = $('ideaOut');
+    if (!desc) { out.innerHTML = '<p class="dnote">Type a sentence describing the video first — or tap “Use latest upload”.</p>'; return; }
+    if (!videoIds.length) { out.innerHTML = '<p class="dnote">Sign in and let your videos load first.</p>'; return; }
+    const st = analyzeStyle();
+    out.innerHTML = renderLocalIdeas(desc, st);
+    if (geminiKey) {
+      out.insertAdjacentHTML('afterbegin', '<div id="aiIdeas" class="dsection"><h4>✨ AI ideas</h4><p class="dnote">thinking…</p></div>');
+      try { const ai = await generateIdeasAI(desc, st); $('aiIdeas').innerHTML = renderAIIdeas(ai); }
+      catch (e) { $('aiIdeas').innerHTML = '<h4>✨ AI ideas</h4><p class="dnote">Couldn’t reach Gemini: ' + esc(e.message) + '. Check the key under ⚙ AI setup (or your free quota).</p>'; }
+    }
+  }
+
+  function setGeminiState() {
+    const s = $('geminiState');
+    if (s) s.innerHTML = geminiKey ? '<span style="color:var(--up)">✓ AI ideas on</span>' : '<span class="dnote">No key saved — free data-driven ideas still work.</span>';
+  }
+
   /* ---------- launch curves: every video's first 14 days, aligned by age ---------- */
   async function loadLaunchCurves() {
     const holder = $('launchWrap');
@@ -2145,7 +2348,7 @@
     const out = {};
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k !== 'cc_tok' && (k.startsWith('cc:') || k.startsWith('cc_'))) out[k] = localStorage.getItem(k);
+      if (k && k !== 'cc_tok' && k !== 'cc_gemini' && (k.startsWith('cc:') || k.startsWith('cc_'))) out[k] = localStorage.getItem(k);
     }
     const blob = new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -2164,7 +2367,7 @@
         const obj = JSON.parse(rd.result);
         let n = 0;
         for (const [k, v] of Object.entries(obj)) {
-          if (k !== 'cc_tok' && (k.startsWith('cc:') || k.startsWith('cc_')) && typeof v === 'string') { localStorage.setItem(k, v); n++; }
+          if (k !== 'cc_tok' && k !== 'cc_gemini' && (k.startsWith('cc:') || k.startsWith('cc_')) && typeof v === 'string') { localStorage.setItem(k, v); n++; }
         }
         alert('Imported ' + n + ' saved items. Reload the page to use them.');
       } catch (err) { alert('That file didn’t look right: ' + err.message); }
@@ -2174,6 +2377,18 @@
   });
   // Studio CSV import — brings in impressions + CTR, which no API provides
   $('cwordsBtn').addEventListener('click', analyzeComments);
+  // Idea Studio
+  $('geminiKey').value = geminiKey;
+  setGeminiState();
+  $('ideaBtn').addEventListener('click', runIdeas);
+  $('ideaLatest').addEventListener('click', () => { if (latestVid && meta[latestVid]) $('ideaDesc').value = meta[latestVid].title; });
+  $('geminiSave').addEventListener('click', () => {
+    const k = ($('geminiKey').value || '').trim();
+    if (k && !looksLikeGeminiKey(k)) { $('geminiState').innerHTML = '<span style="color:var(--down)">That doesn’t look like a Gemini key (they start with “AIza”).</span>'; return; }
+    geminiKey = k;
+    try { if (k) localStorage.setItem('cc_gemini', k); else localStorage.removeItem('cc_gemini'); } catch (e) {}
+    setGeminiState();
+  });
   $('csvBtn').addEventListener('click', () => $('csvFile').click());
   $('csvFile').addEventListener('change', e => {
     const f = e.target.files[0];
