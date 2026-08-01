@@ -567,7 +567,6 @@
   const DATA = 'https://www.googleapis.com/youtube/v3/';
   const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
   // youtube.force-ssl: required by YouTube for ANY comments call.
-  // drive.appdata: sandboxed hidden per-Google-account folder for cross-device sync (can't see real Drive files).
   // NOTE: drive.appdata (cross-device sync) is intentionally NOT requested. Supervised/managed
   // Google accounts are blocked from Drive, and asking for it made Google refuse their whole
   // sign-in ("Service unavailable"). YouTube-only scopes keep sign-in working for every account.
@@ -731,6 +730,22 @@
   const dataApi = (ep, params) => api(DATA + ep + '?' + new URLSearchParams(params));
   const analyticsApi = params => api(ANALYTICS + '?' + new URLSearchParams({ ids: 'channel==MINE', ...params }));
   const tryApi = params => analyticsApi(params).catch(() => null);
+
+  // Per-video summary. `dislikes` is owner-only and YouTube can reject it in some report
+  // combinations — if that happens the whole summary would be lost, so fall back to the
+  // metric set without it. Callers detect availability via row.length > 9.
+  const SUMMARY_METRICS = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost';
+  async function summaryApi(base, opts) {
+    const soft = opts && opts.soft; // soft = never throw (returns null), for the latest-upload card
+    const full = { ...base, metrics: SUMMARY_METRICS + ',dislikes' };
+    const lite = { ...base, metrics: SUMMARY_METRICS };
+    if (soft) {
+      const r = await tryApi(full);
+      return (r && r.rows && r.rows.length) ? r : await tryApi(lite);
+    }
+    try { return await analyticsApi(full); }
+    catch (e) { if (e && e.reauth) throw e; return await analyticsApi(lite); }
+  }
 
   async function ensureVideoTitles(ids) {
     const missing = [...new Set(ids)].filter(id => id && !meta[id] && !titleCache[id]);
@@ -1009,14 +1024,18 @@
       const { startDate, endDate } = rangeDates(28);
       const rows = [];
       for (const part of chunk(videoIds, 200)) {
-        const r = await tryApi({ startDate, endDate, dimensions: 'video', metrics: 'views,averageViewPercentage,subscribersGained,shares,likes,dislikes', filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
+        const q = m => ({ startDate, endDate, dimensions: 'video', metrics: m, filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
+        // dislikes is owner-only and can be rejected in some combos — never lose the other columns over it
+        let r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares,likes,dislikes'));
+        if (!r || !r.rows || !r.rows.length) r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares'));
         if (r && r.rows) rows.push(...r.rows);
       }
       c = { rows };
       cacheSet(key, c);
     }
     rollupMap = {};
-    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4], likes28: r[5], dislikes: r[6] };
+    // rows are [video, views, avgPct, subs, shares] and, when dislikes were permitted, [+likes, dislikes]
+    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4], likes28: r[5], dislikes: r.length > 6 ? r[6] : null };
     const d = (c.fetchedAt || '').slice(0, 10);
     if (d) $('rollupNote').textContent = '† = YouTube’s official stats, last 28 days (fetched ' + d + ') — they lag 24–48h and won’t match the live columns.';
     renderTable();
@@ -1620,7 +1639,7 @@
       const endDate = iso(new Date());
       const base = { startDate: pub, endDate, filters: 'video==' + vid };
       const [summary, daily, traffic, search] = await Promise.all([
-        tryApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,dislikes' }),
+        summaryApi(base, { soft: true }),
         tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ startDate: pub, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==YT_SEARCH', metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '6' })
@@ -1639,14 +1658,14 @@
         html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h.' + (isNewest ? ' The live counters and race above are real-time.' : '') + '</p>';
       } else {
         html += liveRaceHtml;
-        const dsl = s[9] || 0;
-        html += '<div class="metric-grid m9">' +
+        const hasD = s.length > 9, dsl = s[9] || 0;
+        html += '<div class="metric-grid ' + (hasD ? 'm9' : 'm8') + '">' +
           mcell('Views', fmt.format(s[0])) +
           mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
           mcell('Avg watched', fmtDur(s[2]), 'how long a typical viewer stays') +
           mcell('% of video watched', Math.round(s[3]) + '%', 'higher = people stick around') +
           mcell('Likes', fmt.format(s[4])) +
-          mcell('Dislikes', fmt.format(dsl), s[4] + dsl > 0 ? Math.round(s[4] / (s[4] + dsl) * 100) + '% positive' : 'private — only you see this') +
+          (hasD ? mcell('Dislikes', fmt.format(dsl), s[4] + dsl > 0 ? Math.round(s[4] / (s[4] + dsl) * 100) + '% positive' : 'private — only you see this') : '') +
           mcell('Comments', fmt.format(s[5])) +
           mcell('Shares', fmt.format(s[6])) +
           mcell('Subscribers', '+' + fmt.format(s[7]), '−' + fmt.format(s[8]) + ' lost from this video') +
@@ -1779,7 +1798,12 @@
   function reportCardHtml(vid, avgPct) {
     const rc = gradeVideo(vid, avgPct);
     if (!rc) return '';
-    const bars = rc.parts.map(p => '<div class="gbar"><span class="gl">' + p.label + '</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(p.pct)) + '%;background:' + gradeColor(letterFor(p.pct)) + '"></span></span><span class="gv">top ' + Math.max(1, Math.round(100 - p.pct)) + '%</span></div>').join('');
+    const bars = rc.parts.map(p => {
+      const r = Math.round(p.pct);
+      // "top N%" only reads well in the upper half; below that say what it beats
+      const lbl = r >= 50 ? 'top ' + Math.max(1, 100 - r) + '%' : 'beats ' + r + '%';
+      return '<div class="gbar"><span class="gl">' + p.label + '</span><span class="gt"><span class="gf" style="width:' + Math.max(3, r) + '%;background:' + gradeColor(letterFor(p.pct)) + '"></span></span><span class="gv">' + lbl + '</span></div>';
+    }).join('');
     return '<div class="dsection"><h4>Report card</h4><p class="explain">How this video ranks against your own catalogue — age-adjusted, so new and old compare fairly.</p>' +
       '<div class="reportcard"><div class="grade-badge" style="background:' + rc.color + '">' + rc.grade + '</div>' +
       '<div class="grade-meta"><div class="big">Beats ' + Math.round(rc.pct) + '% of your uploads</div><div class="grade-bars">' + bars + '</div></div></div>' +
@@ -1824,7 +1848,13 @@
     let c = cacheGet(key, 12 * 3600 * 1000);
     if (!c) {
       const { startDate, endDate } = rangeDates(0);
-      const r = await tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost' });
+      const M = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost';
+      let r = await tryApi({ startDate, endDate, metrics: M });
+      // if dislikes are rejected, still show every other lifetime total (marker keeps indexes aligned)
+      if (!r || !r.rows || !r.rows.length) {
+        const r2 = await tryApi({ startDate, endDate, metrics: M.replace(',dislikes', '') });
+        if (r2 && r2.rows && r2.rows[0]) { const a = r2.rows[0].slice(); a.splice(5, 0, null); r = { rows: [a] }; }
+      }
       c = { row: (r && r.rows && r.rows[0]) || null };
       cacheSet(key, c);
     }
@@ -1852,8 +1882,9 @@
     }
     const lt = chanLifetime;
     const avgRet = lt ? lt[3] : (pctN ? pctSum / pctN : null);
-    const ltLikes = lt ? lt[4] : tl, ltDis = lt ? lt[5] : dis;
-    const posPct = (ltLikes + ltDis) > 0 ? Math.round(ltLikes / (ltLikes + ltDis) * 100) : null;
+    const ltLikes = lt ? lt[4] : tl;
+    const ltDis = lt ? (lt[5] != null ? lt[5] : null) : (hasRu ? dis : null);
+    const posPct = (ltDis != null && ltLikes + ltDis > 0) ? Math.round(ltLikes / (ltLikes + ltDis) * 100) : null;
     let html = '';
     // headline lifetime totals
     html += '<div class="dsection"><h4>Lifetime totals</h4><p class="explain">Everything your channel has earned' + (lt ? ' (YouTube official, all-time)' : ' (live counts across your uploads)') + '.</p><div class="metric-grid">' +
@@ -1863,7 +1894,7 @@
       (lt ? mcell('Avg view time', fmtDur(lt[2]), 'per view') : '') +
       (avgRet != null ? mcell('Avg retention', Math.round(avgRet) + '%', 'of each video watched') : '') +
       mcell('Likes', fmt.format(ltLikes)) +
-      mcell('Dislikes', fmt.format(ltDis), posPct != null ? posPct + '% positive' : 'only you can see this') +
+      (ltDis != null ? mcell('Dislikes', fmt.format(ltDis), posPct != null ? posPct + '% positive' : 'only you can see this') : '') +
       mcell('Comments', fmt.format(lt ? lt[6] : tc)) +
       (lt ? mcell('Shares', fmt.format(lt[7])) : (hasRu ? mcell('Shares†', fmt.format(sh), 'last 28 days') : '')) +
       (lt ? mcell('Subscribers', '+' + fmt.format(lt[8]), '−' + fmt.format(lt[9]) + ' lost') : (hasRu ? mcell('Subs†', '+' + fmt.format(subs), 'last 28 days') : '')) +
@@ -2457,7 +2488,7 @@
     const detail = type => ({ startDate, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==' + type, metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '25' });
     try {
       const [summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards] = await Promise.all([
-        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,dislikes' }),
+        summaryApi(base),
         tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }),
@@ -2491,16 +2522,17 @@
     const c = $('dContent');
     const s = r.summary && r.summary.rows && r.summary.rows[0];
     if (!s) { c.innerHTML = '<p class="dnote">No analytics data for this range yet — very new videos take a day or two to appear.</p>'; return; }
-    const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8], dislikes = s[9] || 0;
+    const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8];
+    const hasDis = s.length > 9, dislikes = s[9] || 0;
     let html = '';
 
-    html += '<div class="metric-grid m9">' +
+    html += '<div class="metric-grid ' + (hasDis ? 'm9' : 'm8') + '">' +
       mcell('Views', fmt.format(views)) +
       mcell('Watch time', fmtHours(minsWatched), 'total time people spent watching') +
       mcell('Avg watched', fmtDur(avgDur), 'how long a typical viewer stays') +
       mcell('% of video watched', Math.round(avgPct) + '%', 'higher = people stick around') +
       mcell('Likes', fmt.format(likes)) +
-      mcell('Dislikes', fmt.format(dislikes), likes + dislikes > 0 ? Math.round(likes / (likes + dislikes) * 100) + '% positive' : 'private — only you see this') +
+      (hasDis ? mcell('Dislikes', fmt.format(dislikes), likes + dislikes > 0 ? Math.round(likes / (likes + dislikes) * 100) + '% positive' : 'private — only you see this') : '') +
       mcell('Comments', fmt.format(comments)) +
       mcell('Shares', fmt.format(shares)) +
       mcell('Subscribers', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost from this video') +

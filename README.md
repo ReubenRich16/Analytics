@@ -111,24 +111,26 @@ match your *own* channel. Two tiers:
   Either way the request sends only your public video info and your own stats,
   never anything about your account beyond the channel-ownership check.
 
-## Cross-device sync (optional) — same Google account, same data everywhere
+## Cross-device sync — same channel, same data everywhere
 
-The dashboard can sync its device-local data (paid keyword research, the
-Studio CTR import, and the minute-race recordings) through a **sandboxed
-hidden folder in your Google Drive** — so every device signed into the same
-Google account shares it automatically. It's free and needs no backend. The
-`☁ synced` badge at the bottom of the page shows when it's active.
+The dashboard syncs its device-local data (paid keyword research, the Studio
+CTR import, and the minute-race recordings) through the **Cloudflare Worker's
+private storage**, so every device signed into the same channel shares it
+automatically. The `☁ synced` badge at the bottom shows when it's active.
 
-One-time setup:
-1. **Enable the Drive API**: Google Cloud Console → same project → APIs &
-   Services → Library → **Google Drive API** → **Enable**.
-2. **Re-consent**: sign out of the dashboard and sign back in. Google will
-   ask to approve one new item — access to its own hidden app-data folder.
-   Approve it. (This scope is *sandboxed*: the app can only see the single
-   JSON file it writes, never your real Drive files.)
+Setup: none beyond deploying the Worker (below) and opening the dashboard with
+the `?worker=…` link. Sync is locked to the channel owners — the Worker only
+returns a channel's data to someone signed in as an owner of that channel.
 
-If you skip this, nothing breaks — the dashboard just stays local-only and
-the manual **Export / Import** buttons still work.
+> **Why not Google Drive?** An earlier version synced through a hidden Drive
+> folder, which required the `drive.appdata` scope. **Supervised and managed
+> Google accounts are blocked from Drive**, and requesting that scope made
+> Google refuse those accounts' sign-in entirely ("Service unavailable"). The
+> dashboard now requests **YouTube scopes only**, so every account can sign in.
+> Don't re-add a Drive scope — it will lock those users out again.
+
+If you don't deploy the Worker, nothing breaks — data just stays per-device and
+the manual **Export / Import** buttons still move it around.
 
 ## Per-minute offline tracker (optional) — catch a launch minute-by-minute
 
