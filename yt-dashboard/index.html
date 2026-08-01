@@ -1075,28 +1075,39 @@
   }
 
   // one cheap analytics call powers the table's Avg % / Subs / Shares columns (spec: channel-level rollup)
-  let rollupMap = {};
+  let rollupMap = {}, dislikesOk = null; // null = unknown yet, false = YouTube refused the metric
   async function loadRollup() {
     const key = 'cc:rollup:v2:28'; // v2 = adds dislikes + likes to the row shape
+    // A cached result that had to drop dislikes is only trusted briefly, so one bad response
+    // can't hide the column for a whole day — it retries on the next visit instead.
     let c = cacheGet(key, 12 * 3600 * 1000);
+    if (c && c.noDislikes) c = cacheGet(key, 20 * 60 * 1000);
     if (!c || !c.rows) {
       const { startDate, endDate } = rangeDates(28);
       const rows = [];
+      let dropped = false;
       for (const part of chunk(videoIds, 200)) {
         const q = m => ({ startDate, endDate, dimensions: 'video', metrics: m, filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
         // dislikes is owner-only and can be rejected in some combos — never lose the other columns over it
         let r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares,likes,dislikes'));
-        if (!r || !r.rows || !r.rows.length) r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares'));
+        if (!r || !r.rows || !r.rows.length) { dropped = true; r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares')); }
         if (r && r.rows) rows.push(...r.rows);
       }
-      c = { rows };
+      c = { rows, noDislikes: dropped };
       cacheSet(key, c);
     }
     rollupMap = {};
     // rows are [video, views, avgPct, subs, shares] and, when dislikes were permitted, [+likes, dislikes]
     for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4], likes28: r[5], dislikes: r.length > 6 ? r[6] : null };
+    dislikesOk = (c.rows || []).some(r => r.length > 6);
     const d = (c.fetchedAt || '').slice(0, 10);
-    if (d) $('rollupNote').textContent = '† = YouTube’s official stats, last 28 days (fetched ' + d + ') — they lag 24–48h and won’t match the live columns.';
+    let note = '† = YouTube’s official stats, last 28 days' + (d ? ' (fetched ' + d + ')' : '') + ' — they lag 24–48h and won’t match the live columns.';
+    if (c.rows && c.rows.length && !dislikesOk) note += ' Dislikes: YouTube didn’t return this metric, so that column is blank — it retries automatically.';
+    else if (dislikesOk) {
+      const tot = Object.values(rollupMap).reduce((a, x) => a + (x.dislikes || 0), 0);
+      if (!tot) note += ' Dislikes are working and genuinely 0 across these 28 days — a “0” means none, a “·” means no data.';
+    }
+    $('rollupNote').textContent = note;
     renderTable();
     renderChannelBreakdown(); // rollup adds dislikes/retention to the account breakdown
   }
@@ -1906,6 +1917,8 @@
     if (!$('breakdownContent')) return;
     const key = 'cc:chanbreak:v1';
     let c = cacheGet(key, 12 * 3600 * 1000);
+    // as with the rollup, don't let one dislikes-less response stick for 12h
+    if (c && c.row && c.row[5] == null) c = cacheGet(key, 20 * 60 * 1000);
     if (!c) {
       const { startDate, endDate } = rangeDates(0);
       const M = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost';
@@ -2921,8 +2934,13 @@
   });
   $('refreshBtn').addEventListener('click', () => {
     if (!accessToken) return;
+    // an explicit Refresh should also re-pull the cached official stats (dislikes, % watched,
+    // subs, shares and the lifetime totals) rather than only the live counters
+    try { localStorage.removeItem('cc:rollup:v2:28'); localStorage.removeItem('cc:chanbreak:v1'); } catch (e) {}
     loadComments();
     poll(true);
+    loadRollup();
+    loadChannelBreakdown();
   });
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused;
