@@ -318,6 +318,64 @@
     .hbar-row .hval { flex-basis:78px; }
     .trends .range-row { margin-left:0; width:100%; }
   }
+
+  /* ---------- phone layout ---------- */
+  @media (max-width:640px) {
+    /* the 11-column table needs ~900px, so on a phone each video becomes a card
+       instead — every stat stays visible, with no sideways scrolling */
+    .tscroll { overflow-x:visible; }
+    /* the desktop table forces min-widths to keep columns readable — clear them so the
+       card layout can actually fit the screen */
+    table { min-width:0; width:100%; }
+    #tbody td.title { min-width:0; max-width:none; }
+    table, tbody, #tbody tr, #tbody td { display:block; width:auto; max-width:100%; }
+    thead { display:none; }
+    /* two stats per line keeps each video card compact when scrolling a long catalogue */
+    #tbody tr { display:grid; grid-template-columns:1fr 1fr; column-gap:16px;
+      margin:10px; padding:10px 12px; background:var(--panel-2); border:1px solid var(--line); border-radius:12px; }
+    #tbody td.title, #tbody td.thumbcell { grid-column:1 / -1; }
+    #tbody tr.mover { border-color:var(--up); }
+    #tbody td { border:none; padding:5px 0; text-align:right; white-space:normal;
+      display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:14px; }
+    #tbody td::before { content:attr(data-label); color:var(--muted); font-size:10px; letter-spacing:.08em;
+      text-transform:uppercase; font-family:'Inter',sans-serif; text-align:left; flex:none; }
+    #tbody td.title { display:block; text-align:left; font-size:15px; font-weight:700; line-height:1.35; padding:2px 0 8px; }
+    #tbody td.title::before { display:none; }
+    #tbody td.thumbcell { display:block; padding:0 0 8px; width:auto; }
+    #tbody td.thumbcell::before { display:none; }
+    #tbody td.thumbcell .vthumb { width:100%; }
+    #tbody td.thumbcell:empty { display:none; }
+    .tablecard .thead-bar { flex-wrap:wrap; }
+    .thead-bar select#sortMode { width:100%; margin-left:0; }
+    /* header must wrap so the theme picker can't push the page sideways */
+    header { flex-wrap:wrap; }
+    header .status { margin-left:auto; }
+    header select#themeSel { width:100%; margin-left:0; }
+
+    .card { padding:14px 13px; }
+    .drawer { width:100%; padding:16px 13px 40px; }
+    .reportcard { gap:12px; padding:12px; }
+    .grade-badge { width:56px; height:56px; font-size:23px; border-radius:13px; }
+    .gbar .gl { width:74px; }
+    .gbar .gv { width:62px; }
+    .metric-grid { grid-template-columns:repeat(2,1fr); gap:8px; }
+    .mcell { padding:10px; }
+    .mcell .val { font-size:16px; }
+    .idea-cols { gap:4px; }
+  }
+
+  /* Touch devices of any size (phones AND tablets): comfortable tap targets, and 16px
+     fields so iOS doesn't zoom the page in whenever one is focused. Selectors are kept
+     specific enough to beat the compact desktop rules they override. */
+  @media (pointer:coarse) {
+    button, select, input, textarea { min-height:44px; }
+    button.ghost, button.primary { padding:11px 15px; }
+    .range-row button, .thead-bar button, .footer-tools button { min-height:42px; }
+    #latestPrev, #latestNext { min-width:44px; min-height:42px; }
+    header select#themeSel, .thead-bar select, .channel-banner select,
+    input, select, textarea { font-size:16px; }
+    .thead-bar select { padding:9px 10px; }
+  }
 </style>
 </head>
 <body>
@@ -512,6 +570,7 @@
         <option value="views">Sort: most views</option>
         <option value="newest">Sort: newest</option>
         <option value="pace">Sort: views/day pace</option>
+        <option value="title">Sort: title A–Z</option>
         <option value="likes">Sort: most likes</option>
         <option value="comments">Sort: most comments</option>
         <option value="dislikes">Sort: most dislikes†</option>
@@ -1095,17 +1154,18 @@
       tr.dataset.vid = r.id;
       if (r.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
+        // data-label drives the phone card layout (each cell shows its own heading there)
         '<td class="thumbcell">' + (r.thumb ? '<img class="vthumb" loading="lazy" alt="" src="' + esc(r.thumb) + '">' : '') + '</td>' +
         '<td class="title">' + (accelSet.has(r.id) ? '<span title="Accelerating — views coming in 1.5x+ faster than yesterday">⚡ </span>' : '') + esc(r.title) + '</td>' +
-        '<td>' + fmt.format(r.views) + '</td>' +
-        '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
-        '<td>' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
-        '<td>' + fmt.format(r.likes) + '</td>' +
-        '<td>' + (r.ru.dislikes != null ? (r.ru.dislikes > 0 ? fmt.format(r.ru.dislikes) : '0') : '<span class="zero">·</span>') + '</td>' +
-        '<td>' + fmt.format(r.comments) + '</td>' +
-        '<td>' + (r.ru.avgPct != null ? Math.round(r.ru.avgPct) + '%' : '<span class="zero">·</span>') + '</td>' +
-        '<td>' + (r.ru.subs != null && r.ru.subs > 0 ? '<span class="tickup">+' + fmt.format(r.ru.subs) + '</span>' : r.ru.subs != null ? '0' : '<span class="zero">·</span>') + '</td>' +
-        '<td>' + (r.ru.shares != null ? fmt.format(r.ru.shares) : '<span class="zero">·</span>') + '</td>';
+        '<td data-label="Views">' + fmt.format(r.views) + '</td>' +
+        '<td data-label="+tick">' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="+session">' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="Likes">' + fmt.format(r.likes) + '</td>' +
+        '<td data-label="Dislikes">' + (r.ru.dislikes != null ? (r.ru.dislikes > 0 ? fmt.format(r.ru.dislikes) : '0') : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="Comments">' + fmt.format(r.comments) + '</td>' +
+        '<td data-label="Avg % watched">' + (r.ru.avgPct != null ? Math.round(r.ru.avgPct) + '%' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="Subs gained">' + (r.ru.subs != null && r.ru.subs > 0 ? '<span class="tickup">+' + fmt.format(r.ru.subs) + '</span>' : r.ru.subs != null ? '0' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="Shares">' + (r.ru.shares != null ? fmt.format(r.ru.shares) : '<span class="zero">·</span>') + '</td>';
       tr.addEventListener('click', () => openDrawer(r.id));
       tb.appendChild(tr);
     }
@@ -2838,7 +2898,12 @@
     rd.readAsText(f);
     e.target.value = '';
   });
-  $('sortMode').addEventListener('change', () => { tableSort = { key: $('sortMode').value, dir: -1 }; renderTable(); });
+  $('sortMode').addEventListener('change', () => {
+    const k = $('sortMode').value;
+    if (!k) return; // the "click a header" placeholder isn't a real choice
+    tableSort = { key: k, dir: k === 'title' ? 1 : -1 }; // titles read A→Z, everything else biggest-first
+    renderTable();
+  });
   // click any column header to sort by it; click again to flip the direction
   $('thRow').addEventListener('click', e => {
     const th = e.target.closest('th[data-sort]');
