@@ -217,6 +217,11 @@
   .tscroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   table { width:100%; border-collapse:collapse; font-size:13px; min-width:780px; }
   th { text-align:right; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:500; padding:10px 14px; border-bottom:1px solid var(--line); }
+  th[data-sort] { cursor:pointer; user-select:none; white-space:nowrap; transition:color .15s; }
+  th[data-sort]:hover { color:var(--text); }
+  th[data-sort].sorted { color:var(--accent); }
+  th[data-sort].sorted.desc::after { content:' ▼'; font-size:8px; }
+  th[data-sort].sorted.asc::after { content:' ▲'; font-size:8px; }
   th:first-child { text-align:left; }
   td { padding:10px 14px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
   tr:last-child td { border-bottom:none; }
@@ -296,8 +301,9 @@
   .range-row button { flex:1; min-width:70px; }
   .range-row button.active { color:var(--text); border-color:var(--accent); }
   .metric-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(138px,1fr)); gap:10px; margin-bottom:18px; }
-  /* the 8-tile "how it's doing" grids show all 8 on one row on a wide screen */
+  /* the "how it's doing" grids show all their tiles on one row on a wide screen */
   @media (min-width:1180px) { .metric-grid.m8 { grid-template-columns:repeat(8,1fr); } }
+  @media (min-width:1300px) { .metric-grid.m9 { grid-template-columns:repeat(9,1fr); } }
   .mcell { background:var(--ink); border:1px solid var(--line); border-radius:8px; padding:12px; }
   .mcell .label { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
   .mcell .val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:5px; font-variant-numeric:tabular-nums; }
@@ -468,6 +474,13 @@
     </details>
   </div>
 
+  <!-- ACCOUNT-WIDE BREAKDOWN -->
+  <div class="card" id="breakdownCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — your whole channel at a glance</div>
+    <p class="explain" style="margin-top:8px">Everything compiled across every upload: lifetime totals, per-video averages, average retention, like/dislike balance, and the tags your best videos share.</p>
+    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
+  </div>
+
   <!-- COACHING -->
   <div class="card" id="coachCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
@@ -494,19 +507,23 @@
   <div class="card tablecard" id="tableCard">
     <div class="thead-bar">
       <div class="label" id="tableLabel">Videos — tap a row for deep analytics</div>
-      <select id="sortMode">
+      <select id="sortMode" title="Or click any column header to sort by it">
         <option value="hot" selected>Sort: hottest</option>
         <option value="views">Sort: most views</option>
         <option value="newest">Sort: newest</option>
         <option value="pace">Sort: views/day pace</option>
-        <option value="avgpct">Sort: % watched†</option>
+        <option value="likes">Sort: most likes</option>
+        <option value="comments">Sort: most comments</option>
+        <option value="dislikes">Sort: most dislikes†</option>
+        <option value="avgPct">Sort: % watched†</option>
         <option value="subs">Sort: subs gained†</option>
         <option value="shares">Sort: shares†</option>
+        <option value="" disabled>— or click a column header —</option>
       </select>
     </div>
     <div class="tscroll">
       <table>
-        <thead><tr><th></th><th>Video</th><th>Views</th><th>+tick</th><th>+session</th><th>Likes</th><th>Comments</th><th title="Official stats, last 28 days, lag 24-48h">Avg %†</th><th title="Official stats, last 28 days, lag 24-48h">Subs†</th><th title="Official stats, last 28 days, lag 24-48h">Shares†</th></tr></thead>
+        <thead><tr id="thRow"><th></th><th data-sort="title" style="text-align:left" title="Click to sort">Video</th><th data-sort="views" title="Click to sort">Views</th><th data-sort="tickV" title="Click to sort">+tick</th><th data-sort="sessV" title="Click to sort">+session</th><th data-sort="likes" title="Click to sort">Likes</th><th data-sort="dislikes" title="Only you can see dislikes — official stats, last 28 days, lag 24-48h. Click to sort">Dislikes†</th><th data-sort="comments" title="Click to sort">Comments</th><th data-sort="avgPct" title="Official stats, last 28 days, lag 24-48h. Click to sort">Avg %†</th><th data-sort="subs" title="Official stats, last 28 days, lag 24-48h. Click to sort">Subs†</th><th data-sort="shares" title="Official stats, last 28 days, lag 24-48h. Click to sort">Shares†</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -789,6 +806,7 @@
     $('commentsCard').style.display = 'block';
     $('keywordsCard').style.display = 'block';
     $('ideasCard').style.display = 'block';
+    $('breakdownCard').style.display = 'block';
     $('coachCard').style.display = 'block';
     setGeminiState(); // now that we're signed in, reflect Worker-provided AI if configured
 
@@ -801,6 +819,7 @@
     timer = setInterval(poll, intervalMs);
     showSlot(0); // fills the Latest-upload card header + analytics for the newest video
     loadRollup();
+    loadChannelBreakdown();
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
     syncPull();    // cross-device sync via the Worker's private KV (no Drive scope); no-ops without a Worker
@@ -959,6 +978,7 @@
       renderLiveRace();
       renderKeywords();
       renderCoaching();
+      renderChannelBreakdown();
       pollCount++;
       if (workerUrl && (!workerPulled || pollCount % 3 === 0)) pullWorkerMinutes();
       if (pollCount % 5 === 1) loadComments();
@@ -983,37 +1003,73 @@
   // one cheap analytics call powers the table's Avg % / Subs / Shares columns (spec: channel-level rollup)
   let rollupMap = {};
   async function loadRollup() {
-    const key = 'cc:rollup:v1:28';
+    const key = 'cc:rollup:v2:28'; // v2 = adds dislikes + likes to the row shape
     let c = cacheGet(key, 12 * 3600 * 1000);
     if (!c || !c.rows) {
       const { startDate, endDate } = rangeDates(28);
       const rows = [];
       for (const part of chunk(videoIds, 200)) {
-        const r = await tryApi({ startDate, endDate, dimensions: 'video', metrics: 'views,averageViewPercentage,subscribersGained,shares', filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
+        const r = await tryApi({ startDate, endDate, dimensions: 'video', metrics: 'views,averageViewPercentage,subscribersGained,shares,likes,dislikes', filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
         if (r && r.rows) rows.push(...r.rows);
       }
       c = { rows };
       cacheSet(key, c);
     }
     rollupMap = {};
-    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4] };
+    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4], likes28: r[5], dislikes: r[6] };
     const d = (c.fetchedAt || '').slice(0, 10);
     if (d) $('rollupNote').textContent = '† = YouTube’s official stats, last 28 days (fetched ' + d + ') — they lag 24–48h and won’t match the live columns.';
     renderTable();
+    renderChannelBreakdown(); // rollup adds dislikes/retention to the account breakdown
   }
 
   let hideThumbZoom = null;
+  // one sort model shared by the dropdown and the clickable column headers.
+  // dir: -1 = biggest first (default for numbers), 1 = smallest first.
+  let tableSort = { key: 'hot', dir: -1 };
+  const SORT_VAL = {
+    hot: r => r.sessV || 0,
+    newest: r => new Date(r.publishedAt).getTime() || 0,
+    pace: r => r.pace || 0,
+    title: r => (r.title || '').toLowerCase(),
+    views: r => r.views || 0,
+    tickV: r => r.tickV || 0,
+    sessV: r => r.sessV || 0,
+    likes: r => r.likes || 0,
+    comments: r => r.comments || 0,
+    // official-stats columns: missing values sort last in either direction
+    dislikes: r => (r.ru.dislikes != null ? r.ru.dislikes : null),
+    avgPct: r => (r.ru.avgPct != null ? r.ru.avgPct : null),
+    subs: r => (r.ru.subs != null ? r.ru.subs : null),
+    shares: r => (r.ru.shares != null ? r.ru.shares : null)
+  };
+  function sortRows(rows) {
+    const get = SORT_VAL[tableSort.key] || SORT_VAL.hot, dir = tableSort.dir;
+    rows.sort((a, b) => {
+      const x = get(a), y = get(b);
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;   // blanks always last
+      if (y == null) return -1;
+      let c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+      if (c === 0) c = (a.views || 0) - (b.views || 0); // stable, meaningful tie-break
+      return c * dir;
+    });
+    return rows;
+  }
+  function markSortedHeader() {
+    const row = $('thRow'); if (!row) return;
+    row.querySelectorAll('th[data-sort]').forEach(th => {
+      const on = th.dataset.sort === tableSort.key;
+      th.classList.toggle('sorted', on);
+      th.classList.toggle('desc', on && tableSort.dir === -1);
+      th.classList.toggle('asc', on && tableSort.dir === 1);
+    });
+  }
   function renderTable() {
     if (hideThumbZoom) hideThumbZoom(); // a poll re-render can destroy the hovered thumb — close any open zoom
-    const mode = $('sortMode').value;
     const rows = videoIds.map(id => ({ id, ...perVideo[id], ...meta[id], ru: rollupMap[id] || {}, pace: perVideo[id] ? perVideo[id].views / Math.max(1, (Date.now() - new Date(meta[id].publishedAt)) / 864e5) : 0 })).filter(r => r.views !== undefined);
-    if (mode === 'views') rows.sort((a, b) => b.views - a.views);
-    else if (mode === 'newest') rows.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
-    else if (mode === 'pace') rows.sort((a, b) => b.pace - a.pace);
-    else if (mode === 'avgpct') rows.sort((a, b) => (b.ru.avgPct || 0) - (a.ru.avgPct || 0));
-    else if (mode === 'subs') rows.sort((a, b) => (b.ru.subs || 0) - (a.ru.subs || 0));
-    else if (mode === 'shares') rows.sort((a, b) => (b.ru.shares || 0) - (a.ru.shares || 0));
-    else rows.sort((a, b) => (b.sessV - a.sessV) || (b.views - a.views));
+    sortRows(rows);
+    markSortedHeader();
     const tb = $('tbody'); tb.innerHTML = '';
     for (const r of rows) {
       const tr = document.createElement('tr');
@@ -1026,6 +1082,7 @@
         '<td>' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + fmt.format(r.likes) + '</td>' +
+        '<td>' + (r.ru.dislikes != null ? (r.ru.dislikes > 0 ? fmt.format(r.ru.dislikes) : '0') : '<span class="zero">·</span>') + '</td>' +
         '<td>' + fmt.format(r.comments) + '</td>' +
         '<td>' + (r.ru.avgPct != null ? Math.round(r.ru.avgPct) + '%' : '<span class="zero">·</span>') + '</td>' +
         '<td>' + (r.ru.subs != null && r.ru.subs > 0 ? '<span class="tickup">+' + fmt.format(r.ru.subs) + '</span>' : r.ru.subs != null ? '0' : '<span class="zero">·</span>') + '</td>' +
@@ -1563,7 +1620,7 @@
       const endDate = iso(new Date());
       const base = { startDate: pub, endDate, filters: 'video==' + vid };
       const [summary, daily, traffic, search] = await Promise.all([
-        tryApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
+        tryApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,dislikes' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ startDate: pub, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==YT_SEARCH', metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '6' })
@@ -1582,12 +1639,14 @@
         html = liveRaceHtml + '<p class="dnote">YouTube hasn’t finished counting this one for the official stats yet — those take 24–48h.' + (isNewest ? ' The live counters and race above are real-time.' : '') + '</p>';
       } else {
         html += liveRaceHtml;
-        html += '<div class="metric-grid m8">' +
+        const dsl = s[9] || 0;
+        html += '<div class="metric-grid m9">' +
           mcell('Views', fmt.format(s[0])) +
           mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
           mcell('Avg watched', fmtDur(s[2]), 'how long a typical viewer stays') +
           mcell('% of video watched', Math.round(s[3]) + '%', 'higher = people stick around') +
           mcell('Likes', fmt.format(s[4])) +
+          mcell('Dislikes', fmt.format(dsl), s[4] + dsl > 0 ? Math.round(s[4] / (s[4] + dsl) * 100) + '% positive' : 'private — only you see this') +
           mcell('Comments', fmt.format(s[5])) +
           mcell('Shares', fmt.format(s[6])) +
           mcell('Subscribers', '+' + fmt.format(s[7]), '−' + fmt.format(s[8]) + ' lost from this video') +
@@ -1753,6 +1812,88 @@
     const topAvg = sorted.slice(0, topN).reduce((x, r) => x + r.vpd, 0) / topN, rest = sorted.slice(topN);
     if (rest.length) html += noteSection('Your hits vs the rest', 'Your top 20% average <b>' + fmt.format(Math.round(topAvg)) + '</b> views/day vs <b>' + fmt.format(Math.round(rest.reduce((x, r) => x + r.vpd, 0) / rest.length)) + '</b> for the rest. Open any video’s <b>Full breakdown</b> for its Report Card to see what the winners share.');
     el.innerHTML = html || '<p class="dnote">Not enough spread in your uploads yet for clear patterns — check back as you post more.</p>';
+  }
+
+  /* ---------- account-wide breakdown ---------- */
+  // One cached lifetime Analytics call (channel totals incl. dislikes), combined with the
+  // live per-video counts and the 28-day rollup already in memory — so it costs ~1 query.
+  let chanLifetime = null;
+  async function loadChannelBreakdown() {
+    if (!$('breakdownContent')) return;
+    const key = 'cc:chanbreak:v1';
+    let c = cacheGet(key, 12 * 3600 * 1000);
+    if (!c) {
+      const { startDate, endDate } = rangeDates(0);
+      const r = await tryApi({ startDate, endDate, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,dislikes,comments,shares,subscribersGained,subscribersLost' });
+      c = { row: (r && r.rows && r.rows[0]) || null };
+      cacheSet(key, c);
+    }
+    chanLifetime = c.row;
+    renderChannelBreakdown();
+  }
+  function renderChannelBreakdown() {
+    const el = $('breakdownContent');
+    if (!el) return;
+    const rows = catalogueMetrics();
+    if (!rows.length) { el.innerHTML = '<p class="dnote">Loading your videos…</p>'; return; }
+    const n = rows.length;
+    // live totals across the catalogue
+    let tv = 0, tl = 0, tc = 0;
+    for (const id of videoIds) { const p = perVideo[id]; if (p) { tv += p.views; tl += p.likes; tc += p.comments; } }
+    // 28-day official rollup aggregates
+    let dis = 0, sh = 0, subs = 0, pctSum = 0, pctN = 0, hasRu = false;
+    for (const id of videoIds) {
+      const ru = rollupMap[id]; if (!ru) continue;
+      hasRu = true;
+      if (ru.dislikes != null) dis += ru.dislikes;
+      if (ru.shares != null) sh += ru.shares;
+      if (ru.subs != null) subs += ru.subs;
+      if (ru.avgPct != null) { pctSum += ru.avgPct; pctN++; }
+    }
+    const lt = chanLifetime;
+    const avgRet = lt ? lt[3] : (pctN ? pctSum / pctN : null);
+    const ltLikes = lt ? lt[4] : tl, ltDis = lt ? lt[5] : dis;
+    const posPct = (ltLikes + ltDis) > 0 ? Math.round(ltLikes / (ltLikes + ltDis) * 100) : null;
+    let html = '';
+    // headline lifetime totals
+    html += '<div class="dsection"><h4>Lifetime totals</h4><p class="explain">Everything your channel has earned' + (lt ? ' (YouTube official, all-time)' : ' (live counts across your uploads)') + '.</p><div class="metric-grid">' +
+      mcell('Videos', fmt.format(n)) +
+      mcell('Views', fmt.format(lt ? lt[0] : tv)) +
+      (lt ? mcell('Watch time', fmtHours(lt[1]), 'total time watched') : '') +
+      (lt ? mcell('Avg view time', fmtDur(lt[2]), 'per view') : '') +
+      (avgRet != null ? mcell('Avg retention', Math.round(avgRet) + '%', 'of each video watched') : '') +
+      mcell('Likes', fmt.format(ltLikes)) +
+      mcell('Dislikes', fmt.format(ltDis), posPct != null ? posPct + '% positive' : 'only you can see this') +
+      mcell('Comments', fmt.format(lt ? lt[6] : tc)) +
+      (lt ? mcell('Shares', fmt.format(lt[7])) : (hasRu ? mcell('Shares†', fmt.format(sh), 'last 28 days') : '')) +
+      (lt ? mcell('Subscribers', '+' + fmt.format(lt[8]), '−' + fmt.format(lt[9]) + ' lost') : (hasRu ? mcell('Subs†', '+' + fmt.format(subs), 'last 28 days') : '')) +
+      '</div></div>';
+    // per-video averages + ratios ("avg likes vs total")
+    const engPct = tv ? (tl / tv * 100) : 0, cpk = tv ? (tc / tv * 1000) : 0;
+    const vpds = rows.map(r => r.vpd).sort((a, b) => a - b);
+    const medVpd = vpds.length ? vpds[vpds.length >> 1] : 0;
+    html += '<div class="dsection"><h4>Per-video averages</h4><p class="explain">What a typical upload of yours does — useful as the bar any new video should beat.</p><div class="metric-grid m8">' +
+      mcell('Avg views', fmt.format(Math.round(tv / n)), 'per video') +
+      mcell('Median views/day', fmt.format(Math.round(medVpd)), 'typical pace') +
+      mcell('Avg likes', fmt.format(Math.round(tl / n)), 'per video') +
+      mcell('Avg comments', fmt.format(Math.round(tc / n)), 'per video') +
+      mcell('Like rate', engPct.toFixed(1) + '%', 'likes per view') +
+      mcell('Comments /1k', cpk.toFixed(1), 'per 1,000 views') +
+      (avgRet != null ? mcell('Avg % watched', Math.round(avgRet) + '%') : '') +
+      (hasRu && pctN ? mcell('Best retention', Math.round(Math.max(...videoIds.map(id => (rollupMap[id] || {}).avgPct).filter(x => x != null))) + '%', 'your strongest hold') : '') +
+      '</div></div>';
+    // top tags across the catalogue
+    const tt = topTagsByVpd(rows).slice(0, 10);
+    if (tt.length) html += section('Best tags across the account', 'Ranked by the average views/day of the videos using each tag — these are your proven keywords.',
+      hbarList(tt.map(t => ({ label: t.tag, val: Math.round(t.avg), valText: fmt.format(Math.round(t.avg)) + '/day' })), { color: 'var(--purple)' }));
+    // best & worst performers
+    const byV = rows.slice().sort((a, b) => b.vpd - a.vpd);
+    const nameOf = id => videoTitle(id);
+    html += section('Top 5 videos (by views/day)', 'Age-adjusted, so recent uploads compare fairly with old ones.',
+      hbarList(byV.slice(0, 5).map(r => ({ label: nameOf(r.id), val: Math.round(r.vpd), valText: fmt.format(Math.round(r.vpd)) + '/day' })), { color: 'var(--up)' }));
+    if (byV.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical video. Consider refreshing titles, tags or thumbnails.',
+      hbarList(byV.slice(-5).reverse().map(r => ({ label: nameOf(r.id), val: Math.max(1, Math.round(r.vpd)), valText: fmt.format(Math.round(r.vpd)) + '/day' })), { color: 'var(--down)' }));
+    el.innerHTML = html;
   }
 
   /* ---------- recent comments ---------- */
@@ -2316,7 +2457,7 @@
     const detail = type => ({ startDate, endDate, filters: 'video==' + vid + ';insightTrafficSourceType==' + type, metrics: 'views', dimensions: 'insightTrafficSourceDetail', sort: '-views', maxResults: '25' });
     try {
       const [summary, daily, traffic, retention, demo, geo, search, suggested, external, device, os, subStatus, playback, sharing, cards] = await Promise.all([
-        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost' }),
+        analyticsApi({ ...base, metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,dislikes' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
         tryApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }),
@@ -2350,15 +2491,16 @@
     const c = $('dContent');
     const s = r.summary && r.summary.rows && r.summary.rows[0];
     if (!s) { c.innerHTML = '<p class="dnote">No analytics data for this range yet — very new videos take a day or two to appear.</p>'; return; }
-    const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8];
+    const views = s[0], minsWatched = s[1], avgDur = s[2], avgPct = s[3], likes = s[4], comments = s[5], shares = s[6], subsG = s[7], subsL = s[8], dislikes = s[9] || 0;
     let html = '';
 
-    html += '<div class="metric-grid m8">' +
+    html += '<div class="metric-grid m9">' +
       mcell('Views', fmt.format(views)) +
       mcell('Watch time', fmtHours(minsWatched), 'total time people spent watching') +
       mcell('Avg watched', fmtDur(avgDur), 'how long a typical viewer stays') +
       mcell('% of video watched', Math.round(avgPct) + '%', 'higher = people stick around') +
       mcell('Likes', fmt.format(likes)) +
+      mcell('Dislikes', fmt.format(dislikes), likes + dislikes > 0 ? Math.round(likes / (likes + dislikes) * 100) + '% positive' : 'private — only you see this') +
       mcell('Comments', fmt.format(comments)) +
       mcell('Shares', fmt.format(shares)) +
       mcell('Subscribers', '+' + fmt.format(subsG), '−' + fmt.format(subsL) + ' lost from this video') +
@@ -2664,7 +2806,18 @@
     rd.readAsText(f);
     e.target.value = '';
   });
-  $('sortMode').addEventListener('change', renderTable);
+  $('sortMode').addEventListener('change', () => { tableSort = { key: $('sortMode').value, dir: -1 }; renderTable(); });
+  // click any column header to sort by it; click again to flip the direction
+  $('thRow').addEventListener('click', e => {
+    const th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    const key = th.dataset.sort;
+    if (tableSort.key === key) tableSort.dir = -tableSort.dir;
+    else tableSort = { key, dir: key === 'title' ? 1 : -1 }; // titles read best A→Z
+    const sel = $('sortMode');
+    sel.value = [...sel.options].some(o => o.value === key) ? key : ''; // dropdown shows "custom" for header-only sorts
+    renderTable();
+  });
   $('interval').addEventListener('change', () => {
     intervalMs = +$('interval').value;
     if (timer) { clearInterval(timer); timer = setInterval(poll, intervalMs); }
