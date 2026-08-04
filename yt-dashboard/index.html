@@ -211,6 +211,7 @@
         <option value="likes">Sort: most likes</option>
         <option value="comments">Sort: most comments</option>
         <option value="dislikes">Sort: most dislikes†</option>
+        <option value="saves">Sort: most saves†</option>
         <option value="avgPct">Sort: % watched†</option>
         <option value="subs">Sort: subs gained†</option>
         <option value="shares">Sort: shares†</option>
@@ -219,7 +220,7 @@
     </div>
     <div class="tscroll">
       <table>
-        <thead><tr id="thRow"><th></th><th data-sort="title" style="text-align:left" title="Click to sort">Video</th><th data-sort="views" title="Click to sort">Views</th><th data-sort="tickV" title="Click to sort">+tick</th><th data-sort="sessV" title="Click to sort">+session</th><th data-sort="likes" title="Click to sort">Likes</th><th data-sort="dislikes" title="Only you can see dislikes — official stats, last 28 days, lag 24-48h. Click to sort">Dislikes†</th><th data-sort="comments" title="Click to sort">Comments</th><th data-sort="avgPct" title="Official stats, last 28 days, lag 24-48h. Click to sort">Avg %†</th><th data-sort="subs" title="Official stats, last 28 days, lag 24-48h. Click to sort">Subs†</th><th data-sort="shares" title="Official stats, last 28 days, lag 24-48h. Click to sort">Shares†</th></tr></thead>
+        <thead><tr id="thRow"><th></th><th data-sort="title" style="text-align:left" title="Click to sort">Video</th><th data-sort="views" title="Click to sort">Views</th><th data-sort="tickV" title="Click to sort">+tick</th><th data-sort="sessV" title="Click to sort">+session</th><th data-sort="likes" title="Click to sort">Likes</th><th data-sort="dislikes" title="Only you can see dislikes — official stats, last 28 days, lag 24-48h. Click to sort">Dislikes†</th><th data-sort="saves" title="Times saved to a playlist or Watch Later — official stats, last 28 days. Click to sort">Saves†</th><th data-sort="comments" title="Click to sort">Comments</th><th data-sort="avgPct" title="Official stats, last 28 days, lag 24-48h. Click to sort">Avg %†</th><th data-sort="subs" title="Official stats, last 28 days, lag 24-48h. Click to sort">Subs†</th><th data-sort="shares" title="Official stats, last 28 days, lag 24-48h. Click to sort">Shares†</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -317,7 +318,9 @@
         if (nowS[1] - d1[1] >= 50 && nowS[1] - d1[1] >= (d1[1] - d2[1]) * 1.5) accelSet.add(vid);
       }
     }
-    if (videoIds.length) { seedSnapsFromHistory(); renderTable(); loadTrends(); }
+    // history arrives after the first poll, so re-render the panels that depend on it —
+    // otherwise the milestone projection is missing until the next refresh
+    if (videoIds.length) { seedSnapsFromHistory(); renderTable(); renderCoaching(); loadTrends(); }
   }
 
   const cacheSet = (k, obj) => {
@@ -711,31 +714,47 @@
   }
 
   // one cheap analytics call powers the table's Avg % / Subs / Shares columns (spec: channel-level rollup)
-  let rollupMap = {}, dislikesOk = null; // null = unknown yet, false = YouTube refused the metric
+  let rollupMap = {}, dislikesOk = null, savesOk = null; // null = unknown yet, false = YouTube refused the metric
   async function loadRollup() {
-    const key = 'cc:rollup:v2:28'; // v2 = adds dislikes + likes to the row shape
-    // A cached result that had to drop dislikes is only trusted briefly, so one bad response
-    // can't hide the column for a whole day — it retries on the next visit instead.
+    const key = 'cc:rollup:v3:28'; // v3 = adds saves (videosAddedToPlaylists)
+    // A cached result that had to drop an optional metric is only trusted briefly, so one bad
+    // response can't hide a column for a whole day — it retries on the next visit instead.
     let c = cacheGet(key, 12 * 3600 * 1000);
-    if (c && c.noDislikes) c = cacheGet(key, 20 * 60 * 1000);
+    if (c && c.degraded) c = cacheGet(key, 20 * 60 * 1000);
     if (!c || !c.rows) {
       const { startDate, endDate } = rangeDates(28);
+      const CORE = ['views', 'averageViewPercentage', 'subscribersGained', 'shares', 'likes'];
+      // Tried richest first. dislikes and videosAddedToPlaylists are the optional extras —
+      // if YouTube refuses either, we still keep every other column rather than losing the lot.
+      const SETS = [
+        CORE.concat('dislikes', 'videosAddedToPlaylists'),
+        CORE.concat('videosAddedToPlaylists'),
+        CORE.concat('dislikes'),
+        CORE
+      ];
       const rows = [];
-      let dropped = false;
+      let used = null;
       for (const part of chunk(videoIds, 200)) {
-        const q = m => ({ startDate, endDate, dimensions: 'video', metrics: m, filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
-        // dislikes is owner-only and can be rejected in some combos — never lose the other columns over it
-        let r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares,likes,dislikes'));
-        if (!r || !r.rows || !r.rows.length) { dropped = true; r = await tryApi(q('views,averageViewPercentage,subscribersGained,shares')); }
-        if (r && r.rows) rows.push(...r.rows);
+        const q = m => ({ startDate, endDate, dimensions: 'video', metrics: m.join(','), filters: 'video==' + part.join(','), sort: '-views', maxResults: '200' });
+        for (const set of SETS) {
+          const r = await tryApi(q(set));
+          if (r && r.rows && r.rows.length) { rows.push(...r.rows); used = used || set; break; }
+        }
       }
-      c = { rows, noDislikes: dropped };
+      c = { rows, metrics: used || [], degraded: !used || used.length < SETS[0].length };
       cacheSet(key, c);
     }
     rollupMap = {};
-    // rows are [video, views, avgPct, subs, shares] and, when dislikes were permitted, [+likes, dislikes]
-    for (const r of c.rows || []) rollupMap[r[0]] = { avgPct: r[2], subs: r[3], shares: r[4], likes28: r[5], dislikes: r.length > 6 ? r[6] : null };
-    dislikesOk = (c.rows || []).some(r => r.length > 6);
+    // Map by metric NAME so a fallback set can never shift the columns out of alignment.
+    // Column 0 is the video id (the dimension), so metric i sits at index i+1.
+    const M = c.metrics || [];
+    const at = (row, name) => { const i = M.indexOf(name); return i < 0 ? null : row[i + 1]; };
+    for (const r of c.rows || []) rollupMap[r[0]] = {
+      avgPct: at(r, 'averageViewPercentage'), subs: at(r, 'subscribersGained'), shares: at(r, 'shares'),
+      likes28: at(r, 'likes'), dislikes: at(r, 'dislikes'), saves: at(r, 'videosAddedToPlaylists')
+    };
+    dislikesOk = M.includes('dislikes');
+    savesOk = M.includes('videosAddedToPlaylists');
     const d = (c.fetchedAt || '').slice(0, 10);
     let note = '† = YouTube’s official stats, last 28 days' + (d ? ' (fetched ' + d + ')' : '') + ' — they lag 24–48h and won’t match the live columns.';
     if (c.rows && c.rows.length && !dislikesOk) note += ' Dislikes: YouTube didn’t return this metric, so that column is blank — it retries automatically.';
@@ -764,6 +783,7 @@
     comments: r => r.comments || 0,
     // official-stats columns: missing values sort last in either direction
     dislikes: r => (r.ru.dislikes != null ? r.ru.dislikes : null),
+    saves: r => (r.ru.saves != null ? r.ru.saves : null),
     avgPct: r => (r.ru.avgPct != null ? r.ru.avgPct : null),
     subs: r => (r.ru.subs != null ? r.ru.subs : null),
     shares: r => (r.ru.shares != null ? r.ru.shares : null)
@@ -809,6 +829,7 @@
         '<td data-label="+session">' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td data-label="Likes">' + fmt.format(r.likes) + '</td>' +
         '<td data-label="Dislikes">' + (r.ru.dislikes != null ? (r.ru.dislikes > 0 ? fmt.format(r.ru.dislikes) : '0') : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="Saves">' + (r.ru.saves != null ? fmt.format(r.ru.saves) : '<span class="zero">·</span>') + '</td>' +
         '<td data-label="Comments">' + fmt.format(r.comments) + '</td>' +
         '<td data-label="Avg % watched">' + (r.ru.avgPct != null ? Math.round(r.ru.avgPct) + '%' : '<span class="zero">·</span>') + '</td>' +
         '<td data-label="Subs gained">' + (r.ru.subs != null && r.ru.subs > 0 ? '<span class="tickup">+' + fmt.format(r.ru.subs) + '</span>' : r.ru.subs != null ? '0' : '<span class="zero">·</span>') + '</td>' +
@@ -1517,12 +1538,61 @@
       (rc.tips.length ? '<ul class="tips">' + rc.tips.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul>' : '') + '</div>';
   }
   const noteSection = (title, body) => '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + body + '</p></div>';
+
+  // The next round number worth celebrating above `cur` (100 → 250 → 500 → 1k → 2.5k → …)
+  function nextMilestone(cur) {
+    const mags = [1, 2.5, 5, 7.5];
+    let p = Math.max(2, Math.floor(Math.log10(Math.max(10, cur))));
+    for (let e = p - 1; e <= p + 2; e++) for (const m of mags) {
+      const v = m * Math.pow(10, e);
+      if (v > cur) return Math.round(v);
+    }
+    return Math.round(cur * 2);
+  }
+  // Fit a rate from the recorded series and project when the next milestone lands.
+  // series: [[timestampMs, value], …] — returns null when growth is flat or falling.
+  function projectMilestone(series, label) {
+    if (!series || series.length < 4) return null;
+    const now = Date.now(), last = series[series.length - 1];
+    const cur = last[1];
+    // prefer the last 14 days, but fall back to whatever history exists
+    let win = series.filter(s => s[0] >= now - 14 * 864e5);
+    if (win.length < 4) win = series;
+    const first = win[0], days = (last[0] - first[0]) / 864e5;
+    if (days < 0.5) return null;
+    const perDay = (cur - first[1]) / days;
+    const target = nextMilestone(cur);
+    const need = target - cur;
+    if (perDay <= 0) {
+      return { cur, target, perDay, label, text: 'Growth is flat or slipping over the last ' +
+        (days < 2 ? Math.round(days * 24) + ' hours' : Math.round(days) + ' days') + ', so there’s no date to project yet.' };
+    }
+    const eta = new Date(now + (need / perDay) * 864e5);
+    const daysOut = need / perDay;
+    const when = daysOut < 1 ? 'today' : daysOut < 2 ? 'tomorrow' :
+      eta.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', ...(eta.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+    return { cur, target, perDay, daysOut, label,
+      text: 'At <b>+' + (perDay >= 10 ? fmt.format(Math.round(perDay)) : perDay.toFixed(1)) + ' ' + label + '/day</b> you should reach <b>' +
+        fmt.format(target) + '</b> around <b>' + when + '</b>' + (daysOut > 1.5 ? ' (' + Math.round(daysOut) + ' days)' : '') + '.' };
+  }
+  function milestoneHtml(p) {
+    if (!p) return '';
+    const pct = Math.max(2, Math.min(100, Math.round(p.cur / p.target * 100)));
+    return '<div class="dsection"><h4>Next milestone</h4>' +
+      '<p class="explain">' + p.text + ' Projected from your recorded history — it moves as your pace changes.</p>' +
+      '<div class="gbar" style="font-size:12px"><span class="gl">' + fmt.format(p.cur) + '</span>' +
+      '<span class="gt"><span class="gf" style="width:' + pct + '%;background:var(--up)"></span></span>' +
+      '<span class="gv">' + fmt.format(p.target) + '</span></div></div>';
+  }
   function renderCoaching() {
     const el = $('coachContent');
     if (!el) return;
     const rows = catalogueMetrics();
     if (rows.length < 4) { el.innerHTML = '<p class="dnote">Once a few videos are tracked, personalised coaching appears here.</p>'; return; }
     let html = '';
+    // subscriber milestone projection, from the robot's recorded subscriber history
+    const chSeries = hist && hist.channels && hist.channels[chanId];
+    if (chSeries && chSeries.length > 3) html += milestoneHtml(projectMilestone(chSeries.map(s => [s[0], s[1]]), 'subs'));
     const dowRows = Object.entries(avgVpdBy(rows, r => r.dow)).map(([d, v]) => ({ label: DAYFULL[+d], val: Math.round(v) })).sort((a, b) => b.val - a.val);
     if (dowRows.length >= 2) html += section('Best day to post', 'Average views/day of the uploads you’ve posted on each weekday — your strongest is <b>' + esc(dowRows[0].label) + '</b>.', hbarList(dowRows, { color: 'var(--up)' }));
     const bandRows = [];
@@ -1580,7 +1650,7 @@
     let tv = 0, tl = 0, tc = 0;
     for (const id of videoIds) { const p = perVideo[id]; if (p) { tv += p.views; tl += p.likes; tc += p.comments; } }
     // 28-day official rollup aggregates
-    let dis = 0, sh = 0, subs = 0, pctSum = 0, pctN = 0, hasRu = false;
+    let dis = 0, sh = 0, subs = 0, pctSum = 0, pctN = 0, hasRu = false, sav = 0, savN = 0;
     for (const id of videoIds) {
       const ru = rollupMap[id]; if (!ru) continue;
       hasRu = true;
@@ -1588,6 +1658,7 @@
       if (ru.shares != null) sh += ru.shares;
       if (ru.subs != null) subs += ru.subs;
       if (ru.avgPct != null) { pctSum += ru.avgPct; pctN++; }
+      if (ru.saves != null) { sav += ru.saves; savN++; }
     }
     const lt = chanLifetime;
     const avgRet = lt ? lt[3] : (pctN ? pctSum / pctN : null);
@@ -1619,6 +1690,7 @@
       mcell('Avg comments', fmt.format(Math.round(tc / n)), 'per video') +
       mcell('Like rate', engPct.toFixed(1) + '%', 'likes per view') +
       mcell('Comments /1k', cpk.toFixed(1), 'per 1,000 views') +
+      (savN ? mcell('Saves†', fmt.format(sav), 'last 28 days, all posts') : '') +
       (avgRet != null ? mcell('Avg % watched', Math.round(avgRet) + '%') : '') +
       (hasRu && pctN ? mcell('Best retention', Math.round(Math.max(...videoIds.map(id => (rollupMap[id] || {}).avgPct).filter(x => x != null))) + '%', 'your strongest hold') : '') +
       '</div></div>';
@@ -2200,7 +2272,11 @@
         summaryApi(base),
         tryApi({ ...base, metrics: 'views', dimensions: 'day', sort: 'day' }),
         tryApi({ ...base, metrics: 'views', dimensions: 'insightTrafficSourceType', sort: '-views' }),
-        tryApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' }),
+        // relativeRetentionPerformance compares this video against other YouTube videos of a
+        // similar length — the one genuinely external benchmark available. Requested alongside
+        // the retention curve (same report, no extra quota); falls back if it's ever refused.
+        tryApi({ ...base, metrics: 'audienceWatchRatio,relativeRetentionPerformance', dimensions: 'elapsedVideoTimeRatio' })
+          .then(x => (x && x.rows && x.rows.length) ? x : tryApi({ ...base, metrics: 'audienceWatchRatio', dimensions: 'elapsedVideoTimeRatio' })),
         tryApi({ ...base, metrics: 'viewerPercentage', dimensions: 'ageGroup,gender', sort: 'gender,ageGroup' }),
         tryApi({ ...base, metrics: 'views,estimatedMinutesWatched', dimensions: 'country', sort: '-views', maxResults: '12' }),
         tryApi(detail('YT_SEARCH')),
@@ -2261,6 +2337,7 @@
       mcell('Engagement', pv.views ? (pv.likes / pv.views * 100).toFixed(1) + '%' : '–', 'likes per view') +
       mcell('Comments /1k views', pv.views ? (pv.comments / pv.views * 1000).toFixed(1) : '–') +
       mcell('Views per day', fmt.format(Math.round(vpd)), 'since upload') +
+      ((rollupMap[svid] || {}).saves != null ? mcell('Saves†', fmt.format(rollupMap[svid].saves), 'added to a playlist') : '') +
       (medRate ? mcell('Performance index', Math.round(vpd / medRate * 100) + '%', '100% = your typical video') : '') +
       (ctrMap[svid] ? mcell('Impressions', fmt.format(ctrMap[svid].imp), 'from Studio CSV') + mcell('CTR', ctrMap[svid].ctr.toFixed(1) + '%', 'from Studio CSV') : '') +
       '</div></div>';
@@ -2296,6 +2373,21 @@
       html += '<div class="dsection"><h4>How long people keep watching</h4>' +
         '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point' + (dropSize >= 1 ? ', and the biggest drop-off is around ' + dropPos + '% of the way through' : '') + '.</p>' +
         lineChartHtml(pts, pts.map((p, i) => Math.round(p) + '% still watching — ' + Math.round(i / (pts.length - 1) * 100) + '% through the video'), 'var(--accent)', { label: 'Retention curve', yMaxLabel: Math.round(Math.max(...pts)) + '%', x0: 'start', x1: 'end' }) + '</div>';
+
+      // vs the rest of YouTube: 0.5 is typical for a video of this length, 1 is the best
+      const rel = r.retention.rows.map(x => x[2]).filter(v => typeof v === 'number');
+      if (rel.length) {
+        const avgRel = rel.reduce((a, b) => a + b, 0) / rel.length;
+        const pctile = Math.round(avgRel * 100);
+        const verdict = avgRel >= 0.75 ? 'far better than' : avgRel >= 0.55 ? 'better than' : avgRel >= 0.45 ? 'about the same as' : avgRel >= 0.25 ? 'worse than' : 'far worse than';
+        const col = avgRel >= 0.55 ? 'var(--up)' : avgRel >= 0.45 ? 'var(--gold)' : 'var(--down)';
+        html += '<div class="dsection"><h4>Retention vs the rest of YouTube</h4>' +
+          '<p class="explain">The only outside benchmark YouTube gives you: how well this video holds viewers compared with <b>other YouTube videos of a similar length</b>. Everything else on this page compares you against yourself.</p>' +
+          '<div class="reportcard"><div class="grade-badge" style="background:' + col + ';font-size:19px">' + pctile + '%</div>' +
+          '<div class="grade-meta"><div class="big">Holds attention ' + verdict + ' similar-length videos</div>' +
+          '<div class="grade-bars"><div class="gbar"><span class="gl">Relative</span><span class="gt"><span class="gf" style="width:' + Math.max(3, pctile) + '%;background:' + col + '"></span></span><span class="gv">50% = typical</span></div></div>' +
+          '</div></div></div>';
+      }
     }
 
     if (r.traffic && r.traffic.rows && r.traffic.rows.length) {

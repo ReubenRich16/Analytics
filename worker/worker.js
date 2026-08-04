@@ -442,9 +442,10 @@ async function ttHandler(request, env, url) {
     catch (e) { return json({ error: String(e.message || e) }, 502); }
   }
   if (p === '/tiktok/history') {
-    let snap = '{}';
-    try { snap = (await env.MINUTE.get('tt:snap:' + openId)) || '{}'; } catch (e) {}
-    return new Response(snap, { headers: { 'Content-Type': 'application/json', ...CORS } });
+    let snap = {}, followers = [];
+    try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || '{}'); } catch (e) {}
+    try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+    return json({ ...snap, followers });
   }
   if (p === '/tiktok/sync') {
     const key = 'tt:sync:' + openId;
@@ -494,6 +495,23 @@ async function ttTick(env) {
     // sample every minute while a post is hot; otherwise only look for new posts on the
     // 5-minute boundary (clock-derived, so quiet minutes need no KV write)
     if (!hot.length && new Date(now).getUTCMinutes() % SCAN_MIN !== 0) continue;
+    // Follower history, for the milestone projection. TikTok exposes no history of its own,
+    // so we sample every ~3h — 8 writes a day per account, negligible against the KV budget.
+    try {
+      let fh = [];
+      try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+      const lastAt = fh.length ? fh[fh.length - 1][0] : 0;
+      if (now - lastAt > 3 * 3600e3) {
+        const { ok, body } = await ttGet('user/info/?fields=follower_count,likes_count,video_count', token);
+        const u = ok && body && body.data && body.data.user;
+        if (u) {
+          fh.push([now, u.follower_count || 0, u.likes_count || 0, u.video_count || 0]);
+          fh = fh.filter(x => now - x[0] < 400 * 864e5);        // keep ~13 months
+          await env.MINUTE.put('tt:followers:' + openId, JSON.stringify(fh));
+        }
+      }
+    } catch (e) { /* never let the follower sample break the video sampling */ }
+
     let vids = [];
     try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
     for (const v of vids) {

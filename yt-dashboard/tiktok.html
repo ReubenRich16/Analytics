@@ -501,6 +501,42 @@
     el.innerHTML = html;
   }
 
+  // ---- milestone projection (same maths as the YouTube dashboard) ----
+  function nextMilestone(cur) {
+    const mags = [1, 2.5, 5, 7.5];
+    const p = Math.max(2, Math.floor(Math.log10(Math.max(10, cur))));
+    for (let e = p - 1; e <= p + 2; e++) for (const m of mags) {
+      const v = m * Math.pow(10, e);
+      if (v > cur) return Math.round(v);
+    }
+    return Math.round(cur * 2);
+  }
+  function projectMilestone(series, label) {
+    if (!series || series.length < 4) return null;
+    const now = Date.now(), last = series[series.length - 1], cur = last[1];
+    let win = series.filter(s => s[0] >= now - 14 * 864e5);
+    if (win.length < 4) win = series;
+    const first = win[0], days = (last[0] - first[0]) / 864e5;
+    if (days < 0.5) return null;
+    const perDay = (cur - first[1]) / days;
+    const target = nextMilestone(cur), need = target - cur;
+    if (perDay <= 0) return { cur, target, text: 'Growth is flat or slipping right now, so there’s no date to project yet.' };
+    const daysOut = need / perDay, eta = new Date(now + daysOut * 864e5);
+    const when = daysOut < 1 ? 'today' : daysOut < 2 ? 'tomorrow' :
+      eta.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', ...(eta.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+    return { cur, target, text: 'At <b>+' + (perDay >= 10 ? fmt.format(Math.round(perDay)) : perDay.toFixed(1)) + ' ' + label +
+      '/day</b> you should reach <b>' + fmt.format(target) + '</b> around <b>' + when + '</b>' + (daysOut > 1.5 ? ' (' + Math.round(daysOut) + ' days)' : '') + '.' };
+  }
+  function milestoneHtml(p) {
+    if (!p) return '';
+    const pct = Math.max(2, Math.min(100, Math.round(p.cur / p.target * 100)));
+    return '<div class="dsection"><h4>Next milestone</h4><p class="explain">' + p.text +
+      ' Projected from the follower history your Worker records — TikTok provides none of its own.</p>' +
+      '<div class="gbar" style="font-size:12px"><span class="gl">' + fmt.format(p.cur) + '</span>' +
+      '<span class="gt"><span class="gf" style="width:' + pct + '%;background:var(--up)"></span></span>' +
+      '<span class="gv">' + fmt.format(p.target) + '</span></div></div>';
+  }
+
   const DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const BANDS = [
     { label: 'Morning (5am–11am)', t: h => h >= 5 && h < 11 },
@@ -520,6 +556,8 @@
         .map(([k, a]) => ({ k, avg: a.reduce((x, y) => x + y, 0) / a.length }));
     };
     let html = '';
+    const fh = hist && Array.isArray(hist.followers) ? hist.followers : [];
+    if (fh.length > 3) html += milestoneHtml(projectMilestone(fh.map(x => [x[0], x[1]]), 'followers'));
     const byDay = avgBy(r => r.d.getDay()).sort((a, b) => b.avg - a.avg);
     if (byDay.length >= 2) html += section('Best day to post', 'Average views/day of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
       hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg) })), { color: 'var(--up)' }));

@@ -50,18 +50,21 @@ data/             recorded history, committed by the robots
 - **Report Card** — an age-adjusted A+…F grade versus your own back catalogue,
   with "beats X% of your uploads" and tailored tips
 - **Account breakdown** — lifetime totals and per-post averages
-- **Coaching** — best day and time to post, posting rhythm, strongest tags
+- **Coaching** — best day and time to post, posting rhythm, strongest tags, and a
+  **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
 - 14 themes, sound on new likes/subscribers, and a phone-friendly layout
 
 **YouTube only** (TikTok's API simply doesn't expose these)
 
-Watch time, retention curves, **dislikes** (owner-only via the Analytics API),
-traffic sources, YouTube search terms, suggested-by videos, countries, devices,
-subscribers vs new audience, playback locations, shares by app, info-card
-clicks, age & gender, Shorts vs long-form, playlists, benchmark channels,
-search-rank tracking and Studio CSV import for impressions/CTR.
+Watch time, retention curves, **retention vs other YouTube videos of similar
+length** (the one external benchmark the API offers), **saves** to playlists,
+**dislikes** (owner-only via the Analytics API), traffic sources, YouTube search
+terms, suggested-by videos, countries, devices, subscribers vs new audience,
+playback locations, shares by app, info-card clicks, age & gender, Shorts vs
+long-form, playlists, benchmark channels, search-rank tracking and Studio CSV
+import for impressions/CTR.
 
 > **Why TikTok shows less:** its free Display API returns views, likes, comments
 > and shares only. Retention, traffic sources and demographics exist solely in

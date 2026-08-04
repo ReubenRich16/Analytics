@@ -11,6 +11,12 @@ Current metrics in use: `views`, `estimatedMinutesWatched`, `averageViewDuration
 
 ---
 
+## ✅ Built
+
+- **A1 relativeRetentionPerformance** — shipped, in each video's deep-dive.
+- **A2 saves (videosAddedToPlaylists)** — shipped: table column, drawer tile, account total.
+- **B2 milestone projections** — shipped on both dashboards (subscribers / followers).
+
 ## A. New data we're not pulling yet
 
 ### A1. `relativeRetentionPerformance` — the standout ⭐
