@@ -42,17 +42,15 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
-          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
         run: |
           printf '%s' "$YT_API_KEY" | npx wrangler@latest secret put YT_API_KEY
           printf '%s' "$CHANNEL_ID" | npx wrangler@latest secret put CHANNEL_ID
           printf '%s' "$GEMINI_KEY" | npx wrangler@latest secret put GEMINI_KEY
-          # The TikTok client key lives in wrangler.toml [vars] (it isn't sensitive), so only
-          # the secret needs pushing here. Setting the repo secret still overrides it if present.
-          if [ -n "$TIKTOK_CLIENT_KEY" ]; then
-            printf '%s' "$TIKTOK_CLIENT_KEY" | npx wrangler@latest secret put TIKTOK_CLIENT_KEY
-          else echo "TIKTOK_CLIENT_KEY not set as a repo secret — using the value in wrangler.toml"; fi
+          # NOTE: TIKTOK_CLIENT_KEY is deliberately NOT pushed as a secret. It lives in
+          # wrangler.toml [vars] because it isn't sensitive, and Cloudflare rejects the same
+          # binding name existing as both a var and a secret ("already in use", code 10053).
+          echo "TIKTOK_CLIENT_KEY comes from wrangler.toml [vars] — not pushed as a secret"
           if [ -n "$TIKTOK_CLIENT_SECRET" ]; then
             printf '%s' "$TIKTOK_CLIENT_SECRET" | npx wrangler@latest secret put TIKTOK_CLIENT_SECRET
           else echo "TIKTOK_CLIENT_SECRET not set — skipping"; fi
