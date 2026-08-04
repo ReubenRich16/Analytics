@@ -284,11 +284,35 @@ const TT_USER_FIELDS = 'open_id,avatar_url,display_name,username,profile_deep_li
 const rand = n => { const a = new Uint8Array(n || 24); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, '0')).join(''); };
 const ttRedirect = url => new URL(url).origin + '/tiktok/callback';
 
+// A readable page instead of a bare Cloudflare error, with the usual culprit spelled out.
+const ttErrorPage = (msg, redirect) => new Response(
+  '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<title>TikTok sign-in failed</title>' +
+  '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#141019;color:#f0e8f4;margin:0;padding:40px 22px;line-height:1.6}' +
+  'main{max-width:640px;margin:0 auto}h1{font-size:20px;margin:0 0 14px}code{background:#241d2e;padding:2px 6px;border-radius:5px;font-size:13px;word-break:break-all}' +
+  '.box{background:#1d1724;border:1px solid #362c40;border-radius:10px;padding:14px 16px;margin:16px 0}a{color:#e77aa6}</style>' +
+  '<main><h1>TikTok sign-in didn\'t complete</h1>' +
+  '<div class="box"><b>What TikTok said:</b><br>' + escHtml(msg) + '</div>' +
+  '<p><b>Most likely fix:</b> in the TikTok developer portal, the <b>Login Kit → Redirect URI (Web)</b> must be exactly:</p>' +
+  '<p><code>' + escHtml(redirect) + '</code></p>' +
+  '<p>It must be in the Login Kit box — not the Webhooks “Callback URL” field — with no trailing slash and no query parameters. ' +
+  'Also confirm the signing-in account is listed under <b>Sandbox → Target users</b>.</p>' +
+  '<p><a href="https://reubenrich16.github.io/Analytics/tiktok.html">← Back to the dashboard</a></p></main>',
+  { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS } });
+const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 async function ttTokenCall(env, params) {
   const body = new URLSearchParams({ client_key: env.TIKTOK_CLIENT_KEY || '', client_secret: env.TIKTOK_CLIENT_SECRET || '', ...params });
   const r = await fetch(TT_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.error) throw new Error('TikTok token: ' + (j.error_description || j.error || ('HTTP ' + r.status)));
+  const raw = await r.text();
+  let j = {}; try { j = JSON.parse(raw); } catch (e) {}
+  // TikTok can answer 200 with an error payload, and uses empty strings for "no error"
+  const errCode = j.error && String(j.error).trim();
+  if (!r.ok || errCode) throw new Error('TikTok rejected the sign-in: ' + (j.error_description || errCode || ('HTTP ' + r.status)));
+  // Missing fields would otherwise blow up further down with an unhelpful 1101
+  if (!j.access_token || !j.open_id) {
+    throw new Error('TikTok returned an unexpected token response (no ' + (!j.access_token ? 'access_token' : 'open_id') + '). ' + raw.slice(0, 200));
+  }
   return j;
 }
 
@@ -384,7 +408,7 @@ async function ttHandler(request, env, url) {
     if (err || !code) return new Response('TikTok sign-in was cancelled or failed: ' + (url.searchParams.get('error_description') || err || 'no code'), { status: 400, headers: CORS });
     let t;
     try { t = await ttTokenCall(env, { grant_type: 'authorization_code', code, redirect_uri: ttRedirect(url) }); }
-    catch (e) { return new Response('Could not complete TikTok sign-in: ' + e.message, { status: 502, headers: CORS }); }
+    catch (e) { return ttErrorPage(e.message, ttRedirect(url)); }
     await ttSaveTokens(env, t);
     const sid = rand(24);
     await env.MINUTE.put('tt:sess:' + sid, t.open_id, { expirationTtl: 60 * 60 * 24 * 300 });
@@ -488,7 +512,20 @@ export default {
     // both trackers share the one-minute cron; each gates its own sampling
     ctx.waitUntil(Promise.allSettled([tick(env), ttTick(env)]));
   },
+  // Any unexpected throw would otherwise surface as Cloudflare's opaque "Error 1101".
+  // Wrapping the router means the caller always gets something they can act on.
   async fetch(request, env) {
+    try { return await route(request, env); }
+    catch (e) {
+      const msg = 'Worker error: ' + (e && e.message ? e.message : String(e));
+      if (new URL(request.url).pathname === '/tiktok/callback') return ttErrorPage(msg, ttRedirect(request.url));
+      return json({ error: msg }, 500);
+    }
+  }
+};
+
+async function route(request, env) {
+  {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
     // TikTok: OAuth + Display API (secret stays server-side)
@@ -518,5 +555,5 @@ export default {
     let body = '{}';
     try { body = (await env.MINUTE.get(KV_KEY)) || '{}'; } catch (e) {}
     return new Response(body, { headers: { 'Content-Type': 'application/json', ...CORS } });
-  },
-};
+  }
+}
