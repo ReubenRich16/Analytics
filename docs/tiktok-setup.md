@@ -45,42 +45,58 @@ grading and coaching, but will have no retention/audience/traffic sections.
 3. Choose the **Web** platform.
 4. Save. You'll land on the app's configuration page.
 
-## Step 3 — Add the products (permissions)
+## Step 3 — Fill in the app details
 
-On the app page, add these products:
+The form requires a Terms of Service URL and a Privacy Policy URL. Both are
+published from this repo, so paste these:
 
-- **Login Kit** — required, this is the sign-in.
-- **Display API** — this is what returns the video list and stats.
+| Field | Value |
+|---|---|
+| App name | `AnalyticsTikTok` (anything) |
+| Category | Anything sensible, e.g. *Productivity* / *Tools* |
+| Description | `A private dashboard showing my own TikTok video stats (views, likes, comments) to help me improve my content.` |
+| Terms of Service URL | `https://reubenrich16.github.io/Analytics/terms.html` |
+| Privacy Policy URL | `https://reubenrich16.github.io/Analytics/privacy.html` |
+| Platforms | **Web** only |
+| Web/Desktop URL | `https://reubenrich16.github.io/Analytics/` |
 
-Then under scopes, request:
+## Step 4 — Products and scopes
+
+> **There is no separate "Display API" product.** The Display API is reached purely
+> through scopes. The only product you need is **Login Kit**. (Share Kit, Content
+> Posting API, Webhooks, Data Portability and Local Service API are all irrelevant
+> here — don't add them, and remove Webhooks if it got added.)
+
+Under **Scopes**, add these (`user.info.basic` comes with Login Kit automatically):
 
 | Scope | What it gives us |
 |---|---|
-| `user.info.basic` | display name + avatar (baseline, always available) |
+| `user.info.basic` | display name + avatar + open id |
 | `user.info.profile` | username, bio, profile link |
 | `user.info.stats` | **followers, following, total likes, video count** |
 | `video.list` | **the videos + views / likes / comments / shares** |
 
-`user.info.basic` is granted automatically; the other three must be ticked in the
-app config. In Sandbox mode they're available without a review.
+In Sandbox mode these are available without a review.
 
-## Step 4 — Set the redirect URI ⚠️ important
+## Step 5 — Set the redirect URI ⚠️ the easiest thing to get wrong
+
+This goes in **Login Kit → Redirect URI → Web tab** — *not* in the Webhooks
+"Callback URL" box, which is a completely different feature.
 
 TikTok requires the redirect URI to be **HTTPS, absolute, and completely static —
-query parameters are rejected**. That means we *cannot* use the dashboard link
-(it carries `?worker=…`). Instead we point TikTok at the Worker, which then hands
-you back to the dashboard.
+query parameters are rejected**. That means it *cannot* be the dashboard link
+(which carries `?worker=…`). Instead we point TikTok at the Worker, which then
+hands you back to the dashboard.
 
-Under **Login Kit → Redirect URI**, add exactly:
+Click **+ Add a URI** under the **Web** tab and enter exactly:
 
 ```
 https://yt.reubenrichardson37.workers.dev/tiktok/callback
 ```
 
-(No trailing slash, no parameters. If the Worker is ever renamed, this must be
-updated to match.)
+(No trailing slash, no parameters. If the Worker is ever renamed, update this.)
 
-## Step 5 — Create a Sandbox and add both accounts
+## Step 6 — Create a Sandbox and add both accounts
 
 Sandbox mode lets the app work for specific accounts **without submitting it for
 review**. Up to 10 accounts.
@@ -98,7 +114,7 @@ review**. Up to 10 accounts.
 > Only accounts listed here can use the app while it's in Sandbox mode. That's
 > exactly what we want — it stays private to the two of you.
 
-## Step 6 — Copy the credentials
+## Step 7 — Copy the credentials
 
 On the app page, find:
 
@@ -106,7 +122,7 @@ On the app page, find:
 - **Client secret** — **must stay private.** Never paste it into chat, the repo,
   or the dashboard.
 
-## Step 7 — Store the secret (same pattern as the Gemini key)
+## Step 8 — Store the secret (same pattern as the Gemini key)
 
 Add both as **GitHub repository secrets** (Settings → Secrets and variables →
 Actions → New repository secret), and the deploy workflow will push them into the
@@ -118,7 +134,7 @@ Worker automatically:
 The Worker performs the OAuth code exchange server-side, so the secret is never
 exposed in the public page — the same approach used for the Gemini key.
 
-## Step 8 — Tell me it's done
+## Step 9 — Tell me it's done
 
 Send me:
 - the **client key** (safe to share), and
