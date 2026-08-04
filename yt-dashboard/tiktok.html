@@ -191,12 +191,8 @@
     <div id="ideaOut" style="margin-top:12px"></div>
   </div>
 
-  <div class="footer-tools">
-    <span id="syncStatus" title="Cross-device sync via your private Worker storage"></span>
-  </div>
 </div>
 
-<div id="chartTip"></div>
 
 <script>
 (function () {
@@ -207,7 +203,7 @@
   const DEFAULT_WORKER = 'https://yt.reubenrichardson37.workers.dev';
 
   let workerUrl = '', session = '', me = null, videos = [], prevTotals = null, timer = null,
-      paused = false, hiddenPaused = false, intervalMs = 60000, hist = null, polling = false;
+      paused = false, hiddenPaused = false, intervalMs = 60000, hist = null, polling = false, pollCount = 0;
 
   const setStatus = t => { $('statusText').textContent = t; };
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
@@ -346,6 +342,10 @@
       $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
         fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
       prevTotals = totals;
+      // re-pull the Worker's recordings periodically so the minute chart keeps growing
+      // while a launch is live, not only when Refresh is pressed
+      pollCount++;
+      if (pollCount % 3 === 0) { try { hist = await api('/tiktok/history'); } catch (e) {} }
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
       clearError();
       $('liveDot').classList.add('on');
