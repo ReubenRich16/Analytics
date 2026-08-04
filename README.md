@@ -1,218 +1,207 @@
-# Analytics
+# Channel Command
 
-Live YouTube channel dashboard ("Channel Command") hosted on GitHub Pages.
+A private analytics dashboard for **YouTube** and **TikTok**, hosted free on
+GitHub Pages. Live counters, per-video deep-dives, minute-by-minute launch
+tracking, letter-grade report cards, coaching and an AI idea studio.
 
-## Dashboard
+| | |
+|---|---|
+| **YouTube dashboard** | <https://reubenrich16.github.io/Analytics/> |
+| **TikTok dashboard** | <https://reubenrich16.github.io/Analytics/tiktok.html> |
+| **Bookmark this** (enables the Worker features) | `…/Analytics/?worker=https://yt.reubenrichardson37.workers.dev` |
 
-- **Dashboard URL:** https://reubenrich16.github.io/Analytics/
-- **OAuth origin (for Google Cloud Console):** `https://reubenrich16.github.io`
+**Cost: $0.** GitHub Pages, GitHub Actions, the YouTube APIs, Cloudflare Workers
+and the Gemini API all run on free tiers, and no billing account is attached
+anywhere. Worst case something pauses until a quota resets.
 
-The page in [`yt-dashboard/index.html`](yt-dashboard/index.html) is deployed
-automatically by the [`deploy-dashboard.yml`](.github/workflows/deploy-dashboard.yml)
-workflow whenever it changes. No build step — it's a single static HTML file
-that talks directly to the YouTube Data + Analytics APIs from your browser.
+---
 
-**What it shows:** live view/like/comment counters and per-video movement;
-channel trends (daily subscriber gains/losses, channel views & watch time,
-top videos by watch time, Shorts vs regular split, playlist performance);
-and a per-video deep-dive (daily views, retention curve, traffic sources,
-YouTube search terms, suggested-by videos, external websites, countries,
-devices & systems, subscribers vs new audience, playback locations, shares
-by app, info-card clicks, age & gender). Everything is labelled in plain
-language.
-
-**Cost: $0.** GitHub Pages is free, the YouTube Analytics API is free, and
-the YouTube Data API has a free 10,000-unit daily quota. At the default 60s
-refresh the live counters use well under that even if left open all day,
-and polling pauses automatically when the tab is hidden. There is no
-billing account attached anywhere, so nothing can ever be charged — worst
-case the counters pause until the quota resets at midnight Pacific.
-
-## One-time Google Cloud Console setup (~3 minutes)
-
-Done in the same Google Cloud project you already use (e.g. "Shinny YT"):
-
-1. **Enable APIs** — API Library → enable **YouTube Analytics API** and
-   **YouTube Data API v3**.
-2. **OAuth consent screen** — External → app name `yt-dashboard`, your email
-   in both email fields → Save through the screens → under **Test users**,
-   add your own Gmail.
-3. **Credentials** → + Create Credentials → **OAuth client ID** → type
-   **Web application** → under **Authorized JavaScript origins** add:
-   `https://reubenrich16.github.io` → Create → copy the **Client ID**.
-
-## Daily use
-
-Open (and bookmark on every device):
+## The four moving parts
 
 ```
-https://reubenrich16.github.io/Analytics/?client_id=YOUR_CLIENT_ID_HERE
+yt-dashboard/     the websites  → deployed to GitHub Pages (gh-pages branch)
+worker/           Cloudflare Worker → TikTok OAuth, AI proxy, sync, minute tracking
+scripts/          GitHub Actions robots → record public stats into data/
+data/             recorded history, committed by the robots
 ```
 
-The `?client_id=` parameter prefills the Client ID forever — just tap
-**Sign in with Google**.
+1. **The dashboards** (`yt-dashboard/`) are static HTML that talk to the APIs
+   straight from your browser. `index.html` (YouTube) and `tiktok.html` share
+   `style.css`, so themes only need building once. Deployed automatically by
+   [`deploy-dashboard.yml`](.github/workflows/deploy-dashboard.yml).
+2. **The Worker** (`worker/`) holds every secret that must not live in a public
+   page, and runs a **one-minute cron**. Deployed by
+   [`deploy-worker.yml`](.github/workflows/deploy-worker.yml).
+3. **The robots** (`scripts/`) run on GitHub Actions and record public YouTube
+   stats into `data/history.json` — the history YouTube itself never gives you.
+4. **`data/`** is the recorded history, read by the dashboard at load.
 
-## Phase 2 — the history robot (one-time setup, ~3 minutes)
+---
 
-Two GitHub Actions live in this repo: an **hourly snapshot** of public stats
-(`snapshot.yml` → `data/history.json`, plus milestone alerts as GitHub
-issues) and a **weekly search-rank check** (`rank.yml` → `data/ranks.json`).
-They can't use your dashboard sign-in (that's interactive-only), so they run
-on a plain **API key** — public data only. To switch them on:
+## What the dashboards show
 
-1. **Create an API key**: Google Cloud Console → same project → APIs &
-   Services → Credentials → **+ Create Credentials → API key**. (Optional
-   hardening: restrict it to the YouTube Data API v3.)
-2. **Find your channel ID**: hover your channel name in the dashboard after
-   signing in (it's in the tooltip), or youtube.com/account_advanced.
-3. **Add repo secrets**: GitHub → this repo → Settings → Secrets and
-   variables → Actions → New repository secret:
-   - `YT_API_KEY` — the API key
-   - `CHANNEL_ID` — your channel ID (starts with `UC`). To fully track more
-     than one channel (e.g. yours and a partner's), list them
-     comma-separated: `UCyours,UCpartners`. Each gets its own subscriber
-     history, per-video hourly stats, milestones and acceleration; the
-     dashboard shows whichever one is signed in.
-   - `BENCH_CHANNELS` *(optional)* — comma-separated channel IDs of 2–3
-     similar channels to benchmark against (growth comparison only, not full
-     per-video history)
-4. **Pick search keywords** *(optional)*: edit `data/keywords.json` and list
-   up to 10 search phrases to track weekly (each costs 100 units/week).
-5. Run the "Hourly stats snapshot" workflow once manually from the Actions
-   tab to confirm it goes green.
+**Both platforms**
 
-The dashboard picks the data up automatically: exact subscriber history,
-views-per-hour on every video, ⚡ acceleration badges, benchmark growth
-comparison, milestones, and search ranks all appear once history exists.
+- Live counters with per-refresh movement, and a sortable table of every post
+  (click any column header; it becomes readable cards on a phone)
+- **Latest-upload card** with ◀ ▶ to cycle recent posts
+- **Minute-by-minute launch tracking** — recorded by the Worker even when nobody
+  has the site open, because the platforms don't provide it
+- **Report Card** — an age-adjusted A+…F grade versus your own back catalogue,
+  with "beats X% of your uploads" and tailored tips
+- **Account breakdown** — lifetime totals and per-post averages
+- **Coaching** — best day and time to post, posting rhythm, strongest tags
+- **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
+  grounded in your own naming style (free) plus optional AI variations
+- 14 themes, sound on new likes/subscribers, and a phone-friendly layout
 
-**Studio CSV (CTR & impressions):** no API provides these. In YouTube
-Studio → Analytics → Advanced mode → Export current view → CSV (with
-Content, Impressions and click-through-rate columns), then use **Import
-Studio CSV** at the bottom of the dashboard. Impressions & CTR then show in
-each video's Scorecard.
+**YouTube only** (TikTok's API simply doesn't expose these)
 
-## Idea Studio — title, on-screen text, tag & next-video ideas
+Watch time, retention curves, **dislikes** (owner-only via the Analytics API),
+traffic sources, YouTube search terms, suggested-by videos, countries, devices,
+subscribers vs new audience, playback locations, shares by app, info-card
+clicks, age & gender, Shorts vs long-form, playlists, benchmark channels,
+search-rank tracking and Studio CSV import for impressions/CTR.
 
-The **Idea Studio** card turns a one-line description of a video into ideas that
-match your *own* channel. Two tiers:
+> **Why TikTok shows less:** its free Display API returns views, likes, comments
+> and shares only. Retention, traffic sources and demographics exist solely in
+> TikTok's Research API (academics) or Business API (approval required).
 
-- **Free, no setup:** it reads your titles, tags and view counts and suggests
-  title templates in your naming style, tags your best videos use, on-screen
-  text starters, and next-video ideas from gaps in your best-performing themes.
-- **Optional AI:** creative variations from Google Gemini. Two ways to enable it:
-  - **Provided for you both (recommended):** set a `GEMINI_KEY` secret on the
-    Cloudflare Worker (see below). The key stays server-side and the Worker
-    answers only for a signed-in account listed in `CHANNEL_ID`, so **neither of
-    you pastes anything** and only the two of you can use it.
-  - **Per device:** paste your own free
-    [Gemini API key](https://aistudio.google.com/apikey) under **⚙ AI setup**.
-    It's stored **only on that device** — never synced or exported.
+---
 
-  Either way the request sends only your public video info and your own stats,
-  never anything about your account beyond the channel-ownership check.
+## Setup
 
-## Cross-device sync — same channel, same data everywhere
+Each part is independent — the dashboards work on their own, and every extra
+piece adds capability without breaking what's already there.
 
-The dashboard syncs its device-local data (paid keyword research, the Studio
-CTR import, and the minute-race recordings) through the **Cloudflare Worker's
-private storage**, so every device signed into the same channel shares it
-automatically. The `☁ synced` badge at the bottom shows when it's active.
+### 1. YouTube sign-in (required for the YouTube dashboard)
 
-Setup: none beyond deploying the Worker (below) and opening the dashboard with
-the `?worker=…` link. Sync is locked to the channel owners — the Worker only
-returns a channel's data to someone signed in as an owner of that channel.
+In Google Cloud Console:
 
-> **Why not Google Drive?** An earlier version synced through a hidden Drive
-> folder, which required the `drive.appdata` scope. **Supervised and managed
-> Google accounts are blocked from Drive**, and requesting that scope made
-> Google refuse those accounts' sign-in entirely ("Service unavailable"). The
-> dashboard now requests **YouTube scopes only**, so every account can sign in.
-> Don't re-add a Drive scope — it will lock those users out again.
+1. **Enable APIs** — YouTube **Data API v3** and YouTube **Analytics API**.
+2. **OAuth consent screen** — External, add every user under **Test users**.
+3. **Data access → scopes** — add these three, or non-owner testers are refused:
+   `youtube.readonly`, `yt-analytics.readonly`, `youtube.force-ssl`
+4. **Credentials** → OAuth client ID → **Web application** → Authorized
+   JavaScript origin: `https://reubenrich16.github.io`
+5. Open the dashboard once as
+   `…/Analytics/?client_id=YOUR_CLIENT_ID` — it's remembered after that.
 
-If you don't deploy the Worker, nothing breaks — data just stays per-device and
-the manual **Export / Import** buttons still move it around.
+> ⚠️ **Never add a Google Drive scope.** Supervised and managed Google accounts
+> are blocked from Drive, and requesting it makes Google refuse their sign-in
+> entirely with "Service unavailable". Cross-device sync runs through the Worker
+> instead, precisely so every account can sign in.
 
-## Per-minute offline tracker (optional) — catch a launch minute-by-minute
+### 2. The history robots (optional, ~3 minutes)
 
-The GitHub robot snapshots every 5 minutes, and the dashboard records its own
-minute-by-minute race only while it's open. If you want a **brand-new upload
-tracked every single minute even when nobody has the dashboard open**, deploy
-the tiny Cloudflare Worker in [`worker/`](worker/). It runs on Cloudflare's
-free cron, records the launch, and the dashboard merges those minutes into the
-race the next time it opens.
+They can't use your interactive sign-in, so they run on a plain **API key** and
+read public data only. Add these **repository secrets** (Settings → Secrets and
+variables → Actions):
 
-It's **free and safe**: it uses the *same public API key* as the robot — no
-sign-in, no OAuth, no account access, just public view counts. It only writes
-while a video is inside its first few hours (`HOT_HOURS`, default 6), so it
-stays well inside the free tier.
+| Secret | Purpose |
+|---|---|
+| `YT_API_KEY` | a Google API key, restricted to YouTube Data API v3 |
+| `CHANNEL_ID` | `UCyours,UCpartners` — comma-separated, each fully tracked |
+| `BENCH_CHANNELS` | *optional* — 2–3 similar channels to benchmark against |
 
-One-time setup (~5 minutes, needs [Node.js](https://nodejs.org)):
+[`snapshot.yml`](.github/workflows/snapshot.yml) runs every 5 minutes (recording
+all videos hourly, and fresh uploads in between) and raises a GitHub issue on
+milestones. [`rank.yml`](.github/workflows/rank.yml) checks weekly search ranks
+for the phrases in [`data/keywords.json`](data/keywords.json).
 
-1. **Make a free Cloudflare account** at dash.cloudflare.com (no card needed).
-2. In a terminal, from the `worker/` folder:
-   ```bash
-   cd worker
-   npx wrangler login                       # opens the browser to authorise
-   npx wrangler kv namespace create MINUTE  # prints an id="..."
-   ```
-   Paste the printed `id` into `wrangler.toml` (replace
-   `PUT_YOUR_KV_NAMESPACE_ID_HERE`).
-3. **Set the secrets** (they never touch git):
-   ```bash
-   npx wrangler secret put YT_API_KEY     # paste the same API key as the robot
-   npx wrangler secret put CHANNEL_ID     # UCyours  (or UCyours,UCpartners)
-   npx wrangler secret put GEMINI_KEY     # OPTIONAL — turns on the owner-locked AI ideas
-   ```
-   `GEMINI_KEY` is only needed if you want the Worker to power the Idea Studio AI
-   for both of you. When set, the Worker answers the dashboard's `/ai` request
-   only when it carries a login token for a channel listed in `CHANNEL_ID` — so
-   the key stays secret and only you and your partner can spend the quota.
-4. **Deploy:**
-   ```bash
-   npx wrangler deploy
-   ```
-   Wrangler prints the Worker URL, e.g.
-   `https://yt-minute-tracker.<you>.workers.dev`.
-5. **Point the dashboard at it** — open it once with the URL appended (it's
-   remembered forever on that device, so re-bookmark it):
-   ```
-   https://reubenrich16.github.io/Analytics/?worker=https://yt-minute-tracker.<you>.workers.dev
-   ```
+### 3. The Cloudflare Worker (optional but recommended)
 
-To check it's alive, visit `https://…workers.dev/run` — it does one recording
-pass immediately and shows how many videos it's tracking. If you skip all this,
-nothing breaks; the 5-minute robot still captures every upload.
+Unlocks minute-by-minute offline tracking, cross-device sync, shared AI, and all
+of TikTok. Free, no card.
 
-### Deploy the Worker from GitHub instead (no Cloudflare CLI/dashboard)
+1. Create a free Cloudflare account, then an **API token** using the
+   *Edit Cloudflare Workers* template, and note your **Account ID**.
+2. Add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, plus
+   `GEMINI_KEY` (optional, for AI) and `TIKTOK_CLIENT_SECRET` (optional, for
+   TikTok).
+3. Run **Deploy per-minute Worker to Cloudflare** from the Actions tab. It
+   deploys the code, applies the KV binding and the one-minute cron from
+   [`worker/wrangler.toml`](worker/wrangler.toml), and uploads the secrets.
+4. Open the dashboard once with `?worker=https://…workers.dev` appended.
 
-If you'd rather not run wrangler or click through Cloudflare, the
-[`deploy-worker.yml`](.github/workflows/deploy-worker.yml) workflow deploys the
-Worker for you and pushes the runtime secrets from your GitHub secrets. One-time
-setup:
+> Adding a repo secret does **not** re-run the workflow — trigger it manually,
+> or the Worker won't have the new value.
 
-1. **Cloudflare API token:** Cloudflare dashboard → My Profile → **API Tokens** →
-   **Create Token** → use the **"Edit Cloudflare Workers"** template → Create →
-   copy it.
-2. **Account ID:** Cloudflare → Workers & Pages → copy the **Account ID** shown
-   in the right sidebar.
-3. **Add both as GitHub repo secrets** (Settings → Secrets and variables →
-   Actions): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. (You already
-   have `YT_API_KEY`, `CHANNEL_ID` and — for AI — `GEMINI_KEY` there.)
-4. Run the **"Deploy per-minute Worker to Cloudflare"** workflow from the Actions
-   tab (or just push any change under `worker/`). It deploys the Worker, applies
-   the KV binding + every-minute cron from `wrangler.toml`, and uploads the three
-   secrets. The keys stay only in GitHub and as encrypted Cloudflare secrets —
-   never in the repo.
+**Worker routes**
 
-If you set this up, don't also connect the repo on the Cloudflare side (Workers
-Builds) — pick one so two deploys don't fight.
+| Route | Purpose |
+|---|---|
+| `/` | the recorded YouTube minute bundle |
+| `/run` | run both trackers now (handy for testing) |
+| `/models` | which Gemini models your key can actually call |
+| `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
+| `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
+| `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
 
-## Alternative: standalone repo via CLI
+### 4. TikTok
 
-`yt-dashboard/publish.sh` is the original one-shot publisher. If you'd rather
-host the dashboard in its own `yt-dashboard` repo, run it locally from a
-machine with the authenticated `gh` CLI:
+Full walkthrough in **[`docs/tiktok-setup.md`](docs/tiktok-setup.md)**. Summary:
+register a free developer app, add **Login Kit** (there is no separate "Display
+API" product — it's granted by scopes), request `user.info.basic`,
+`user.info.profile`, `user.info.stats` and `video.list`, set the Login Kit
+redirect URI to `https://yt.reubenrichardson37.workers.dev/tiktok/callback`, and
+create a **Sandbox** listing each account under **Target users**. Sandbox needs
+no app review and keeps the app private.
 
-```bash
-cd yt-dashboard && bash publish.sh
+The client key lives in `wrangler.toml` (it isn't sensitive — the browser sends
+it in the OAuth URL). Only `TIKTOK_CLIENT_SECRET` is a secret.
+
+### 5. Optional extras
+
+- **AI Idea Studio** — a free [Gemini API key](https://aistudio.google.com/apikey)
+  as `GEMINI_KEY` on the Worker serves everyone with no per-device setup. Or
+  paste a personal key under **⚙ AI setup**, stored only on that device. The
+  Worker discovers which models your key supports and remembers a working one.
+- **Impressions & CTR** — no API provides these. YouTube Studio → Analytics →
+  Advanced mode → Export CSV, then **Import Studio CSV** at the bottom of the
+  dashboard.
+- **Search keywords** — edit [`data/keywords.json`](data/keywords.json)
+  (each costs 100 quota units per week).
+
+---
+
+## Security
+
+- **No password ever touches this app.** Google and TikTok handle sign-in; the
+  app only receives a short-lived token.
+- **Secrets never reach the browser.** The Gemini key and TikTok client secret
+  live on the Worker. The page only holds an opaque session id, handed back in
+  the URL *fragment* so it stays out of server logs.
+- **Everything is owner-locked.** The AI and sync endpoints verify you own one of
+  the tracked channels; TikTok Sandbox only admits listed accounts.
+- **Read-only.** Nothing can post, edit or delete on either platform.
+- The session token is excluded from export/sync, and so is any personal Gemini
+  key.
+
+Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.html)
+· [terms](https://reubenrich16.github.io/Analytics/terms.html)
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| **"Service unavailable"** on Google sign-in | That account is supervised/managed. Use an unrestricted account, or add it as a manager of the Brand Account. |
+| **"Access blocked / not verified"** | The account isn't in **Test users**, or scopes aren't registered under Data access. |
+| **Sign-in blocked in Messenger/Instagram** | Google blocks in-app browsers — open in Safari or Chrome. |
+| **Dislikes column shows `·`** | `·` means no data, `0` means genuinely none. The note under the table says which. |
+| **AI says quota exceeded** | The Gemini *API* free tier is separate from a Gemini app subscription. It retries across models and resets daily. |
+| **TikTok sign-in fails** | The error page names the cause. Usually the redirect URI is in the Webhooks box instead of **Login Kit → Web**. |
+| **Worker says "not configured"** | Its secrets are missing — re-run the deploy workflow after adding them. |
+
+## Repo layout
+
+```
+yt-dashboard/   index.html · tiktok.html · style.css · privacy.html · terms.html
+worker/         worker.js · wrangler.toml
+scripts/        snapshot.mjs · rank.mjs
+data/           history.json · alerts.json · ranks.json · keywords.json
+docs/           tiktok-setup.md · youtube-ideas.md
+brand/          icon.svg + PNG renders · PHILOSOPHY.md
 ```
