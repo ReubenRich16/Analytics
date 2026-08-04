@@ -104,18 +104,19 @@ async function tick(env) {
   const now = Date.now();
   const hotMs = HOT_HOURS * 3600e3;
   const s = await loadState(env);
+  // exact record of what's stored, so we can avoid writing when nothing actually changed
+  const before = JSON.stringify(s.videos);
 
-  // (1) periodically scan for new uploads (also when we currently track nothing)
-  const haveHot = Object.values(s.videos).some(v => now - new Date(v.pub).getTime() < hotMs);
-  if (!haveHot || now - s.lastScan > SCAN_MIN * 60e3) {
+  // (1) Scan for new uploads on a fixed 5-minute boundary. Deriving the cadence from the
+  // clock (rather than a stored lastScan) means quiet minutes need no KV write at all.
+  if (new Date(now).getUTCMinutes() % SCAN_MIN === 0 || !Object.keys(s.videos).length) {
     try {
       const fresh = await scanFresh(channels, key);
       for (const [vid, info] of Object.entries(fresh)) {
         if (!s.videos[vid]) s.videos[vid] = { pub: info.pub, title: info.title, chan: info.chan, s: [] };
         else { s.videos[vid].title = info.title || s.videos[vid].title; s.videos[vid].pub = info.pub; }
       }
-      s.lastScan = now;
-    } catch (e) { /* transient API hiccup — try again next minute */ }
+    } catch (e) { /* transient API hiccup — try again next scan */ }
   }
 
   // (2) which tracked videos are still inside their hot window?
@@ -147,12 +148,15 @@ async function tick(env) {
     if (now - new Date(rec.pub).getTime() >= hotMs && !rec.s.length) delete s.videos[vid];
   }
 
-  // (5) write back ONLY when something changed (keeps us inside the free write budget)
-  if (sampled || !haveHot) {
+  // (5) Write back ONLY when the recorded data actually differs. Cloudflare's free tier
+  // allows 1,000 KV writes/day; a once-a-minute unconditional write would blow through it
+  // (1,440/day) on its own, so quiet minutes must cost nothing.
+  const changed = JSON.stringify(s.videos) !== before;
+  if (changed) {
     s.updated = now;
     await env.MINUTE.put(KV_KEY, JSON.stringify(s));
   }
-  return { hot: hotIds.length, sampled };
+  return { hot: hotIds.length, sampled, wrote: changed };
 }
 
 /* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
@@ -478,33 +482,38 @@ async function ttTick(env) {
   try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
   if (!list.length) return { accounts: 0 };
   const now = Date.now(), hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
-  let sampled = 0;
+  let sampled = 0, wrote = 0;
   for (const openId of list) {
     const token = await ttAccessToken(env, openId);
     if (!token) continue;
-    let snap = { videos: {}, lastScan: 0 };
+    let snap = { videos: {} };
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || 'null') || snap; } catch (e) {}
     snap.videos = snap.videos || {};
+    const before = JSON.stringify(snap.videos);
     const hot = Object.keys(snap.videos).filter(id => now - (snap.videos[id].create_time * 1000) < hotMs);
-    if (!hot.length && now - (snap.lastScan || 0) < SCAN_MIN * 60e3) continue;
+    // sample every minute while a post is hot; otherwise only look for new posts on the
+    // 5-minute boundary (clock-derived, so quiet minutes need no KV write)
+    if (!hot.length && new Date(now).getUTCMinutes() % SCAN_MIN !== 0) continue;
     let vids = [];
     try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
-    snap.lastScan = now;
-    let changed = false;
     for (const v of vids) {
       const ct = (v.create_time || 0) * 1000;
       if (!ct || now - ct > hotMs) continue;             // only the launch window
       const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
       rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
-      changed = true; sampled++;
+      sampled++;
     }
     for (const id of Object.keys(snap.videos)) {
       snap.videos[id].s = (snap.videos[id].s || []).filter(x => x[0] >= cutoff);
       if (now - snap.videos[id].create_time * 1000 >= hotMs && !snap.videos[id].s.length) delete snap.videos[id];
     }
-    if (changed || !hot.length) { snap.updated = now; await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap)); }
+    if (JSON.stringify(snap.videos) !== before) {
+      snap.updated = now;
+      await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
+      wrote++;
+    }
   }
-  return { accounts: list.length, sampled };
+  return { accounts: list.length, sampled, wrote };
 }
 
 export default {
