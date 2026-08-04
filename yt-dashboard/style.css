@@ -186,7 +186,10 @@
     .stat:hover { transform:none; }
     svg.chart path.line { stroke-dashoffset:0 !important; animation:none !important; }
   }
-  #chartTip { position:fixed; z-index:99; display:none; pointer-events:none; background:var(--panel-2); border:1px solid var(--line); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:11px; padding:5px 9px; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:240px; }
+  /* the left rule is the series' line-key — a filled swatch would be data-weight ink doing a label's job */
+  #chartTip { position:fixed; z-index:99; display:none; pointer-events:none; background:var(--panel-2); border:1px solid var(--line);
+    border-left:3px solid var(--tip-key, var(--line)); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+    line-height:1.45; padding:7px 11px; border-radius:7px; box-shadow:0 6px 20px rgba(0,0,0,.32); max-width:250px; }
   .stat .delta { font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:5px; color:var(--muted); min-height:15px; }
   .stat .delta.up { color:var(--up); }
 
@@ -261,14 +264,36 @@
   svg.chart path.line { stroke-linejoin:round; stroke-linecap:round; }
   @keyframes drawLine { to { stroke-dashoffset:0; } }
   svg.chart path.line.anim { stroke-dasharray:1; stroke-dashoffset:1; animation:drawLine 1s ease forwards; }
-  svg.chart .grid-line { stroke:var(--line); stroke-width:1; opacity:.5; }
+  /* grid and axes are solid hairlines one step off the surface — recessive, never dashed */
+  svg.chart .grid-line { stroke:var(--line); stroke-width:1; }
+  svg.chart .axis-line { stroke:var(--line); stroke-width:1; }
+  /* axis ticks wear text tokens, never the series colour */
+  svg.chart text.ax { fill:var(--muted); font-family:'IBM Plex Mono',monospace; font-size:10px; font-variant-numeric:tabular-nums; }
+  svg.chart text.val { fill:var(--text); font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; }
+  svg.chart text.val.dim { fill:var(--muted); font-weight:500; }
+  svg.chart .cline { stroke:var(--muted); stroke-width:1; opacity:.5; }
+  svg.chart .cband { fill:var(--text); opacity:.07; }
+  /* a threshold, not a gridline — dashing is meaningful here */
+  svg.chart .refline { stroke:var(--muted); stroke-width:1; stroke-dasharray:5 4; opacity:.65; }
+  svg.chart circle.pt { transition:r .12s ease; }
+  svg.chart circle.pt.near { r:7; }
   svg.chart .end-dot { animation:dotIn .5s .5s ease both; }
   @keyframes dotIn { from { opacity:0; r:0; } to { opacity:1; } }
-  .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
+  /* legend — always present once a chart carries more than one series */
+  .legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:8px; font-size:11px; color:var(--muted); }
+  .legend .lg-item { display:inline-flex; align-items:center; gap:6px; }
+  .legend .lg-key { width:14px; height:2px; border-radius:2px; flex:none; }
+  .legend .lg-key.bar { width:10px; height:10px; border-radius:2px; }
+  .legend .lg-key.dot { width:9px; height:9px; border-radius:50%; }
+  svg.spark { width:100%; height:auto; display:block; overflow:visible; opacity:.8; }
+  .sparkslot { margin-top:9px; min-height:0; }
+  .hbar-row { display:flex; align-items:center; gap:10px; font-size:12px; border-radius:5px; padding:3px 6px; margin:0 -6px 4px; }
+  .hbar-row:hover { background:var(--panel-2); }
   .hbar-row .hlabel { flex:0 0 148px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .hbar-row .htrack { flex:1; height:14px; background:var(--ink); border-radius:4px; overflow:hidden; }
-  .hbar-row .hfill { height:100%; background:var(--accent); border-radius:4px; min-width:2px; }
-  .hbar-row .hval { flex:0 0 92px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+  /* 4px rounded data-end, square where it meets the baseline */
+  .hbar-row .hfill { height:100%; background:var(--accent); border-radius:0 4px 4px 0; min-width:2px; }
+  .hbar-row .hval { flex:0 0 92px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
   .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
 
@@ -298,6 +323,15 @@
   .mcell .label { font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
   .mcell .val { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; margin-top:5px; font-variant-numeric:tabular-nums; }
   .mcell .sub { font-size:10px; color:var(--muted); margin-top:3px; line-height:1.4; }
+
+  /* An SVG's text is measured in viewBox units, so a chart squeezed onto a phone
+     shrinks its labels along with everything else — ~5px, unreadable. Scaling the
+     units back up here keeps axis values legible at any width. */
+  @media (max-width:760px) {
+    svg.chart text.ax { font-size:15px; }
+    svg.chart text.val { font-size:17px; }
+    svg.chart .grid-line, svg.chart .axis-line, svg.chart .cline { stroke-width:1.6; }
+  }
 
   @media (max-width:620px) {
     .grid { grid-template-columns:repeat(2,1fr); gap:8px; }

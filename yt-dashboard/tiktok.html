@@ -252,34 +252,96 @@
   const mcell = (l, v, s) => '<div class="mcell"><div class="label">' + l + '</div><div class="val">' + v + '</div>' + (s ? '<div class="sub">' + s + '</div>' : '') + '</div>';
   function hbarList(rows, opts) {
     const max = Math.max(1, ...rows.map(r => r.val));
-    return rows.map(r => '<div class="hbar-row"><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
-      '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
-      '<div class="hval">' + esc(r.valText || fmt.format(r.val)) + '</div></div>').join('');
+    return rows.map(r => {
+      const val = esc(r.valText || fmt.format(r.val));
+      return '<div class="hbar-row" title="' + esc(r.label) + '"><div class="hlabel">' + esc(r.label) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
+        '<div class="hval">' + val + '</div></div>';
+    }).join('');
   }
 
-  /* ---------- chart ---------- */
+  /* ---------- chart ----------
+     Same anatomy as the YouTube dashboard: ticks on human numbers, hairline grid,
+     a labelled endpoint, and a crosshair that snaps to the nearest sample. */
+  const ttReg = new Map();
   let chartId = 0;
-  function lineChart(pts, color, label) {
+  function niceScale(lo, hi, target) {
+    if (!(hi > lo)) hi = lo + 1;
+    const raw = (hi - lo) / Math.max(1, target);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const n = raw / mag;
+    const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
+    return { lo: nlo, hi: nhi, ticks };
+  }
+  function axisNum(v) {
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(a % 1e6 ? 1 : 0).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return (v / 1e3).toFixed(a % 1e3 ? 1 : 0).replace(/\.0$/, '') + 'k';
+    if (a >= 1000) return fmt.format(Math.round(v));
+    return String(Math.round(v * 10) / 10);
+  }
+  function lineChart(pts, color, label, opts) {
     if (!pts || pts.length < 2) return '';
-    const w = 560, h = 132, L = 46, R = 10, T = 12, B = 24, ci = ++chartId;
-    const max = Math.max(...pts, 1), min = Math.min(...pts, 0);
+    opts = opts || {};
+    const w = 620, h = 178, L = 66, R = 18, T = 18, B = 30, ci = ++chartId;
+    const sc = niceScale(Math.min(...pts, 0), Math.max(...pts, 1), 4);
     const X = i => L + (w - L - R) * (i / (pts.length - 1));
-    const Y = v => h - B - (h - B - T) * ((v - min) / Math.max(1, max - min));
-    let d = 'M' + X(0).toFixed(1) + ',' + Y(pts[0]).toFixed(1);
-    for (let i = 1; i < pts.length; i++) d += ' L' + X(i).toFixed(1) + ',' + Y(pts[i]).toFixed(1);
-    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
+    const Y = v => h - B - (h - B - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
+    const base = h - B;
+    let frame = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) frame += '<line class="grid-line" x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (w - R) + '" y2="' + y.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
+    }
+    frame += '<line class="axis-line" x1="' + L + '" y1="' + base + '" x2="' + (w - R) + '" y2="' + base + '"/>';
+    if (opts.x0) frame += '<text class="ax" x="' + L + '" y="' + (h - 8) + '">' + esc(opts.x0) + '</text>';
+    if (opts.x1) frame += '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
+    const xs = pts.map((_, i) => X(i)), ys = pts.map(Y);
+    ttReg.set(ci, { tips: opts.tips || pts.map(v => fmt.format(v) + ' views'), xs, ys, L, R, w, color });
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < pts.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    const ey = Math.max(T + 10, ys[ys.length - 1] - 10);
+    return '<svg class="chart" data-tci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
       '<defs><linearGradient id="ttg' + ci + '" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0" stop-color="' + color + '" stop-opacity="0.28"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.02"/></linearGradient></defs>' +
-      '<line class="grid-line" x1="' + L + '" y1="' + (T + (h - B - T) / 3).toFixed(1) + '" x2="' + (w - R) + '" y2="' + (T + (h - B - T) / 3).toFixed(1) + '"/>' +
-      '<line class="grid-line" x1="' + L + '" y1="' + (T + (h - B - T) * 2 / 3).toFixed(1) + '" x2="' + (w - R) + '" y2="' + (T + (h - B - T) * 2 / 3).toFixed(1) + '"/>' +
-      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line)"/>' +
-      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line)"/>' +
-      '<text x="' + (L - 6) + '" y="16" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + fmt.format(max) + '</text>' +
-      '<path d="' + d + ' L' + X(pts.length - 1).toFixed(1) + ',' + (h - B) + ' L' + X(0).toFixed(1) + ',' + (h - B) + ' Z" fill="url(#ttg' + ci + ')"/>' +
-      '<path class="line anim" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2.2"/>' +
-      '<circle class="end-dot" cx="' + X(pts.length - 1).toFixed(1) + '" cy="' + Y(pts[pts.length - 1]).toFixed(1) + '" r="3.2" style="fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/>' +
+      '<stop offset="0" stop-color="' + color + '" stop-opacity="0.14"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.01"/></linearGradient></defs>' +
+      frame +
+      '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + base + ' L' + xs[0].toFixed(1) + ',' + base + ' Z" fill="url(#ttg' + ci + ')"/>' +
+      '<line class="cline" y1="' + T + '" y2="' + base + '" style="display:none"/>' +
+      '<path class="line anim" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' +
+      '<text class="val" x="' + (w - R) + '" y="' + ey.toFixed(1) + '" text-anchor="end">' + esc(axisNum(pts[pts.length - 1])) + '</text>' +
+      '<circle class="end-dot" cx="' + xs[xs.length - 1].toFixed(1) + '" cy="' + ys[ys.length - 1].toFixed(1) + '" r="4.5" style="fill:' + color + ';stroke:var(--ink);stroke-width:2"/>' +
+      '<circle class="cdot" r="5" style="display:none;fill:' + color + ';stroke:var(--ink);stroke-width:2"/>' +
       '</svg>';
   }
+
+  let ttTip = null;
+  function ttMoveTip(e) {
+    const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-tci]') : null;
+    if (!ttTip) { ttTip = document.createElement('div'); ttTip.id = 'chartTip'; document.body.appendChild(ttTip); }
+    document.querySelectorAll('svg.chart .cdot, svg.chart .cline').forEach(c => c.style.display = 'none');
+    if (!svg) { ttTip.style.display = 'none'; return; }
+    const d = ttReg.get(+svg.dataset.tci);
+    if (!d || !d.tips.length) return;
+    const rect = svg.getBoundingClientRect();
+    const xv = (e.clientX - rect.left) / rect.width * d.w;
+    let idx = Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
+    idx = Math.max(0, Math.min(d.tips.length - 1, idx));
+    const line = svg.querySelector('.cline');
+    if (line) { line.setAttribute('x1', d.xs[idx]); line.setAttribute('x2', d.xs[idx]); line.style.display = 'block'; }
+    const dot = svg.querySelector('.cdot');
+    if (dot) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
+    ttTip.textContent = d.tips[idx];
+    ttTip.style.setProperty('--tip-key', d.color);
+    ttTip.style.display = 'block';
+    ttTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+    ttTip.style.top = Math.max(6, e.clientY - 44) + 'px';
+  }
+  document.addEventListener('pointermove', ttMoveTip);
+  document.addEventListener('pointerdown', ttMoveTip);
 
   /* ---------- auth ---------- */
   function signIn() {
@@ -438,7 +500,10 @@
       const pts = rec.s.map(s => s[1]);
       html += '<div class="dsection"><h4>Views since it went live — recorded minute by minute</h4>' +
         '<p class="explain">Captured by your Worker in the background, even when nobody had this page open. TikTok itself provides no history — this is built from your own recordings.</p>' +
-        lineChart(pts, 'var(--live)', 'Views over time') +
+        lineChart(pts, 'var(--live)', 'Views over time', {
+          tips: rec.s.map(s => fmt.format(s[1]) + ' views — ' + fmtAgo(s[0])),
+          x0: fmtAgo(rec.s[0][0]), x1: 'now'
+        }) +
         '<p class="dnote" style="margin-top:6px">' + rec.s.length + ' samples · first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
     } else {
       html += '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +

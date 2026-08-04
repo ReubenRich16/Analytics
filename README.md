@@ -56,6 +56,27 @@ data/             recorded history, committed by the robots
   grounded in your own naming style (free) plus optional AI variations
 - 14 themes, sound on new likes/subscribers, and a phone-friendly layout
 
+**How the charts are drawn**
+
+Every chart is hand-rolled inline SVG — no chart library, nothing to download —
+and they all follow the same rules so they read the same way:
+
+- Y-axis ticks land on **human numbers** (0 · 500 · 1,000, compacted to `k`/`M`),
+  and every gridline is labelled, so a value never depends on hovering.
+- Hovering shows a **crosshair** that snaps to the nearest day, plus a tooltip.
+  On columns the whole day-band lights up instead.
+- Thin marks and hairline gridlines; columns are capped at 24px with a 4px
+  rounded top and a 2px gap; area fills are a ~10% wash, never a solid block.
+- Values are direct-labelled **selectively** — the endpoint and the peak — rather
+  than a number on every point.
+- Any chart with more than one line carries a **legend**.
+- On a phone the axis text scales back up, so labels stay readable at 390px wide.
+- **Reach vs reaction** (YouTube, in Account breakdown) is a scatter of views
+  against likes with your average like-rate as the reference line — the one view
+  that shows every video at once. The newest upload is called out by size *and* a
+  written label, not colour alone, because several themes are deliberately
+  monochromatic.
+
 **YouTube only** (TikTok's API simply doesn't expose these)
 
 Watch time, retention curves, **retention vs other YouTube videos of similar

@@ -90,10 +90,10 @@
 
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid">
-    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
-    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
-    <div class="stat"><div class="label">Subscribers</div><div class="stat-num" id="subsNum">–</div><div class="delta" id="subsDelta"></div></div>
-    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
+    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div><div class="sparkslot" id="viewsSpark"></div></div>
+    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="likesSpark"></div></div>
+    <div class="stat"><div class="label">Subscribers</div><div class="stat-num" id="subsNum">–</div><div class="delta" id="subsDelta"></div><div class="sparkslot" id="subsSpark"></div></div>
+    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="commentsSpark"></div></div>
   </div>
 
   <div class="card velocity" id="velocityPanel">
@@ -321,6 +321,35 @@
     // history arrives after the first poll, so re-render the panels that depend on it —
     // otherwise the milestone projection is missing until the next refresh
     if (videoIds.length) { seedSnapsFromHistory(); renderTable(); renderCoaching(); loadTrends(); }
+    renderStatSparks();
+  }
+
+  // A 12-point trend line under each headline number, drawn from the snapshot robot's
+  // recorded history — the number alone can't show whether it's climbing or flat.
+  function renderStatSparks() {
+    const slots = [['viewsSpark'], ['likesSpark'], ['subsSpark'], ['commentsSpark']];
+    const clear = () => slots.forEach(([id]) => { const el = $(id); if (el) el.innerHTML = ''; });
+    const chn = hist && ((hist.channels && hist.channels[chanId]) || hist.channel);
+    if (!chn || chn.length < 3) { clear(); return; }
+    const t1 = chn[chn.length - 1][0], t0 = Math.max(chn[0][0], t1 - 12 * 864e5);
+    if (!(t1 > t0)) { clear(); return; }
+    const N = 12, times = [];
+    for (let i = 0; i < N; i++) times.push(t0 + (t1 - t0) * i / (N - 1));
+    const chanSeries = idx => times.map(t => { const s = histAtOrBefore(chn, t); return s ? s[idx] : null; }).filter(v => v != null);
+    const sumSeries = idx => times.map(t => {
+      let tot = 0, any = false;
+      for (const arr of Object.values((hist && hist.videos) || {})) { const s = histAtOrBefore(arr, t); if (s) { tot += s[idx] || 0; any = true; } }
+      return any ? tot : null;
+    }).filter(v => v != null);
+    // a flat line says nothing and just adds ink — only draw one that actually moves
+    const put = (id, pts, color) => {
+      const el = $(id); if (!el) return;
+      el.innerHTML = (pts.length >= 4 && Math.max(...pts) > Math.min(...pts)) ? sparkHtml(pts, color) : '';
+    };
+    put('viewsSpark', chanSeries(2), 'var(--live)');
+    put('subsSpark', chanSeries(1), 'var(--up)');
+    put('likesSpark', sumSeries(2), 'var(--accent)');
+    put('commentsSpark', sumSeries(3), 'var(--purple)');
   }
 
   const cacheSet = (k, obj) => {
@@ -495,6 +524,7 @@
     }
     if (!videoIds.length) throw new Error('No public videos found.');
     $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
+    renderStatSparks(); // history may already be loaded; chanId is only known now
 
     setStatus('loading tags…');
     for (const part of chunk(videoIds, 50)) {
@@ -863,110 +893,270 @@
   const friendlyDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' }); } catch (e) { return d; } };
   const shortDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); } catch (e) { return d; } };
 
-  function lineChartHtml(pts, tips, color, opts) {
-    opts = opts || {};
-    const w = 560, h = 132, L = 46, R = 10, T = 12, B = 24;
-    const n = pts.length;
-    const max = Math.max(1, ...pts);
-    // opts.zoom auto-scales the y-axis to min..max so small day-to-day movement is visible
-    // (e.g. subscriber totals that barely change against a big absolute number)
-    const lo = opts.zoom ? Math.min(...pts) : 0;
-    const span = Math.max(1, max - lo);
-    const xs = pts.map((_, i) => L + i * (w - L - R) / Math.max(1, n - 1));
-    const ys = pts.map(v => h - B - ((v - lo) / span) * (h - T - B));
-    const ci = chartPush({ tips, xs, ys, L, R, w });
-    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
-    for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
-    const yLab = opts.yMaxLabel || fmt.format(Math.round(max));
-    const yLo = opts.zoom ? fmt.format(Math.round(lo)) : '0';
-    const gid = 'lg' + ci;
-    // two faint gridlines at 1/3 and 2/3 height for easier reading
-    let grid = '';
-    for (const f of [1 / 3, 2 / 3]) { const gy = (T + (h - B - T) * f).toFixed(1); grid += '<line class="grid-line" x1="' + L + '" y1="' + gy + '" x2="' + (w - R) + '" y2="' + gy + '"/>'; }
-    const drawCls = reducedMotion ? 'line' : 'line anim';
-    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
-      '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0" stop-color="' + color + '" stop-opacity="0.28"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.02"/></linearGradient></defs>' +
-      grid +
-      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
-      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
-      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLab) + '</text>' +
-      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(yLo) + '</text>' +
-      (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
-      (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '') +
-      (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (h - B) + ' L' + xs[0].toFixed(1) + ',' + (h - B) + ' Z" fill="url(#' + gid + ')"/>' : '') +
-      (n > 1 ? '<path class="' + drawCls + '" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2.2"/>' : '') +
-      (n > 1 ? '<circle class="end-dot" cx="' + xs[n - 1].toFixed(1) + '" cy="' + ys[n - 1].toFixed(1) + '" r="3.2" style="fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/>' : '') +
-      '<circle class="cdot" r="4" style="display:none;fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/></svg>';
+  /* ---- axis helpers ----------------------------------------------------
+     Ticks land on human numbers (1 / 2 / 2.5 / 5 × 10ⁿ) so an axis reads
+     "0 · 500 · 1,000" rather than "0 · 437 · 874", and every gridline carries
+     its value — so the tooltip enhances the chart instead of being the only
+     way to read it. */
+  function niceScale(lo, hi, target) {
+    if (!(hi > lo)) hi = lo + 1;
+    const raw = (hi - lo) / Math.max(1, target);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const n = raw / mag;
+    const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
+    return { lo: nlo, hi: nhi, ticks, step };
+  }
+  // axis ticks stay short — 120,000 becomes 120k — so the left gutter can be narrow
+  function axisNum(v, unit) {
+    const a = Math.abs(v);
+    let s;
+    if (a >= 1e6) s = (v / 1e6).toFixed(a % 1e6 ? 1 : 0).replace(/\.0$/, '') + 'M';
+    else if (a >= 1e4) s = (v / 1e3).toFixed(a % 1e3 ? 1 : 0).replace(/\.0$/, '') + 'k';
+    else if (a >= 1000) s = fmt.format(Math.round(v));
+    else s = String(Math.round(v * 10) / 10);
+    return s.replace('-', '−') + (unit || ''); // typographic minus, not a hyphen
   }
 
-  function barChartHtml(values, tips, label) {
-    const w = 560, h = 112, L = 46, R = 10, T = 10, B = 10;
-    const maxAbs = Math.max(1, ...values.map(v => Math.abs(v)));
-    const zero = (h - T - B) / 2 + T;
-    const bw = Math.max(1.5, (w - L - R) / values.length - 1.5);
-    const ci = chartPush({ tips, L, R, w, bars: true });
-    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (label || 'chart') + '">' +
-      '<line x1="' + L + '" y1="' + zero + '" x2="' + (w - R) + '" y2="' + zero + '" style="stroke:var(--line);stroke-width:1"/>' +
-      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">+' + fmt.format(maxAbs) + '</text>' +
-      '<text x="' + (L - 6) + '" y="' + (h - B) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">−' + fmt.format(maxAbs) + '</text>';
+  // Shared plot frame: hairline gridlines, value labels on every tick, a single
+  // baseline rule, and up to three x labels. Returns the markup plus the y scale.
+  function chartFrame(g, sc, opts) {
+    const Y = v => g.h - g.B - (v - sc.lo) / (sc.hi - sc.lo || 1) * (g.h - g.T - g.B);
+    const base = g.h - g.B;
+    let s = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) s += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      s += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t, opts.unit)) + '</text>';
+    }
+    if (!opts.noBaseline) s += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    if (opts.x0) s += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(opts.x0) + '</text>';
+    if (opts.xMid) s += '<text class="ax" x="' + ((g.L + g.w - g.R) / 2).toFixed(1) + '" y="' + (g.h - 8) + '" text-anchor="middle">' + esc(opts.xMid) + '</text>';
+    if (opts.x1) s += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
+    return { frame: s, Y };
+  }
+
+  // legend keys mirror the mark: a line for lines, a square for bars, a dot for scatter
+  const legendHtml = items => '<div class="legend">' + items.map(i =>
+    '<span class="lg-item"><span class="lg-key' + (i.bar ? ' bar' : i.dot ? ' dot' : '') + '" style="background:' + i.color +
+    (i.opacity != null ? ';opacity:' + Math.max(0.55, i.opacity) : '') + '"></span>' + esc(i.name) + '</span>').join('') + '</div>';
+
+  const LINE_GEO = { w: 620, h: 178, L: 66, R: 18, T: 18, B: 30 };
+
+  function lineChartHtml(pts, tips, color, opts) {
+    opts = opts || {};
+    const g = LINE_GEO;
+    const n = pts.length;
+    const max = Math.max(0, ...pts);
+    // opts.zoom auto-scales the y-axis to min..max so small day-to-day movement is visible
+    // (e.g. subscriber totals that barely change against a big absolute number)
+    const sc = niceScale(opts.zoom ? Math.min(...pts) : 0, max, 4);
+    const { frame, Y } = chartFrame(g, sc, opts);
+    const xs = pts.map((_, i) => g.L + i * (g.w - g.L - g.R) / Math.max(1, n - 1));
+    const ys = pts.map(Y);
+    const ci = chartPush({ tips, xs, ys, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, color });
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    const gid = 'lg' + ci;
+    const drawCls = reducedMotion ? 'line' : 'line anim';
+    // Label selectively: always the endpoint, and the peak only when it is far
+    // enough from the endpoint that the two labels can't collide.
+    const peak = pts.indexOf(max);
+    let labels = '';
+    if (n > 1) {
+      const ey = Math.max(g.T + 10, ys[n - 1] - 10);
+      labels += '<text class="val" x="' + (g.w - g.R) + '" y="' + ey.toFixed(1) + '" text-anchor="end">' + esc(axisNum(pts[n - 1], opts.unit)) + '</text>';
+      // interior peaks only — a peak sitting on either edge would collide with the
+      // axis gutter or the endpoint label
+      if (peak > 0 && peak < n - 1 && xs[n - 1] - xs[peak] > (g.w - g.L - g.R) * 0.22 && max > 0) {
+        const px = Math.min(g.w - g.R - 30, Math.max(g.L + 18, xs[peak]));
+        labels += '<text class="val dim" x="' + px.toFixed(1) + '" y="' + Math.max(g.T + 10, ys[peak] - 10).toFixed(1) + '" text-anchor="middle">' + esc(axisNum(max, opts.unit)) + '</text>';
+      }
+    }
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + color + '" stop-opacity="0.14"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.01"/></linearGradient></defs>' +
+      frame +
+      (n > 1 ? '<path d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (g.h - g.B) + ' L' + xs[0].toFixed(1) + ',' + (g.h - g.B) + ' Z" fill="url(#' + gid + ')"/>' : '') +
+      '<line class="cline" y1="' + g.T + '" y2="' + (g.h - g.B) + '" style="display:none"/>' +
+      (n > 1 ? '<path class="' + drawCls + '" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' : '') +
+      labels +
+      (n > 1 ? '<circle class="end-dot" cx="' + xs[n - 1].toFixed(1) + '" cy="' + ys[n - 1].toFixed(1) + '" r="4.5" style="fill:' + color + ';stroke:var(--ink);stroke-width:2"/>' : '') +
+      '<circle class="cdot" r="5" style="display:none;fill:' + color + ';stroke:var(--ink);stroke-width:2"/></svg>';
+  }
+
+  // A column chart. Values that go negative get a diverging layout around zero
+  // with the gained/lost status colours; all-positive data grows from a normal
+  // baseline instead of wasting half the plot below it.
+  function barChartHtml(values, tips, label, opts) {
+    opts = opts || {};
+    const g = { w: 620, h: 154, L: 66, R: 18, T: 16, B: 30 };
+    const hasNeg = values.some(v => v < 0);
+    const sc = niceScale(Math.min(0, ...values), Math.max(0, ...values), 3);
+    const { frame, Y } = chartFrame(g, sc, { unit: opts.unit, x0: opts.x0, xMid: opts.xMid, x1: opts.x1, noBaseline: hasNeg });
+    const slot = (g.w - g.L - g.R) / values.length;
+    const bw = Math.min(24, Math.max(1.5, slot - 2)); // 2px surface gap; never a fat block
+    const zero = Y(0);
+    const ci = chartPush({ tips, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, bars: true, slot });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(label || 'chart') + '">' +
+      frame +
+      (hasNeg ? '<line class="axis-line" x1="' + g.L + '" y1="' + zero.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + zero.toFixed(1) + '"/>' : '') +
+      '<rect class="cband" y="' + g.T + '" height="' + (g.h - g.T - g.B) + '" style="display:none"/>';
     values.forEach((v, i) => {
-      const x = L + i * (w - L - R) / values.length;
-      const bh = Math.max(1, Math.abs(v) / maxAbs * (zero - T));
-      const y = v >= 0 ? zero - bh : zero;
-      out += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1" style="fill:' + (v >= 0 ? 'var(--up)' : 'var(--down)') + '"/>';
+      const x = g.L + i * slot + (slot - bw) / 2;
+      const y1 = Y(v);
+      if (Math.abs(y1 - zero) < 0.6) return; // nothing to draw for a zero day
+      out += '<path d="' + barPath(x, zero, y1, bw, 4) + '" style="fill:' + (hasNeg ? (v >= 0 ? 'var(--up)' : 'var(--down)') : (opts.color || 'var(--accent)')) + '"/>';
     });
     return out + '</svg>';
+  }
+
+  // Column with a 4px rounded data-end and square corners at the baseline.
+  function barPath(x, y0, y1, w, r) {
+    const up = y1 <= y0;
+    r = Math.max(0, Math.min(r, w / 2, Math.abs(y1 - y0)));
+    const x2 = x + w, f = n2 => n2.toFixed(1);
+    if (up) return 'M' + f(x) + ',' + f(y0) + 'V' + f(y1 + r) + 'a' + f(r) + ',' + f(r) + ' 0 0 1 ' + f(r) + ',' + f(-r) +
+      'H' + f(x2 - r) + 'a' + f(r) + ',' + f(r) + ' 0 0 1 ' + f(r) + ',' + f(r) + 'V' + f(y0) + 'Z';
+    return 'M' + f(x) + ',' + f(y0) + 'V' + f(y1 - r) + 'a' + f(r) + ',' + f(r) + ' 0 0 0 ' + f(r) + ',' + f(r) +
+      'H' + f(x2 - r) + 'a' + f(r) + ',' + f(r) + ' 0 0 0 ' + f(r) + ',' + f(-r) + 'V' + f(y0) + 'Z';
   }
 
   // several lines on one chart (launch-curve overlays)
   function multiLineHtml(series, tips, opts) {
     opts = opts || {};
-    const w = 560, h = 150, L = 46, R = 10, T = 12, B = 24;
+    const g = { w: 620, h: 190, L: 66, R: 18, T: 16, B: 30 };
     const maxLen = Math.max(2, ...series.map(s => s.pts.length));
-    const maxV = Math.max(1, ...series.flatMap(s => s.pts));
-    const X = i => L + i * (w - L - R) / (maxLen - 1);
-    const Y = v => h - B - (v / maxV) * (h - T - B);
-    const ci = chartPush({ tips, L, R, w });
-    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + (opts.label || 'chart') + '">' +
-      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
-      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line);stroke-width:1"/>' +
-      '<text x="' + (L - 6) + '" y="' + (T + 4) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + fmt.format(Math.round(maxV)) + '</text>' +
-      '<text x="' + (L - 6) + '" y="' + (h - B + 3) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">0</text>' +
-      (opts.x0 ? '<text x="' + L + '" y="' + (h - 7) + '" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x0) + '</text>' : '') +
-      (opts.x1 ? '<text x="' + (w - R) + '" y="' + (h - 7) + '" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + esc(opts.x1) + '</text>' : '');
+    const sc = niceScale(0, Math.max(1, ...series.flatMap(s => s.pts)), 4);
+    const { frame, Y } = chartFrame(g, sc, opts);
+    const X = i => g.L + i * (g.w - g.L - g.R) / (maxLen - 1);
+    const ci = chartPush({ tips, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      frame + '<line class="cline" y1="' + g.T + '" y2="' + (g.h - g.B) + '" style="display:none"/>';
     for (const s of series) {
       if (s.pts.length < 2) continue;
       let d = 'M' + X(0).toFixed(1) + ',' + Y(s.pts[0]).toFixed(1);
       for (let i = 1; i < s.pts.length; i++) d += ' L' + X(i).toFixed(1) + ',' + Y(s.pts[i]).toFixed(1);
       out += '<path class="line" d="' + d + '" style="fill:none;stroke:' + s.color + ';stroke-width:' + (s.width || 1.5) + ';opacity:' + (s.opacity != null ? s.opacity : 1) + '"/>';
+      // the focus series gets an end marker so it stays findable in the tangle
+      if (s.dot) out += '<circle cx="' + X(s.pts.length - 1).toFixed(1) + '" cy="' + Y(s.pts[s.pts.length - 1]).toFixed(1) + '" r="4.5" style="fill:' + s.color + ';stroke:var(--ink);stroke-width:2"/>';
     }
-    return out + '</svg>';
+    out += '</svg>';
+    const keys = series.filter(s => s.name);
+    return out + (keys.length > 1 ? legendHtml(keys.map(s => ({ name: s.name, color: s.color, opacity: s.opacity }))) : '');
+  }
+
+  // Scatter — the one form here that plots two measures against each other rather
+  // than one over time, so it can answer "which videos punch above their weight".
+  // Emphasis pattern: the newest upload is the accent, everything else recedes.
+  function scatterHtml(points, tips, opts) {
+    opts = opts || {};
+    const g = { w: 620, h: 230, L: 66, R: 18, T: 16, B: 46 };
+    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 4);
+    const sy = niceScale(0, Math.max(1, ...points.map(p => p.y)), 4);
+    const X = v => g.L + (v - sx.lo) / (sx.hi - sx.lo || 1) * (g.w - g.L - g.R);
+    const Y = v => g.h - g.B - (v - sy.lo) / (sy.hi - sy.lo || 1) * (g.h - g.T - g.B);
+    const base = g.h - g.B;
+    let frame = '';
+    for (const t of sy.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) frame += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t, opts.unitY)) + '</text>';
+    }
+    for (const t of sx.ticks) frame += '<text class="ax" x="' + X(t).toFixed(1) + '" y="' + (base + 16) + '" text-anchor="middle">' + esc(axisNum(t, opts.unitX)) + '</text>';
+    frame += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    if (opts.xLabel) frame += '<text class="ax" x="' + ((g.L + g.w - g.R) / 2).toFixed(1) + '" y="' + (g.h - 8) + '" text-anchor="middle">' + esc(opts.xLabel) + '</text>';
+    // A dashed rule is meaningful here: it's a threshold, not a gridline
+    let ref = '';
+    if (opts.slope > 0) {
+      const xEnd = Math.min(sx.hi, sy.hi / opts.slope), yEnd = xEnd * opts.slope;
+      ref = '<line class="refline" x1="' + X(0).toFixed(1) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(xEnd).toFixed(1) + '" y2="' + Y(yEnd).toFixed(1) + '"/>';
+    }
+    const sxs = points.map(p => X(p.x)), sys = points.map(p => Y(p.y));
+    const ci = chartPush({ tips, sxs, sys, w: g.w, h: g.h, scatter: true });
+    // The themes here are deliberately monochromatic (pink / rose / lavender), so no
+    // two theme tokens are reliably distinguishable — the highlight is carried by
+    // size, a surface ring and a direct label, with colour only reinforcing it.
+    let dots = '', mark = '';
+    points.forEach((p, i) => {
+      if (p.hot) {
+        mark = '<circle class="pt hot" cx="' + sxs[i].toFixed(1) + '" cy="' + sys[i].toFixed(1) + '" r="6" style="fill:var(--live);stroke:var(--ink);stroke-width:2"/>' +
+          '<text class="val" x="' + Math.min(g.w - g.R, sxs[i] + 11).toFixed(1) + '" y="' + Math.max(g.T + 8, sys[i] - 9).toFixed(1) + '"' +
+          (sxs[i] > g.w - g.R - 70 ? ' text-anchor="end"' : '') + '>newest</text>';
+        return;
+      }
+      dots += '<circle class="pt" cx="' + sxs[i].toFixed(1) + '" cy="' + sys[i].toFixed(1) + '" r="3.6" style="fill:var(--muted);stroke:var(--ink);stroke-width:1.5;opacity:.65"/>';
+    });
+    dots += mark; // the highlighted point draws last so nothing can cover it
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      frame + ref + dots + '</svg>';
+  }
+
+  // 12-point trend line for a stat tile — no axes, no labels, just the shape
+  function sparkHtml(pts, color) {
+    if (!pts || pts.length < 2) return '';
+    const w = 120, h = 26, hi = Math.max(...pts), lo = Math.min(...pts), span = Math.max(1e-9, hi - lo);
+    const xs = pts.map((_, i) => i * w / (pts.length - 1));
+    const ys = pts.map(v => h - 3 - (v - lo) / span * (h - 6));
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < pts.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+      '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round"/>' +
+      '<circle cx="' + xs[xs.length - 1].toFixed(1) + '" cy="' + ys[ys.length - 1].toFixed(1) + '" r="2.6" style="fill:' + color + '"/></svg>';
   }
 
   let chartTip = null;
+  const hideChartCursors = () => {
+    document.querySelectorAll('svg.chart .cdot, svg.chart .cline, svg.chart .cband').forEach(c => c.style.display = 'none');
+    document.querySelectorAll('svg.chart circle.pt.near').forEach(c => c.classList.remove('near'));
+  };
   function moveTip(e) {
     const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-ci]') : null;
     if (!chartTip) { chartTip = document.createElement('div'); chartTip.id = 'chartTip'; document.body.appendChild(chartTip); }
-    if (!svg) {
-      chartTip.style.display = 'none';
-      document.querySelectorAll('svg.chart .cdot').forEach(c => c.style.display = 'none');
-      return;
-    }
+    if (!svg) { chartTip.style.display = 'none'; hideChartCursors(); return; }
     const d = chartReg.get(+svg.dataset.ci);
     if (!d || !d.tips || !d.tips.length) return;
+    hideChartCursors();
     const rect = svg.getBoundingClientRect();
     const xv = (e.clientX - rect.left) / rect.width * d.w;
+    // scatter has no single X to snap to — pick the nearest point in both axes so
+    // the pointer only has to be closest, never dead-centre on a 8px dot
+    if (d.scatter) {
+      const yv = (e.clientY - rect.top) / rect.height * d.h;
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < d.sxs.length; i++) {
+        const dd = (d.sxs[i] - xv) ** 2 + (d.sys[i] - yv) ** 2;
+        if (dd < bd) { bd = dd; best = i; }
+      }
+      svg.querySelectorAll('circle.pt').forEach((c, i) => c.classList.toggle('near', i === best));
+      chartTip.textContent = d.tips[best];
+      chartTip.style.removeProperty('--tip-key');
+      chartTip.style.display = 'block';
+      chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+      chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
+      return;
+    }
     let idx = d.bars
       ? Math.floor((xv - d.L) / Math.max(1, d.w - d.L - d.R) * d.tips.length)
       : Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
     idx = Math.max(0, Math.min(d.tips.length - 1, idx));
-    const dot = svg.querySelector('.cdot');
-    if (dot && d.xs) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
+    // the crosshair finds the X: readers aim at a day, never at a 2px line
+    if (d.bars) {
+      const band = svg.querySelector('.cband');
+      if (band && d.slot) { band.setAttribute('x', (d.L + idx * d.slot).toFixed(1)); band.setAttribute('width', d.slot.toFixed(1)); band.style.display = 'block'; }
+    } else if (d.xs) {
+      const line = svg.querySelector('.cline');
+      if (line) { line.setAttribute('x1', d.xs[idx]); line.setAttribute('x2', d.xs[idx]); line.style.display = 'block'; }
+      const dot = svg.querySelector('.cdot');
+      if (dot && d.ys) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
+    }
     chartTip.textContent = d.tips[idx];
+    if (d.color) chartTip.style.setProperty('--tip-key', d.color); else chartTip.style.removeProperty('--tip-key');
     chartTip.style.display = 'block';
-    chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 200, e.clientX + 14)) + 'px';
-    chartTip.style.top = (e.clientY - 38) + 'px';
+    chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+    chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
   }
   document.addEventListener('pointermove', moveTip);
   document.addEventListener('pointerdown', moveTip);
@@ -990,9 +1180,11 @@
     for (const r of rows) {
       const pct = r.val / total * 100;
       const color = r.color || (opts && opts.color);
-      html += '<div class="hbar-row"' + (r.strong ? ' style="font-weight:700"' : '') + '><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
+      const val = r.valText || (fmt.format(r.val) + ' · ' + Math.round(pct) + '%');
+      html += '<div class="hbar-row"' + (r.strong ? ' style="font-weight:700"' : '') + ' title="' + esc(r.label + ' — ' + val) + '">' +
+        '<div class="hlabel">' + esc(r.label) + '</div>' +
         '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (color ? ';background:' + color : '') + '"></div></div>' +
-        '<div class="hval">' + (r.valText || (fmt.format(r.val) + ' · ' + Math.round(pct) + '%')) + '</div></div>';
+        '<div class="hval">' + val + '</div></div>';
     }
     return html;
   }
@@ -1042,7 +1234,8 @@
         mcell('Lost', '−' + fmt.format(lost)) +
         mcell('Net change', (net >= 0 ? '+' : '−') + fmt.format(Math.abs(net))) +
         '</div>' +
-        barChartHtml(bars, subTips, 'Subscribers gained and lost per day') + '</div>';
+        barChartHtml(bars, subTips, 'Subscribers gained and lost per day', { x0: shortDate(subs.rows[0][0]), x1: shortDate(subs.rows[subs.rows.length - 1][0]) }) +
+        legendHtml([{ name: 'Net gain', color: 'var(--up)', bar: true }, { name: 'Net loss', color: 'var(--down)', bar: true }]) + '</div>';
     }
 
     if (daily && daily.rows && daily.rows.length > 1) {
@@ -1114,7 +1307,7 @@
     if (hourBuckets.some(v => v > 0)) {
       const hTips = hourBuckets.map((v, h2) => fmt.format(v) + ' views recorded — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm'));
       html += section('When views actually arrive (recorded by the app)', 'Views gained per hour of the day, from the minute-history this dashboard records on recent uploads. It only counts hours the dashboard was open watching, so it fills in over time — YouTube’s API has no official hour-by-hour data.',
-        barChartHtml(hourBuckets, hTips, 'Views by hour of day'));
+        barChartHtml(hourBuckets, hTips, 'Views by hour of day', { color: 'var(--gold)', x0: '12am', xMid: '12pm', x1: '11pm' }));
     }
 
     // recorded history sections (from the repo's hourly snapshot job)
@@ -1694,6 +1887,22 @@
       (avgRet != null ? mcell('Avg % watched', Math.round(avgRet) + '%') : '') +
       (hasRu && pctN ? mcell('Best retention', Math.round(Math.max(...videoIds.map(id => (rollupMap[id] || {}).avgPct).filter(x => x != null))) + '%', 'your strongest hold') : '') +
       '</div></div>';
+    // reach vs reaction — the one view that shows both measures at once, so a video
+    // that gets few views but lots of love is visible instead of buried in a ranking
+    const pts = videoIds.map(id => ({ id, v: perVideo[id], m: meta[id] }))
+      .filter(x => x.v && x.m && x.v.views > 0)
+      .map(x => ({ x: x.v.views, y: x.v.likes, id: x.id, at: new Date(x.m.publishedAt).getTime() }));
+    if (pts.length >= 5) {
+      const newest = pts.reduce((a, b) => (b.at > a.at ? b : a));
+      const slope = tv ? tl / tv : 0;
+      for (const p of pts) p.hot = p.id === newest.id;
+      const sTips = pts.map(p => videoTitle(p.id) + ' — ' + fmt.format(p.x) + ' views, ' + fmt.format(p.y) + ' likes (' +
+        (p.x ? (p.y / p.x * 100).toFixed(1) : '0') + '% like rate, ' + (slope && p.y / p.x >= slope ? 'above' : 'below') + ' your average)');
+      html += section('Reach vs reaction — every video at once',
+        'Each dot is a video: views across the bottom, likes up the side. The dashed line is your average like rate (' + (slope * 100).toFixed(1) + '%) — dots above it earned more love per view than usual, dots below earned less. Your newest upload is the large labelled dot. Hover or tap any dot for its title.',
+        scatterHtml(pts, sTips, { label: 'Views against likes per video', xLabel: 'Views →', slope }) +
+        legendHtml([{ name: 'Newest upload', color: 'var(--live)', dot: true }, { name: 'Every other video', color: 'var(--muted)', dot: true }]));
+    }
     // top tags across the catalogue
     const tt = topTagsByVpd(rows).slice(0, 10);
     if (tt.length) html += section('Best tags across the account', 'Ranked by the average views/day of the videos using each tag — these are your proven keywords.',
@@ -2041,9 +2250,10 @@
       const tips = [];
       for (let i = 0; i < maxLen; i++) tips.push('Day ' + (i + 1) + ' — ★ this video: ' + (latest[i] != null ? fmt.format(latest[i]) : '—') + ' · typical launch: ' + fmt.format(med[i] || 0));
       const series = [
-        ...others.map(a => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .3 })),
-        { pts: med, color: 'var(--gold)', width: 1.5 },
-        ...(latest.length > 1 ? [{ pts: latest, color: 'var(--live)', width: 2.5 }] : [])
+        // only the first grey line is named, so the legend says "your past launches" once
+        ...others.map((a, i) => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .28, name: i === 0 ? 'Your past launches' : '' })),
+        { pts: med, color: 'var(--gold)', width: 1.5, name: 'Typical launch' },
+        ...(latest.length > 1 ? [{ pts: latest, color: 'var(--live)', width: 2, dot: true, name: 'This video' }] : [])
       ];
       holder.innerHTML = '<div class="dsection"><h4>Launch curves — every video’s first 14 days, aligned by age</h4>' +
         '<p class="explain">Grey lines are your previous launches (total views by days since each one’s own upload), gold is your typical launch, red is this video. Red above gold = beating your usual start.</p>' +
@@ -2372,7 +2582,7 @@
       const dropPos = Math.round(dropAt / (pts.length - 1) * 100);
       html += '<div class="dsection"><h4>How long people keep watching</h4>' +
         '<p class="explain">Start of the video on the left, end on the right. The line shows what % of viewers are still watching — ' + Math.round(pts[Math.floor(pts.length / 2)]) + '% make it to the halfway point' + (dropSize >= 1 ? ', and the biggest drop-off is around ' + dropPos + '% of the way through' : '') + '.</p>' +
-        lineChartHtml(pts, pts.map((p, i) => Math.round(p) + '% still watching — ' + Math.round(i / (pts.length - 1) * 100) + '% through the video'), 'var(--accent)', { label: 'Retention curve', yMaxLabel: Math.round(Math.max(...pts)) + '%', x0: 'start', x1: 'end' }) + '</div>';
+        lineChartHtml(pts, pts.map((p, i) => Math.round(p) + '% still watching — ' + Math.round(i / (pts.length - 1) * 100) + '% through the video'), 'var(--accent)', { label: 'Retention curve', unit: '%', x0: 'start', xMid: 'halfway', x1: 'end' }) + '</div>';
 
       // vs the rest of YouTube: 0.5 is typical for a video of this length, 1 is the best
       const rel = r.retention.rows.map(x => x[2]).filter(v => typeof v === 'number');

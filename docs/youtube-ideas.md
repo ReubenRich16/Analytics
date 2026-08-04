@@ -16,6 +16,12 @@ Current metrics in use: `views`, `estimatedMinutesWatched`, `averageViewDuration
 - **A1 relativeRetentionPerformance** — shipped, in each video's deep-dive.
 - **A2 saves (videosAddedToPlaylists)** — shipped: table column, drawer tile, account total.
 - **B2 milestone projections** — shipped on both dashboards (subscribers / followers).
+- **Chart overhaul** — human-number axes with every gridline labelled, crosshair
+  hover, selective direct labels, legends, thinner marks, phone-legible axis text.
+- **Reach vs reaction scatter** — views against likes for every video, with the
+  average like-rate as a reference line (Account breakdown).
+- **Stat-tile sparklines** — a 12-point trend under Views / Likes / Subscribers /
+  Comments, drawn from the snapshot robot's recorded history.
 
 ## A. New data we're not pulling yet
 
