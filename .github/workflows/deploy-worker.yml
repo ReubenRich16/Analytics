@@ -48,11 +48,11 @@ jobs:
           printf '%s' "$YT_API_KEY" | npx wrangler@latest secret put YT_API_KEY
           printf '%s' "$CHANNEL_ID" | npx wrangler@latest secret put CHANNEL_ID
           printf '%s' "$GEMINI_KEY" | npx wrangler@latest secret put GEMINI_KEY
-          # TikTok is optional — only push these once the secrets exist, so the deploy
-          # keeps working before the TikTok app is registered
+          # The TikTok client key lives in wrangler.toml [vars] (it isn't sensitive), so only
+          # the secret needs pushing here. Setting the repo secret still overrides it if present.
           if [ -n "$TIKTOK_CLIENT_KEY" ]; then
             printf '%s' "$TIKTOK_CLIENT_KEY" | npx wrangler@latest secret put TIKTOK_CLIENT_KEY
-          else echo "TIKTOK_CLIENT_KEY not set — skipping"; fi
+          else echo "TIKTOK_CLIENT_KEY not set as a repo secret — using the value in wrangler.toml"; fi
           if [ -n "$TIKTOK_CLIENT_SECRET" ]; then
             printf '%s' "$TIKTOK_CLIENT_SECRET" | npx wrangler@latest secret put TIKTOK_CLIENT_SECRET
           else echo "TIKTOK_CLIENT_SECRET not set — skipping"; fi

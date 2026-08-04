@@ -16,6 +16,13 @@ crons = ["* * * * *"]
 binding = "MINUTE"
 id = "24a3e8ab02904af499a07b6928687b48"
 
+# The TikTok client key is NOT a secret — it is sent in the browser's own OAuth URL,
+# exactly like a Google OAuth Client ID. Keeping it here means only the client *secret*
+# has to be managed as a secret. Update this if the app moves from Sandbox to production
+# (the "sb" prefix marks a Sandbox credential).
+[vars]
+TIKTOK_CLIENT_KEY = "sbawwsui0uvmik0odt"
+
 # Secrets (set with the commands below, never in this file or git):
 #   npx wrangler secret put YT_API_KEY    # public YouTube key (per-minute tracker)
 #   npx wrangler secret put CHANNEL_ID    # UCyours,UCpartners (tracked + AI-allowed channels)
