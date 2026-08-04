@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Channel Command — TikTok</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* TikTok-specific accents layered on the shared dashboard styles */
+  .tt-cyan { color:#25f4ee; }
+  .avatar { width:52px; height:52px; border-radius:50%; flex:none; background:var(--panel-2); border:1px solid var(--line); object-fit:cover; }
+  .switcher { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .switcher a { text-decoration:none; }
+  .switcher .on { background:var(--panel-2); border-color:var(--muted); color:var(--text); }
+  .cover { width:64px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); display:block; }
+  td.covercell { padding:6px 0 6px 14px; width:78px; }
+  @media (max-width:640px) {
+    #tbody td.covercell { display:block; padding:0 0 8px; width:auto; }
+    #tbody td.covercell::before { display:none; }
+    #tbody td.covercell .cover { width:96px; }
+    #tbody td.covercell:empty { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="live-dot" id="liveDot"></span>
+    <h1>Channel Command <span class="tt-cyan">· TikTok</span></h1>
+    <div class="status"><span id="statusText">not signed in</span></div>
+    <select id="themeSel" title="Theme">
+      <optgroup label="Soft &amp; sleek">
+        <option value="rose">🌷 Rosé</option>
+        <option value="sakura">🌸 Sakura</option>
+        <option value="pearl">🤍 Pearl</option>
+      </optgroup>
+      <optgroup label="Dark &amp; dreamy 🌙">
+        <option value="mauve">💗 Mauve</option>
+        <option value="twilight">🌌 Twilight</option>
+        <option value="berry">🍇 Berry</option>
+        <option value="rosenight">🌹 Midnight Rose</option>
+        <option value="dusk">🌆 Dusk</option>
+      </optgroup>
+      <optgroup label="Original">
+        <option value="midnight">🌙 Midnight</option>
+        <option value="noir">🖤 Noir</option>
+        <option value="ocean">🌊 Ocean</option>
+        <option value="blush">🌺 Blush</option>
+        <option value="lavender">💜 Lavender</option>
+        <option value="honey">🍯 Honey</option>
+      </optgroup>
+    </select>
+  </header>
+
+  <div class="switcher">
+    <a href="./"><button class="ghost">▶ YouTube</button></a>
+    <a href="./tiktok.html"><button class="ghost on">♪ TikTok</button></a>
+  </div>
+
+  <div class="error" id="errorBox"></div>
+
+  <!-- SETUP / SIGN IN -->
+  <div class="card" id="setupPanel">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Connect TikTok</div>
+    <p class="explain" style="margin:10px 0 14px">
+      Sign in with TikTok to see your live stats. Your login is handled entirely by TikTok —
+      this dashboard never sees your password or email, and it can only read your own
+      profile and video statistics. It can never post, edit or delete anything.
+    </p>
+    <div class="row">
+      <div class="field">
+        <label for="workerUrl" style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Worker URL</label>
+        <input id="workerUrl" type="text" placeholder="https://yt.yourname.workers.dev" autocomplete="off">
+      </div>
+      <button class="primary" id="signInBtn">Sign in with TikTok</button>
+    </div>
+    <p class="hint">
+      The Worker holds the TikTok app secret and does the sign-in exchange, so nothing
+      sensitive is ever in this page. Setup steps live in the repo's
+      <code>docs/tiktok-setup.md</code>.
+    </p>
+  </div>
+
+  <!-- PROFILE -->
+  <div class="channel-banner" id="profileBanner" style="display:none">
+    <img id="ttAvatar" class="avatar" alt="" src="">
+    <div>
+      <div id="ttName" style="font-weight:700;font-size:15px"></div>
+      <div id="ttMeta" class="explain" style="margin:0"></div>
+    </div>
+    <div class="controls">
+      <select id="interval" title="Refresh rate">
+        <option value="30000">30s refresh</option>
+        <option value="60000" selected>60s refresh</option>
+        <option value="120000">2m refresh</option>
+      </select>
+      <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
+      <button class="ghost" id="pauseBtn">Pause</button>
+      <button class="ghost" id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <!-- LIVE TOTALS -->
+  <div class="grid" id="statsGrid" style="display:none">
+    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
+    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
+    <div class="stat"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div></div>
+    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
+  </div>
+
+  <!-- LATEST POST -->
+  <div class="card" id="latestCard" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Latest post — how it's doing since it went live</div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="ghost" id="latestPrev" title="Older post" style="padding:6px 11px">◀</button>
+        <span id="latestPos" style="font-size:11px;color:var(--muted);min-width:30px;text-align:center"></span>
+        <button class="ghost" id="latestNext" title="Newer post" style="padding:6px 11px">▶</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-top:10px">
+      <img id="latestCover" class="cover" alt="" src="" style="display:none">
+      <div style="flex:1;min-width:0">
+        <h3 id="latestTitle" style="font-size:15px;font-weight:700;margin:0 0 3px;line-height:1.3"></h3>
+        <p class="explain" id="latestMetaLine" style="margin-bottom:10px"></p>
+      </div>
+    </div>
+    <div id="latestContent"></div>
+  </div>
+
+  <!-- VIDEO TABLE -->
+  <div class="card tablecard" id="tableCard" style="display:none">
+    <div class="thead-bar">
+      <div class="label" id="tableLabel">Posts — tap a row to open on TikTok</div>
+      <select id="sortMode" title="Or click any column header to sort by it">
+        <option value="newest" selected>Sort: newest</option>
+        <option value="views">Sort: most views</option>
+        <option value="pace">Sort: views/day pace</option>
+        <option value="likes">Sort: most likes</option>
+        <option value="comments">Sort: most comments</option>
+        <option value="shares">Sort: most shares</option>
+        <option value="eng">Sort: engagement rate</option>
+        <option value="title">Sort: caption A–Z</option>
+        <option value="" disabled>— or click a column header —</option>
+      </select>
+    </div>
+    <div class="tscroll">
+      <table>
+        <thead><tr id="thRow">
+          <th></th>
+          <th data-sort="title" style="text-align:left" title="Click to sort">Caption</th>
+          <th data-sort="views" title="Click to sort">Views</th>
+          <th data-sort="likes" title="Click to sort">Likes</th>
+          <th data-sort="comments" title="Click to sort">Comments</th>
+          <th data-sort="shares" title="Click to sort">Shares</th>
+          <th data-sort="eng" title="Likes per view. Click to sort">Eng %</th>
+          <th data-sort="pace" title="Views per day since posting. Click to sort">Views/day</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to any third-party app.</p>
+  </div>
+
+  <!-- ACCOUNT BREAKDOWN -->
+  <div class="card" id="breakdownCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
+    <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
+    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
+  </div>
+
+  <!-- COACHING -->
+  <div class="card" id="coachCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
+    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
+    <div id="coachContent"><p class="dnote">crunching…</p></div>
+  </div>
+
+  <!-- IDEA STUDIO -->
+  <div class="card" id="ideasCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Idea Studio — captions, on-screen text, hashtags &amp; next-video ideas</div>
+    <p class="explain" style="margin-top:8px">Describe the video and get ideas matching <b>your own</b> caption style and best-performing hashtags.</p>
+    <textarea id="ideaDesc" rows="2" placeholder="Describe the video, e.g. “slow tapping on a glass jar, no talking”…"></textarea>
+    <div class="row" style="margin-top:8px;gap:8px">
+      <button class="ghost" id="ideaLatest">↑ Use latest post</button>
+      <button class="primary" id="ideaBtn">💡 Generate ideas</button>
+    </div>
+    <div id="ideaOut" style="margin-top:12px"></div>
+  </div>
+
+  <div class="footer-tools">
+    <span id="syncStatus" title="Cross-device sync via your private Worker storage"></span>
+  </div>
+</div>
+
+<div id="chartTip"></div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const fmt = new Intl.NumberFormat('en-AU');
+  const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+  const DEFAULT_WORKER = 'https://yt.reubenrichardson37.workers.dev';
+
+  let workerUrl = '', session = '', me = null, videos = [], prevTotals = null, timer = null,
+      paused = false, hiddenPaused = false, intervalMs = 60000, hist = null, polling = false;
+
+  const setStatus = t => { $('statusText').textContent = t; };
+  const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
+  const clearError = () => { $('errorBox').style.display = 'none'; };
+
+  /* ---------- worker API ---------- */
+  async function api(path, opts) {
+    const o = opts || {};
+    const r = await fetch(workerUrl + path, {
+      method: o.method || 'GET',
+      headers: { ...(session ? { Authorization: 'Bearer ' + session } : {}), ...(o.body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(o.body ? { body: JSON.stringify(o.body) } : {})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 401) { signOut(true); throw new Error(j.error || 'Session expired — please sign in again.'); }
+      throw new Error(j.error || ('HTTP ' + r.status));
+    }
+    return j;
+  }
+
+  /* ---------- helpers shared with the YouTube dashboard ---------- */
+  const ageDays = v => Math.max(1 / 24, (Date.now() - v.create_time * 1000) / 864e5);
+  const capOf = v => (v.title || v.video_description || '').trim() || '(no caption)';
+  const paceOf = v => (v.view_count || 0) / ageDays(v);
+  const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
+  const hashtagsOf = v => [...new Set(((v.title || '') + ' ' + (v.video_description || '')).toLowerCase().match(/#[\p{L}0-9_]+/gu) || [])];
+  const fmtAgo = ts => {
+    const s = (Date.now() - ts) / 1000;
+    if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  };
+  function animateNum(el, from, to) {
+    if (from == null || from === to) { el.textContent = fmt.format(to); return; }
+    const t0 = performance.now(), dur = 600;
+    const step = now => {
+      const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt.format(Math.round(from + (to - from) * e));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  const flash = el => { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); };
+  const section = (title, explainer, body) => body ? '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + explainer + '</p>' + body + '</div>' : '';
+  const mcell = (l, v, s) => '<div class="mcell"><div class="label">' + l + '</div><div class="val">' + v + '</div>' + (s ? '<div class="sub">' + s + '</div>' : '') + '</div>';
+  function hbarList(rows, opts) {
+    const max = Math.max(1, ...rows.map(r => r.val));
+    return rows.map(r => '<div class="hbar-row"><div class="hlabel" title="' + esc(r.label) + '">' + esc(r.label) + '</div>' +
+      '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
+      '<div class="hval">' + esc(r.valText || fmt.format(r.val)) + '</div></div>').join('');
+  }
+
+  /* ---------- chart ---------- */
+  let chartId = 0;
+  function lineChart(pts, color, label) {
+    if (!pts || pts.length < 2) return '';
+    const w = 560, h = 132, L = 46, R = 10, T = 12, B = 24, ci = ++chartId;
+    const max = Math.max(...pts, 1), min = Math.min(...pts, 0);
+    const X = i => L + (w - L - R) * (i / (pts.length - 1));
+    const Y = v => h - B - (h - B - T) * ((v - min) / Math.max(1, max - min));
+    let d = 'M' + X(0).toFixed(1) + ',' + Y(pts[0]).toFixed(1);
+    for (let i = 1; i < pts.length; i++) d += ' L' + X(i).toFixed(1) + ',' + Y(pts[i]).toFixed(1);
+    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
+      '<defs><linearGradient id="ttg' + ci + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="' + color + '" stop-opacity="0.28"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.02"/></linearGradient></defs>' +
+      '<line class="grid-line" x1="' + L + '" y1="' + (T + (h - B - T) / 3).toFixed(1) + '" x2="' + (w - R) + '" y2="' + (T + (h - B - T) / 3).toFixed(1) + '"/>' +
+      '<line class="grid-line" x1="' + L + '" y1="' + (T + (h - B - T) * 2 / 3).toFixed(1) + '" x2="' + (w - R) + '" y2="' + (T + (h - B - T) * 2 / 3).toFixed(1) + '"/>' +
+      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (h - B) + '" style="stroke:var(--line)"/>' +
+      '<line x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '" style="stroke:var(--line)"/>' +
+      '<text x="' + (L - 6) + '" y="16" text-anchor="end" style="fill:var(--muted);font-size:9.5px">' + fmt.format(max) + '</text>' +
+      '<path d="' + d + ' L' + X(pts.length - 1).toFixed(1) + ',' + (h - B) + ' L' + X(0).toFixed(1) + ',' + (h - B) + ' Z" fill="url(#ttg' + ci + ')"/>' +
+      '<path class="line anim" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2.2"/>' +
+      '<circle class="end-dot" cx="' + X(pts.length - 1).toFixed(1) + '" cy="' + Y(pts[pts.length - 1]).toFixed(1) + '" r="3.2" style="fill:' + color + ';stroke:var(--panel);stroke-width:1.5"/>' +
+      '</svg>';
+  }
+
+  /* ---------- auth ---------- */
+  function signIn() {
+    const w = ($('workerUrl').value || '').trim().replace(/\/+$/, '');
+    if (!/^https:\/\/\S+$/.test(w)) { showError('Enter your Worker URL first (it looks like https://yt.yourname.workers.dev).'); return; }
+    workerUrl = w;
+    try { localStorage.setItem('tt_worker', w); } catch (e) {}
+    location.href = w + '/tiktok/login?return=' + encodeURIComponent(location.origin + location.pathname);
+  }
+  function signOut(silent) {
+    session = '';
+    try { localStorage.removeItem('tt_sess'); } catch (e) {}
+    if (timer) clearInterval(timer);
+    if (!silent) location.reload();
+    else { $('setupPanel').style.display = 'block'; setStatus('signed out'); }
+  }
+
+  /* ---------- boot ---------- */
+  async function boot() {
+    setStatus('loading…');
+    me = await api('/tiktok/me');
+    $('ttAvatar').src = me.avatar_url || '';
+    $('ttName').textContent = me.display_name || me.username || 'TikTok';
+    $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
+      fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
+    $('setupPanel').style.display = 'none';
+    ['profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
+      $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
+    });
+    try { hist = await api('/tiktok/history'); } catch (e) { hist = null; }
+    intervalMs = +$('interval').value;
+    await poll();
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, intervalMs);
+  }
+
+  async function poll(force) {
+    if (!session) return;
+    if ((paused || hiddenPaused) && !force) return;
+    if (polling) return;
+    polling = true;
+    setStatus('fetching…');
+    try {
+      const [v, u] = await Promise.all([api('/tiktok/videos'), api('/tiktok/me')]);
+      videos = (v.videos || []).filter(x => x && x.id);
+      me = u || me;
+      const totals = { views: 0, likes: 0, comments: 0, followers: me.follower_count || 0 };
+      for (const x of videos) { totals.views += x.view_count || 0; totals.likes += x.like_count || 0; totals.comments += x.comment_count || 0; }
+      [['viewsNum', 'viewsDelta', 'views'], ['likesNum', 'likesDelta', 'likes'], ['followersNum', 'followersDelta', 'followers'], ['commentsNum', 'commentsDelta', 'comments']]
+        .forEach(([n, dl, k]) => {
+          const el = $(n);
+          animateNum(el, prevTotals ? prevTotals[k] : null, totals[k]);
+          const d = prevTotals ? totals[k] - prevTotals[k] : null;
+          if (d > 0) { flash(el); const t = el.closest('.stat'); if (t) { t.classList.remove('hit'); void t.offsetWidth; t.classList.add('hit'); } }
+          const de = $(dl);
+          if (d === null) { de.textContent = ''; de.className = 'delta'; }
+          else if (d > 0) { de.textContent = '+' + fmt.format(d); de.className = 'delta up'; }
+          else { de.textContent = '±0'; de.className = 'delta'; }
+        });
+      $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
+        fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
+      prevTotals = totals;
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
+      clearError();
+      $('liveDot').classList.add('on');
+      setStatus('live · ' + new Date().toLocaleTimeString());
+    } catch (e) {
+      $('liveDot').classList.remove('on');
+      setStatus('error'); showError(e.message);
+    } finally { polling = false; }
+  }
+
+  /* ---------- table ---------- */
+  let tableSort = { key: 'newest', dir: -1 };
+  const SORT_VAL = {
+    newest: v => v.create_time || 0,
+    views: v => v.view_count || 0,
+    likes: v => v.like_count || 0,
+    comments: v => v.comment_count || 0,
+    shares: v => v.share_count || 0,
+    eng: v => engOf(v),
+    pace: v => paceOf(v),
+    title: v => capOf(v).toLowerCase()
+  };
+  function renderTable() {
+    const get = SORT_VAL[tableSort.key] || SORT_VAL.newest, dir = tableSort.dir;
+    const rows = videos.slice().sort((a, b) => {
+      const x = get(a), y = get(b);
+      let c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+      if (c === 0) c = (a.view_count || 0) - (b.view_count || 0);
+      return c * dir;
+    });
+    const row = $('thRow');
+    row.querySelectorAll('th[data-sort]').forEach(th => {
+      const on = th.dataset.sort === tableSort.key;
+      th.classList.toggle('sorted', on);
+      th.classList.toggle('desc', on && dir === -1);
+      th.classList.toggle('asc', on && dir === 1);
+    });
+    $('tableLabel').textContent = 'Posts — tracking ' + rows.length + ' · tap a row to open on TikTok';
+    const tb = $('tbody'); tb.innerHTML = '';
+    for (const v of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
+        '<td class="title">' + esc(capOf(v)) + '</td>' +
+        '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
+        '<td data-label="Likes">' + fmt.format(v.like_count || 0) + '</td>' +
+        '<td data-label="Comments">' + fmt.format(v.comment_count || 0) + '</td>' +
+        '<td data-label="Shares">' + fmt.format(v.share_count || 0) + '</td>' +
+        '<td data-label="Engagement">' + engOf(v).toFixed(1) + '%</td>' +
+        '<td data-label="Views/day">' + fmt.format(Math.round(paceOf(v))) + '</td>';
+      if (v.share_url) tr.addEventListener('click', () => window.open(v.share_url, '_blank', 'noopener'));
+      tb.appendChild(tr);
+    }
+  }
+
+  /* ---------- latest post + minute race ---------- */
+  let slotIdx = 0;
+  const recent = () => videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0)).slice(0, 4);
+  function showSlot(i) {
+    const slots = recent();
+    if (!slots.length) return;
+    slotIdx = Math.max(0, Math.min(i, slots.length - 1));
+    const v = slots[slotIdx];
+    $('latestTitle').textContent = capOf(v);
+    const c = $('latestCover');
+    if (v.cover_image_url) { c.src = v.cover_image_url; c.style.display = 'block'; } else c.style.display = 'none';
+    $('latestMetaLine').innerHTML = (slotIdx === 0 ? 'Latest post' : 'Earlier post') + ' · posted ' +
+      esc(new Date(v.create_time * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) +
+      ' · <b style="color:var(--text)">' + fmt.format(v.view_count || 0) + ' views · ' + fmt.format(v.like_count || 0) + ' likes</b>';
+    $('latestPos').textContent = (slotIdx + 1) + ' / ' + slots.length;
+    $('latestPrev').disabled = slotIdx >= slots.length - 1;
+    $('latestNext').disabled = slotIdx <= 0;
+    renderLatest(v);
+  }
+  function renderLatest(v) {
+    let html = '';
+    html += '<div class="metric-grid m8">' +
+      mcell('Views', fmt.format(v.view_count || 0)) +
+      mcell('Likes', fmt.format(v.like_count || 0)) +
+      mcell('Comments', fmt.format(v.comment_count || 0)) +
+      mcell('Shares', fmt.format(v.share_count || 0)) +
+      mcell('Engagement', engOf(v).toFixed(1) + '%', 'likes per view') +
+      mcell('Views/day', fmt.format(Math.round(paceOf(v))), 'since posting') +
+      mcell('Length', (v.duration || 0) + 's') +
+      mcell('Age', fmtAgo(v.create_time * 1000)) +
+      '</div>';
+    // minute-by-minute, recorded by the Worker even with no browser open
+    const rec = hist && hist.videos && hist.videos[v.id];
+    if (rec && rec.s && rec.s.length > 1) {
+      const pts = rec.s.map(s => s[1]);
+      html += '<div class="dsection"><h4>Views since it went live — recorded minute by minute</h4>' +
+        '<p class="explain">Captured by your Worker in the background, even when nobody had this page open. TikTok itself provides no history — this is built from your own recordings.</p>' +
+        lineChart(pts, 'var(--live)', 'Views over time') +
+        '<p class="dnote" style="margin-top:6px">' + rec.s.length + ' samples · first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
+    } else {
+      html += '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
+        '6 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
+    }
+    // how it compares to the account's own typical post
+    const others = videos.filter(x => x.id !== v.id);
+    if (others.length >= 3) {
+      const paces = others.map(paceOf).sort((a, b) => a - b);
+      const med = paces[paces.length >> 1] || 1;
+      const idx = Math.round(paceOf(v) / med * 100);
+      const beats = Math.round(others.filter(o => paceOf(o) < paceOf(v)).length / others.length * 100);
+      const grade = beats >= 95 ? 'A+' : beats >= 85 ? 'A' : beats >= 72 ? 'A-' : beats >= 58 ? 'B+' : beats >= 45 ? 'B' : beats >= 30 ? 'C' : beats >= 15 ? 'D' : 'F';
+      const col = grade[0] === 'A' ? 'var(--up)' : grade[0] === 'B' ? 'var(--accent)' : grade[0] === 'C' ? 'var(--gold)' : 'var(--down)';
+      html += '<div class="dsection"><h4>Report card</h4><p class="explain">How this post ranks against your own account — age-adjusted, so new and old compare fairly.</p>' +
+        '<div class="reportcard"><div class="grade-badge" style="background:' + col + '">' + grade + '</div>' +
+        '<div class="grade-meta"><div class="big">Beats ' + beats + '% of your posts</div>' +
+        '<div class="grade-bars">' +
+        '<div class="gbar"><span class="gl">Pace</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
+        '</div></div></div></div>';
+    }
+    $('latestContent').innerHTML = html;
+  }
+
+  /* ---------- breakdown + coaching ---------- */
+  function renderBreakdown() {
+    const el = $('breakdownContent');
+    if (!videos.length) { el.innerHTML = '<p class="dnote">No posts returned yet.</p>'; return; }
+    const n = videos.length;
+    const t = videos.reduce((a, v) => ({
+      views: a.views + (v.view_count || 0), likes: a.likes + (v.like_count || 0),
+      comments: a.comments + (v.comment_count || 0), shares: a.shares + (v.share_count || 0)
+    }), { views: 0, likes: 0, comments: 0, shares: 0 });
+    const paces = videos.map(paceOf).sort((a, b) => a - b);
+    let html = '<div class="dsection"><h4>Totals</h4><p class="explain">Across the ' + n + ' posts the API returns.</p><div class="metric-grid m8">' +
+      mcell('Posts', fmt.format(n)) +
+      mcell('Followers', fmt.format(me.follower_count || 0)) +
+      mcell('Views', fmt.format(t.views)) +
+      mcell('Likes', fmt.format(t.likes)) +
+      mcell('Comments', fmt.format(t.comments)) +
+      mcell('Shares', fmt.format(t.shares)) +
+      mcell('Account likes', fmt.format(me.likes_count || 0), 'lifetime, all posts') +
+      mcell('Following', fmt.format(me.following_count || 0)) +
+      '</div></div>';
+    html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">The bar any new post should beat.</p><div class="metric-grid m8">' +
+      mcell('Avg views', fmt.format(Math.round(t.views / n))) +
+      mcell('Median views/day', fmt.format(Math.round(paces[paces.length >> 1] || 0))) +
+      mcell('Avg likes', fmt.format(Math.round(t.likes / n))) +
+      mcell('Avg comments', fmt.format(Math.round(t.comments / n))) +
+      mcell('Avg shares', fmt.format(Math.round(t.shares / n))) +
+      mcell('Like rate', (t.views ? t.likes / t.views * 100 : 0).toFixed(1) + '%', 'likes per view') +
+      mcell('Comments /1k', (t.views ? t.comments / t.views * 1000 : 0).toFixed(1)) +
+      mcell('Share rate', (t.views ? t.shares / t.views * 100 : 0).toFixed(2) + '%') +
+      '</div></div>';
+    const top = videos.slice().sort((a, b) => paceOf(b) - paceOf(a));
+    html += section('Top 5 posts (by views/day)', 'Age-adjusted so recent posts compare fairly with old ones.',
+      hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(paceOf(v)), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--up)' }));
+    if (top.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical post.',
+      hbarList(top.slice(-5).reverse().map(v => ({ label: capOf(v), val: Math.max(1, Math.round(paceOf(v))), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--down)' }));
+    el.innerHTML = html;
+  }
+
+  const DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const BANDS = [
+    { label: 'Morning (5am–11am)', t: h => h >= 5 && h < 11 },
+    { label: 'Midday (11am–3pm)', t: h => h >= 11 && h < 15 },
+    { label: 'Afternoon (3pm–7pm)', t: h => h >= 15 && h < 19 },
+    { label: 'Evening (7pm–11pm)', t: h => h >= 19 && h < 23 },
+    { label: 'Late night (11pm–5am)', t: h => h >= 23 || h < 5 }
+  ];
+  function renderCoaching() {
+    const el = $('coachContent');
+    if (videos.length < 4) { el.innerHTML = '<p class="dnote">Once a few posts are tracked, personalised coaching appears here.</p>'; return; }
+    const rows = videos.map(v => ({ d: new Date(v.create_time * 1000), pace: paceOf(v), tags: hashtagsOf(v) }));
+    const avgBy = (keyfn) => {
+      const g = {};
+      for (const r of rows) { const k = keyfn(r); (g[k] = g[k] || []).push(r.pace); }
+      return Object.entries(g).filter(([, a]) => a.length >= 2)
+        .map(([k, a]) => ({ k, avg: a.reduce((x, y) => x + y, 0) / a.length }));
+    };
+    let html = '';
+    const byDay = avgBy(r => r.d.getDay()).sort((a, b) => b.avg - a.avg);
+    if (byDay.length >= 2) html += section('Best day to post', 'Average views/day of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
+      hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg) })), { color: 'var(--up)' }));
+    const bands = [];
+    for (const b of BANDS) {
+      const a = rows.filter(r => b.t(r.d.getHours())).map(r => r.pace);
+      if (a.length >= 2) bands.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length) });
+    }
+    bands.sort((a, b) => b.val - a.val);
+    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average views/day.', hbarList(bands, { color: 'var(--accent)' }));
+    const tagMap = {};
+    for (const r of rows) for (const t of r.tags) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += r.pace; }
+    const tags = Object.entries(tagMap).filter(([, e]) => e.n >= 2).map(([t, e]) => ({ tag: t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 10);
+    if (tags.length) html += section('Hashtags to lean into', 'Ranked by the average views/day of the posts using them.',
+      '<div class="chiprow">' + tags.map(t => '<span class="chip">' + esc(t.tag) + '</span>').join('') + '</div>');
+    const pubs = rows.map(r => r.d.getTime()).sort((a, b) => a - b), gaps = [];
+    for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
+    if (gaps.length >= 3) {
+      const g = gaps.slice().sort((a, b) => a - b), med = g[g.length >> 1];
+      html += '<div class="dsection"><h4>Posting rhythm</h4><p class="explain">You post roughly every <b>' +
+        (med < 1 ? Math.round(med * 24) + ' hours' : med.toFixed(1) + ' days') + '</b>.</p></div>';
+    }
+    el.innerHTML = html || '<p class="dnote">Not enough spread in your posts yet for clear patterns.</p>';
+  }
+
+  /* ---------- idea studio ---------- */
+  function styleSummary() {
+    const caps = videos.map(capOf).filter(c => c !== '(no caption)');
+    const L = [];
+    if (caps.length) L.push('Recent captions: ' + caps.slice(0, 12).map(c => '"' + c + '"').join('; ') + '.');
+    const top = videos.slice().sort((a, b) => paceOf(b) - paceOf(a)).slice(0, 8).map(capOf);
+    if (top.length) L.push('Best-performing captions (mimic what works): ' + top.map(c => '"' + c + '"').join('; ') + '.');
+    const tagMap = {};
+    for (const v of videos) for (const t of hashtagsOf(v)) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += paceOf(v); }
+    const tags = Object.entries(tagMap).map(([t, e]) => ({ t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 20);
+    if (tags.length) L.push('Best hashtags by average views/day: ' + tags.map(x => x.t).join(', ') + '.');
+    const avgLen = caps.length ? Math.round(caps.reduce((a, c) => a + c.length, 0) / caps.length) : 0;
+    if (avgLen) L.push('Typical caption length: about ' + avgLen + ' characters.');
+    return L.join('\n');
+  }
+  function renderIdeas(ai) {
+    const arr = k => Array.isArray(ai[k]) ? ai[k] : [];
+    const list = items => '<ul class="idea-list">' + items.map(x => '<li>' + esc(String(x)) + '</li>').join('') + '</ul>';
+    const listV = items => '<ul class="idea-list grid2">' + items.map(x => '<li>' + esc(x && x.title ? x.title : String(x)) + (x && x.why ? '<span class="why">' + esc(x.why) + '</span>' : '') + '</li>').join('') + '</ul>';
+    let html = '';
+    const a = arr('titles').length ? section('Caption ideas', '', list(arr('titles'))) : '';
+    const b = arr('onscreenText').length ? section('On-screen text hooks', '', list(arr('onscreenText'))) : '';
+    if (a || b) html += '<div class="idea-cols">' + a + b + '</div>';
+    if (arr('tags').length) html += section('Hashtags', '', '<div class="chiprow">' + arr('tags').map(t => '<span class="chip">#' + esc(String(t).replace(/^#/, '')) + '</span>').join('') + '</div>');
+    if (arr('videoIdeas').length) html += section('Next-video ideas', '', listV(arr('videoIdeas')));
+    return html;
+  }
+  async function runIdeas() {
+    const desc = ($('ideaDesc').value || '').trim();
+    const out = $('ideaOut');
+    if (!desc) { out.innerHTML = '<p class="dnote">Describe the video first — or tap “Use latest post”.</p>'; return; }
+    out.innerHTML = '<p class="dnote">thinking…</p>';
+    try {
+      const ai = await api('/tiktok/ai', { method: 'POST', body: { desc, style: styleSummary() } });
+      out.innerHTML = renderIdeas(ai) || '<p class="dnote">No ideas came back — try rephrasing.</p>';
+    } catch (e) { out.innerHTML = '<p class="dnote">Couldn’t get AI ideas: ' + esc(e.message) + '</p>'; }
+  }
+
+  /* ---------- events ---------- */
+  $('signInBtn').addEventListener('click', signIn);
+  $('signOutBtn').addEventListener('click', () => signOut());
+  $('refreshBtn').addEventListener('click', () => { if (session) { api('/tiktok/history').then(h => { hist = h; }).catch(() => {}); poll(true); } });
+  $('pauseBtn').addEventListener('click', () => {
+    paused = !paused;
+    $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+    setStatus(paused ? 'paused' : 'resuming…');
+    if (!paused) poll(true);
+  });
+  $('interval').addEventListener('change', () => {
+    intervalMs = +$('interval').value;
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, intervalMs);
+  });
+  $('latestPrev').addEventListener('click', () => showSlot(slotIdx + 1));
+  $('latestNext').addEventListener('click', () => showSlot(slotIdx - 1));
+  $('thRow').addEventListener('click', e => {
+    const th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    const k = th.dataset.sort;
+    if (tableSort.key === k) tableSort.dir = -tableSort.dir;
+    else tableSort = { key: k, dir: k === 'title' ? 1 : -1 };
+    const sel = $('sortMode');
+    sel.value = [...sel.options].some(o => o.value === k) ? k : '';
+    renderTable();
+  });
+  $('sortMode').addEventListener('change', () => {
+    const k = $('sortMode').value;
+    if (!k) return;
+    tableSort = { key: k, dir: k === 'title' ? 1 : -1 };
+    renderTable();
+  });
+  $('ideaBtn').addEventListener('click', runIdeas);
+  $('ideaLatest').addEventListener('click', () => { const s = recent()[0]; if (s) $('ideaDesc').value = capOf(s); });
+  $('errorBox').addEventListener('click', clearError);
+  document.addEventListener('visibilitychange', () => {
+    hiddenPaused = document.hidden;
+    if (!document.hidden && !paused && session) poll();
+  });
+
+  // theme, shared with the YouTube dashboard
+  function applyTheme(t) {
+    if (t === 'midnight') document.body.removeAttribute('data-theme');
+    else document.body.dataset.theme = t;
+    try { localStorage.setItem('cc_theme', t); } catch (e) {}
+    $('themeSel').value = t;
+  }
+  $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
+  let savedTheme = 'midnight';
+  try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
+  applyTheme(savedTheme);
+
+  /* ---------- start ---------- */
+  try { workerUrl = localStorage.getItem('tt_worker') || ''; } catch (e) {}
+  if (!workerUrl) workerUrl = DEFAULT_WORKER;
+  $('workerUrl').value = workerUrl;
+  // the Worker hands the session back in the URL fragment so it never hits a server log
+  const frag = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const fromUrl = frag.get('tt');
+  if (fromUrl) {
+    session = fromUrl;
+    try { localStorage.setItem('tt_sess', session); } catch (e) {}
+    history.replaceState(null, '', location.pathname);
+  } else {
+    try { session = localStorage.getItem('tt_sess') || ''; } catch (e) {}
+  }
+  if (session) boot().catch(e => { showError(e.message); setStatus('not signed in'); $('setupPanel').style.display = 'block'; });
+  else setStatus('not signed in');
+})();
+</script>
+</body>
+</html>

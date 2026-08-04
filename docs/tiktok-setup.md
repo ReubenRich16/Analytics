@@ -151,27 +151,44 @@ Worker automatically:
 The Worker performs the OAuth code exchange server-side, so the secret is never
 exposed in the public page — the same approach used for the Gemini key.
 
-## Step 9 — Tell me it's done
+## Step 9 — Use it
 
-Send me:
-- the **client key** (safe to share), and
-- confirmation that both accounts are added as target users.
+Once `TIKTOK_CLIENT_SECRET` is in the repo secrets and the deploy has run, open:
 
-Then the Worker OAuth endpoints and the TikTok dashboard page can be built and
-connected.
+```
+https://reubenrich16.github.io/Analytics/tiktok.html
+```
+
+and press **Sign in with TikTok**. Only accounts listed as Sandbox target users
+can sign in, so it stays private to the two of you.
 
 ---
 
-## What gets built afterwards
+## What's built (all live)
 
-- **Worker**: `/tiktok/login` (starts auth with a CSRF `state`), `/tiktok/callback`
-  (exchanges the code for tokens), and refresh-token storage in KV.
-  TikTok access tokens last ~24h but refresh tokens last ~1 year, so the Worker
-  can keep polling in the background — meaning **true offline minute-by-minute
-  tracking**, even better than the YouTube setup which needs a browser session.
-- **Dashboard**: live counters, per-video table, the minute-by-minute race,
-  Report Card grading, Coaching (best day/time to post), and the Idea Studio
-  working from captions + hashtags.
+**Worker** (`worker/worker.js`)
+
+| Route | Purpose |
+|---|---|
+| `/tiktok/login` | starts auth with a CSRF `state` token |
+| `/tiktok/callback` | exchanges the code for tokens, mints an opaque session id |
+| `/tiktok/me` | profile + follower/like/post counts |
+| `/tiktok/videos` | posts with views / likes / comments / shares |
+| `/tiktok/history` | the Worker's own minute-by-minute recordings |
+| `/tiktok/sync` | cross-device store, locked to the signed-in account |
+| `/tiktok/ai` | Idea Studio, using the existing Gemini key |
+
+The client secret never leaves the Worker — the browser only ever holds a random
+session id. Access tokens are refreshed automatically (TikTok's last ~24h, with
+refresh tokens good for ~1 year), which is what allows the one-minute cron to
+keep sampling a new post **with no browser open** — something the YouTube side
+can't do without a browser session.
+
+**Dashboard** (`yt-dashboard/tiktok.html`) — live counters, sortable post table
+(cards on mobile), latest-post cycler with the minute-by-minute chart, Report
+Card grading, Coaching (best day/time, hashtags, rhythm) and the Idea Studio.
+A switcher at the top moves between the YouTube and TikTok dashboards, and both
+share `style.css`, so themes stay identical.
 
 ## Reference
 

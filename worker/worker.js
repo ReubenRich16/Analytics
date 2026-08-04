@@ -268,13 +268,231 @@ async function syncHandler(request, env) {
   return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
 }
 
+/* ================= TikTok =================
+ * OAuth (Login Kit) + Display API. The client secret lives here as a Worker secret and
+ * never reaches the browser: the page only ever holds an opaque session id we mint.
+ * TikTok access tokens last ~24h and refresh tokens ~1 year, so the cron below can keep
+ * sampling a new post's views minute-by-minute with no browser open.
+ */
+const TT_AUTH  = 'https://www.tiktok.com/v2/auth/authorize/';
+const TT_TOKEN = 'https://open.tiktokapis.com/v2/oauth/token/';
+const TT_API   = 'https://open.tiktokapis.com/v2/';
+const TT_SCOPES = 'user.info.basic,user.info.profile,user.info.stats,video.list';
+const TT_VIDEO_FIELDS = 'id,title,video_description,duration,cover_image_url,share_url,create_time,like_count,comment_count,share_count,view_count';
+const TT_USER_FIELDS = 'open_id,avatar_url,display_name,username,profile_deep_link,follower_count,following_count,likes_count,video_count';
+
+const rand = n => { const a = new Uint8Array(n || 24); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, '0')).join(''); };
+const ttRedirect = url => new URL(url).origin + '/tiktok/callback';
+
+async function ttTokenCall(env, params) {
+  const body = new URLSearchParams({ client_key: env.TIKTOK_CLIENT_KEY || '', client_secret: env.TIKTOK_CLIENT_SECRET || '', ...params });
+  const r = await fetch(TT_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error('TikTok token: ' + (j.error_description || j.error || ('HTTP ' + r.status)));
+  return j;
+}
+
+// Persist tokens for an account and keep it in the polled-accounts list.
+async function ttSaveTokens(env, t) {
+  const now = Date.now();
+  const rec = {
+    access_token: t.access_token,
+    refresh_token: t.refresh_token,
+    expires_at: now + (t.expires_in || 86400) * 1000,
+    refresh_expires_at: now + (t.refresh_expires_in || 31536000) * 1000
+  };
+  await env.MINUTE.put('tt:tok:' + t.open_id, JSON.stringify(rec));
+  let list = [];
+  try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
+  if (!list.includes(t.open_id)) { list.push(t.open_id); await env.MINUTE.put('tt:accounts', JSON.stringify(list)); }
+  return rec;
+}
+
+// Returns a usable access token, refreshing it first if it's within 2 minutes of expiry.
+async function ttAccessToken(env, openId) {
+  let rec = null;
+  try { rec = JSON.parse(await env.MINUTE.get('tt:tok:' + openId) || 'null'); } catch (e) {}
+  if (!rec) return null;
+  if (rec.expires_at - Date.now() > 120000) return rec.access_token;
+  try {
+    const t = await ttTokenCall(env, { grant_type: 'refresh_token', refresh_token: rec.refresh_token });
+    const saved = await ttSaveTokens(env, { ...t, open_id: openId, refresh_token: t.refresh_token || rec.refresh_token });
+    return saved.access_token;
+  } catch (e) { return null; }
+}
+
+const ttGet = async (path, token) => {
+  const r = await fetch(TT_API + path, { headers: { Authorization: 'Bearer ' + token } });
+  return { ok: r.ok, body: await r.json().catch(() => ({})) };
+};
+const ttPost = async (path, token, payload) => {
+  const r = await fetch(TT_API + path, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}) });
+  return { ok: r.ok, body: await r.json().catch(() => ({})) };
+};
+
+async function ttFetchVideos(token, max) {
+  const out = []; let cursor = null;
+  while (out.length < (max || 60)) {
+    const payload = { max_count: 20, ...(cursor ? { cursor } : {}) };
+    const { ok, body } = await ttPost('video/list/?fields=' + encodeURIComponent(TT_VIDEO_FIELDS), token, payload);
+    const d = body && body.data;
+    if (!ok || !d || !Array.isArray(d.videos)) break;
+    out.push(...d.videos);
+    if (!d.has_more || !d.cursor) break;
+    cursor = d.cursor;
+  }
+  return out;
+}
+
+// session id -> open_id (the browser never sees a TikTok token)
+const ttSession = async (env, request) => {
+  const auth = request.headers.get('Authorization') || '';
+  const sid = auth.startsWith('Bearer ') ? auth.slice(7) : (new URL(request.url).searchParams.get('s') || '');
+  if (!sid) return null;
+  try { return await env.MINUTE.get('tt:sess:' + sid); } catch (e) { return null; }
+};
+
+async function ttHandler(request, env, url) {
+  const p = url.pathname;
+  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+    return json({ error: 'TikTok is not configured on this Worker (TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET missing).' }, 501);
+  }
+
+  // 1) start auth — remembers where to send the browser back to
+  if (p === '/tiktok/login') {
+    const state = rand(16);
+    const ret = url.searchParams.get('return') || '';
+    await env.MINUTE.put('tt:state:' + state, ret, { expirationTtl: 900 });
+    const a = new URL(TT_AUTH);
+    a.searchParams.set('client_key', env.TIKTOK_CLIENT_KEY);
+    a.searchParams.set('scope', TT_SCOPES);
+    a.searchParams.set('response_type', 'code');
+    a.searchParams.set('redirect_uri', ttRedirect(url));
+    a.searchParams.set('state', state);
+    return Response.redirect(a.toString(), 302);
+  }
+
+  // 2) TikTok sends the user back here with a code
+  if (p === '/tiktok/callback') {
+    const code = url.searchParams.get('code'), state = url.searchParams.get('state') || '';
+    const err = url.searchParams.get('error');
+    const ret = (await env.MINUTE.get('tt:state:' + state)) ;
+    if (ret === null) return new Response('Sign-in expired or invalid. Please try again.', { status: 400, headers: CORS });
+    await env.MINUTE.delete('tt:state:' + state);
+    if (err || !code) return new Response('TikTok sign-in was cancelled or failed: ' + (url.searchParams.get('error_description') || err || 'no code'), { status: 400, headers: CORS });
+    let t;
+    try { t = await ttTokenCall(env, { grant_type: 'authorization_code', code, redirect_uri: ttRedirect(url) }); }
+    catch (e) { return new Response('Could not complete TikTok sign-in: ' + e.message, { status: 502, headers: CORS }); }
+    await ttSaveTokens(env, t);
+    const sid = rand(24);
+    await env.MINUTE.put('tt:sess:' + sid, t.open_id, { expirationTtl: 60 * 60 * 24 * 300 });
+    // cache the profile so the cron can label videos without a live call
+    try {
+      const { body } = await ttGet('user/info/?fields=' + encodeURIComponent(TT_USER_FIELDS), t.access_token);
+      if (body && body.data && body.data.user) await env.MINUTE.put('tt:meta:' + t.open_id, JSON.stringify(body.data.user));
+    } catch (e) {}
+    const dest = /^https:\/\/[a-z0-9.-]*github\.io\//i.test(ret) ? ret : 'https://reubenrich16.github.io/Analytics/tiktok.html';
+    return Response.redirect(dest + (dest.includes('#') ? '' : '#') + 'tt=' + sid, 302);
+  }
+
+  // everything below needs a session
+  const openId = await ttSession(env, request);
+  if (!openId) return json({ error: 'Not signed in to TikTok.' }, 401);
+  const token = await ttAccessToken(env, openId);
+  if (!token) return json({ error: 'TikTok session expired — please sign in again.', reauth: true }, 401);
+
+  if (p === '/tiktok/me') {
+    const { ok, body } = await ttGet('user/info/?fields=' + encodeURIComponent(TT_USER_FIELDS), token);
+    if (!ok || !body.data) return json({ error: (body.error && body.error.message) || 'user info failed' }, 502);
+    await env.MINUTE.put('tt:meta:' + openId, JSON.stringify(body.data.user));
+    return json(body.data.user);
+  }
+  if (p === '/tiktok/videos') {
+    try { return json({ videos: await ttFetchVideos(token, 60) }); }
+    catch (e) { return json({ error: String(e.message || e) }, 502); }
+  }
+  if (p === '/tiktok/history') {
+    let snap = '{}';
+    try { snap = (await env.MINUTE.get('tt:snap:' + openId)) || '{}'; } catch (e) {}
+    return new Response(snap, { headers: { 'Content-Type': 'application/json', ...CORS } });
+  }
+  if (p === '/tiktok/sync') {
+    const key = 'tt:sync:' + openId;
+    if (request.method === 'POST') {
+      let b = null; try { b = await request.json(); } catch (e) {}
+      if (!b || b.bundle === undefined) return json({ error: 'no bundle' }, 400);
+      await env.MINUTE.put(key, JSON.stringify(b.bundle));
+      return json({ ok: true });
+    }
+    let stored = '{}';
+    try { stored = (await env.MINUTE.get(key)) || '{}'; } catch (e) {}
+    return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+  }
+  if (p === '/tiktok/ai') {
+    if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
+    if (!env.GEMINI_KEY) return json({ error: 'AI is not configured on this Worker.' }, 501);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const desc = String(b.desc || '').slice(0, 2000), style = String(b.style || '').slice(0, 6000);
+    if (!desc) return json({ error: 'No description provided.' }, 400);
+    const prompt = 'You are a TikTok growth assistant. Using ONLY the account\'s own style below, write ideas that sound like this creator for the new video described. Match their caption tone, hashtag habits and emoji use.\n\n' +
+      'ACCOUNT STYLE:\n' + style + '\n\nNEW VIDEO:\n"' + desc + '"\n\n' +
+      'Give a large, varied set. Return JSON only, with keys: "titles" (20 caption strings in their style), "onscreenText" (20 punchy on-screen text hooks, max 6 words each), "tags" (40 lowercase hashtags without the # symbol), "videoIdeas" (15 objects each {"title","why"} where why is one short reason it should work for this account).';
+    try { return json(await callGemini(env, prompt)); }
+    catch (e) { return json({ error: String(e.message || e) }, 502); }
+  }
+  return json({ error: 'unknown tiktok endpoint' }, 404);
+}
+
+// Background sampling: records view/like counts for recent posts so a launch is captured
+// minute-by-minute even with no browser open. Gated the same way as the YouTube tracker
+// so KV writes stay well inside the free tier.
+async function ttTick(env) {
+  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) return { skipped: 'not configured' };
+  let list = [];
+  try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
+  if (!list.length) return { accounts: 0 };
+  const now = Date.now(), hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
+  let sampled = 0;
+  for (const openId of list) {
+    const token = await ttAccessToken(env, openId);
+    if (!token) continue;
+    let snap = { videos: {}, lastScan: 0 };
+    try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || 'null') || snap; } catch (e) {}
+    snap.videos = snap.videos || {};
+    const hot = Object.keys(snap.videos).filter(id => now - (snap.videos[id].create_time * 1000) < hotMs);
+    if (!hot.length && now - (snap.lastScan || 0) < SCAN_MIN * 60e3) continue;
+    let vids = [];
+    try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
+    snap.lastScan = now;
+    let changed = false;
+    for (const v of vids) {
+      const ct = (v.create_time || 0) * 1000;
+      if (!ct || now - ct > hotMs) continue;             // only the launch window
+      const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
+      rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
+      changed = true; sampled++;
+    }
+    for (const id of Object.keys(snap.videos)) {
+      snap.videos[id].s = (snap.videos[id].s || []).filter(x => x[0] >= cutoff);
+      if (now - snap.videos[id].create_time * 1000 >= hotMs && !snap.videos[id].s.length) delete snap.videos[id];
+    }
+    if (changed || !hot.length) { snap.updated = now; await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap)); }
+  }
+  return { accounts: list.length, sampled };
+}
+
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(tick(env));
+    // both trackers share the one-minute cron; each gates its own sampling
+    ctx.waitUntil(Promise.allSettled([tick(env), ttTick(env)]));
   },
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
+    // TikTok: OAuth + Display API (secret stays server-side)
+    if (url.pathname.startsWith('/tiktok/')) return ttHandler(request, env, url);
     // AI proxy for the Idea Studio (owner-locked)
     if (url.pathname === '/ai') {
       if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -287,8 +505,8 @@ export default {
     }
     // manual trigger for testing: /run does one tick immediately
     if (url.pathname === '/run') {
-      const r = await tick(env);
-      return json(r);
+      const [yt, tt] = await Promise.all([tick(env), ttTick(env).catch(e => ({ error: String(e.message || e) }))]);
+      return json({ youtube: yt, tiktok: tt });
     }
     // diagnostic: which Gemini models this key can call, plus the remembered winner
     if (url.pathname === '/models') {
