@@ -122,6 +122,23 @@ On the app page, find:
 - **Client secret** — **must stay private.** Never paste it into chat, the repo,
   or the dashboard.
 
+**Recorded so far:**
+
+| | |
+|---|---|
+| Sandbox client key | `sbawwsui0uvmik0odt` |
+| Client secret | *(set as a Worker secret — never stored here)* |
+
+The `sb` prefix marks it as a **Sandbox** credential. When the app is eventually
+moved to production it gets a different key, and this must be updated.
+
+## App icon
+
+A ready-made icon lives in [`brand/`](../brand): upload **`icon-1024.png`**
+(or `icon-512.png` if there's a size limit). The source is `brand/icon.svg`, so it
+can be re-rendered at any size, and `brand/PHILOSOPHY.md` records the design
+rationale.
+
 ## Step 8 — Store the secret (same pattern as the Gemini key)
 
 Add both as **GitHub repository secrets** (Settings → Secrets and variables →
