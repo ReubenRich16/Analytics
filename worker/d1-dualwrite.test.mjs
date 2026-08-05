@@ -3,7 +3,7 @@
 import fs from 'fs';
 const HERE = new URL('.', import.meta.url).pathname;
 const src = fs.readFileSync(HERE + 'worker.js', 'utf8')
-  .replace(/export default\s*\{/, 'const HANDLER = {') + '\nexport { HANDLER, tick, ttTick, d1Write, d1Backfill, d1Prune };';
+  .replace(/export default\s*\{/, 'const HANDLER = {') + '\nexport { HANDLER, tick, ttTick, d1Write, d1Backfill, d1Prune, D1_BACKFILL_V };';
 const tmp = HERE + '.worker-under-test.mjs';
 fs.writeFileSync(tmp, src);
 const W = await import(tmp);
@@ -70,7 +70,7 @@ console.log('\n1. Dual-write: KV unchanged, D1 mirrored');
 }
 console.log('\n2. Second tick only writes the new sample (no re-backfill)');
 {
-  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = 2;   // current version
+  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = W.D1_BACKFILL_V;   // already at the current version
   const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
   const DB = mockD1();
   const env = { MINUTE: KV, DB, YT_API_KEY:'k', CHANNEL_ID:'UC1' };
@@ -135,13 +135,13 @@ console.log('\n7. Timestamps survive the write (regression: `| 0` truncated epoc
 }
 console.log('\n8. Backfill re-runs when the version is bumped');
 {
-  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = 1;   // an older version
+  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = W.D1_BACKFILL_V - 1;   // one version behind
   const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
   const DB = mockD1();
   const r = await W.tick({ MINUTE: KV, DB, YT_API_KEY:'k', CHANNEL_ID:'UC1' });
   check('stale version triggers a re-run', r.d1.backfill === true, JSON.stringify(r.d1));
   const after = JSON.parse(KV.store.get('minute-v1'));
-  check('flag updated to the new version', after.d1Backfilled === 2, after.d1Backfilled);
+  check('flag updated to the new version', after.d1Backfilled === W.D1_BACKFILL_V, after.d1Backfilled);
 }
 
 globalThis.fetch = realFetch;

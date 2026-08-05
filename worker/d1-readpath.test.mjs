@@ -8,7 +8,7 @@ import fs from 'fs';
 const HERE = new URL('.', import.meta.url).pathname;
 const src = fs.readFileSync(HERE + 'worker.js', 'utf8')
   .replace(/export default\s*\{/, 'const HANDLER = {') +
-  '\nexport { tick, d1Write, d1YtBundle, d1TtBundle, d1Diff };';
+  '\nexport { tick, d1Write, d1YtBundle, d1TtBundle, d1Diff, ttKey, isTt };';
 const tmp = HERE + '.worker-readpath.mjs';
 fs.writeFileSync(tmp, src);
 const W = await import(tmp);
@@ -133,12 +133,34 @@ console.log('\n4. TikTok bundle keeps create_time in seconds, as the page expect
 {
   const TT = withAll(mockD1());
   const pub = NOW - 3 * 3600e3;
-  await W.d1Write({ DB: TT }, 'tt', [{ id: 't1', ts: pub, views: 900, likes: 80, comments: 4, shares: 12 }],
-                                    [{ id: 't1', pub, title: 'soft brushing', cover: 'c.jpg' }]);
-  const b = await W.d1TtBundle({ DB: TT });
+  await W.d1Write({ DB: TT }, W.ttKey('open-me'), [{ id: 't1', ts: pub, views: 900, likes: 80, comments: 4, shares: 12 }],
+                                                  [{ id: 't1', pub, title: 'soft brushing', cover: 'c.jpg' }]);
+  const b = await W.d1TtBundle({ DB: TT }, 'open-me');
   check('create_time is seconds', b.videos.t1.create_time === Math.round(pub / 1000), b.videos.t1.create_time);
   check('shares survive to the 5th column', b.videos.t1.s[0][4] === 12, JSON.stringify(b.videos.t1.s[0]));
   check('cover preserved', b.videos.t1.cover === 'c.jpg');
+}
+
+// KV keys each TikTok snapshot by open_id. D1 has to draw the same line, or the moment a
+// second account signs in (which is exactly what is about to happen — the partner still
+// has to connect) both accounts' videos would land in one bundle and one launch curve.
+console.log('\n5. Two TikTok accounts never see each other\'s videos');
+{
+  const TT = withAll(mockD1());
+  const pub = NOW - 2 * 3600e3;
+  const put = (openId, id, views) => W.d1Write({ DB: TT }, W.ttKey(openId),
+    [{ id, ts: pub, views, likes: 0, comments: 0, shares: 0 }], [{ id, pub, title: id, cover: '' }]);
+  await put('open-me', 'mine', 500);
+  await put('open-partner', 'theirs', 90000);
+
+  const mine = await W.d1TtBundle({ DB: TT }, 'open-me');
+  const theirs = await W.d1TtBundle({ DB: TT }, 'open-partner');
+  check('my bundle holds only my video', Object.keys(mine.videos).join() === 'mine', Object.keys(mine.videos).join());
+  check('their bundle holds only theirs', Object.keys(theirs.videos).join() === 'theirs', Object.keys(theirs.videos).join());
+  check('view counts are not pooled', mine.videos.mine.s[0][1] === 500 && theirs.videos.theirs.s[0][1] === 90000);
+  // and the partitions are genuinely distinct rows, not one overwriting the other
+  check('both accounts stored', TT.videos.size === 2, TT.videos.size);
+  check('YouTube is untouched by the tt prefix', !W.isTt('yt') && W.isTt('tt') && W.isTt('tt:x'));
 }
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');

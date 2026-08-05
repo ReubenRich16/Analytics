@@ -31,8 +31,10 @@
 const D1_KEEP_DAYS = 60;    // how long D1 holds launch samples (KV still prunes at KEEP_DAYS)
 // Bump to re-run the backfill on every tracked state. Version 1 wrote every published_at
 // through `| 0`, which truncates epoch ms to 32 bits and dated them all to 1969; version 2
-// repairs them. Samples are INSERT OR IGNORE, so a re-run only ever fixes metadata.
-const D1_BACKFILL_V = 2;
+// repairs them. Version 3 moved TikTok rows under a per-account partition, so any snapshot
+// that had already backfilled under the shared 'tt' key gets rewritten under its own.
+// Samples are INSERT OR IGNORE, so a re-run only ever fixes metadata.
+const D1_BACKFILL_V = 3;
 const HOT_HOURS   = 6;      // record a video minute-by-minute for this long after publish
 const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice new uploads
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
@@ -96,6 +98,20 @@ async function loadState(env) {
 // 2.1 billion. Math.round(Number(x)) keeps full precision.
 const int = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
 
+// D1 partitions by `platform`. YouTube tracks one fixed set of channels, so 'yt' is the
+// whole story. TikTok does not: KV keys each snapshot by the signed-in account's open_id
+// ('tt:snap:<openId>'), and D1 has to draw the same line or two connected accounts would
+// pool their videos into a single launch curve — the user's posts and their partner's,
+// averaged into one meaningless line, with no way to tell them apart after the fact.
+//
+// The open_id rides inside the partition value rather than in a new column, because the
+// primary key is already (platform, video_id, ts): prefixing partitions correctly with no
+// schema change at all. Adding a column would mean widening the primary key, and SQLite
+// cannot do that in place — it needs a full table rebuild, which is a bad trade for a
+// distinction the existing key already expresses.
+const ttKey = openId => 'tt:' + openId;
+const isTt = platform => platform === 'tt' || platform.startsWith('tt:');
+
 async function d1Write(env, platform, rows, metas) {
   if (!env.DB) return { skipped: 'no binding' };
   if (!rows.length && !metas.length) return { skipped: 'nothing to write' };
@@ -126,7 +142,7 @@ async function d1Backfill(env, platform, videos, shape) {
     const meta = shape(id, rec);
     if (meta) metas.push(meta);
     for (const s of (rec.s || [])) {
-      rows.push(platform === 'tt'
+      rows.push(isTt(platform)
         ? { id, ts: s[0], views: s[1], likes: s[2], comments: s[3], shares: s[4] }
         : { id, ts: s[0], views: s[1], likes: s[2], comments: s[3], shares: 0 });
     }
@@ -169,11 +185,14 @@ async function d1YtBundle(env, days) {
   return { videos };
 }
 
-async function d1TtBundle(env, days) {
+// Scoped to one account: the caller has already resolved the session, and the bundle it
+// returns stands in for that account's KV snapshot, which is account-scoped too.
+async function d1TtBundle(env, openId, days) {
   const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
+  const part = ttKey(openId);
   const [vres, sres] = await Promise.all([
-    env.DB.prepare('SELECT video_id, published_at, title, cover FROM videos WHERE platform = ?').bind('tt').all(),
-    env.DB.prepare('SELECT video_id, ts, views, likes, comments, shares FROM samples WHERE platform = ? AND ts >= ? ORDER BY video_id, ts').bind('tt', cutoff).all()
+    env.DB.prepare('SELECT video_id, published_at, title, cover FROM videos WHERE platform = ?').bind(part).all(),
+    env.DB.prepare('SELECT video_id, ts, views, likes, comments, shares FROM samples WHERE platform = ? AND ts >= ? ORDER BY video_id, ts').bind(part, cutoff).all()
   ]);
   const byId = {};
   for (const r of (sres.results || [])) (byId[r.video_id] = byId[r.video_id] || []).push([r.ts, r.views, r.likes, r.comments, r.shares]);
@@ -648,7 +667,7 @@ async function ttHandler(request, env, url) {
     // way — it's eight writes a day, so there's nothing to gain by migrating it.
     if (url.searchParams.get('src') === 'd1' && env.DB) {
       try {
-        const b = await d1TtBundle(env, +url.searchParams.get('days') || 0);
+        const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0);
         return json({ ...snap, videos: b.videos, followers });
       } catch (e) { /* fall through to the KV snapshot */ }
     }
@@ -737,11 +756,11 @@ async function ttTick(env) {
     }
     // shadow into D1 — same contract as the YouTube side: never throws, KV unaffected
     if (snap.d1Backfilled !== D1_BACKFILL_V && env.DB) {
-      const r = await d1Backfill(env, 'tt', snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
+      const r = await d1Backfill(env, ttKey(openId), snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
       if (!r.error) snap.d1Backfilled = D1_BACKFILL_V;
       d1 = r; d1.backfill = true;
     } else if (d1rows.length) {
-      d1 = await d1Write(env, 'tt', d1rows, d1metas);
+      d1 = await d1Write(env, ttKey(openId), d1rows, d1metas);
     }
 
     if (JSON.stringify(snap.videos) !== before || d1.backfill) {
