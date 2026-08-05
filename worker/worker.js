@@ -29,6 +29,10 @@
  */
 
 const D1_KEEP_DAYS = 60;    // how long D1 holds launch samples (KV still prunes at KEEP_DAYS)
+// Bump to re-run the backfill on every tracked state. Version 1 wrote every published_at
+// through `| 0`, which truncates epoch ms to 32 bits and dated them all to 1969; version 2
+// repairs them. Samples are INSERT OR IGNORE, so a re-run only ever fixes metadata.
+const D1_BACKFILL_V = 2;
 const HOT_HOURS   = 6;      // record a video minute-by-minute for this long after publish
 const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice new uploads
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
@@ -86,6 +90,12 @@ async function loadState(env) {
 
 // One row per (platform, video, minute). INSERT OR IGNORE against the composite
 // primary key makes a re-run or a double-fired cron a no-op rather than an error.
+// NEVER use `| 0` here. Bitwise operators truncate to 32 bits, and an epoch-ms
+// timestamp (~1.79e12) wraps to a negative number — which is how the first version of
+// this shipped every published_at as a date in 1969. View counts would wrap too, past
+// 2.1 billion. Math.round(Number(x)) keeps full precision.
+const int = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
+
 async function d1Write(env, platform, rows, metas) {
   if (!env.DB) return { skipped: 'no binding' };
   if (!rows.length && !metas.length) return { skipped: 'nothing to write' };
@@ -97,8 +107,8 @@ async function d1Write(env, platform, rows, metas) {
       'ON CONFLICT(platform, video_id) DO UPDATE SET title=excluded.title, published_at=excluded.published_at, ' +
       'channel=excluded.channel, cover=excluded.cover');
     const stmts = [];
-    for (const m of metas) stmts.push(videoStmt.bind(platform, m.id, m.pub | 0, m.title || '', m.chan || '', m.cover || '', Date.now()));
-    for (const r of rows) stmts.push(sampleStmt.bind(platform, r.id, r.ts, r.views | 0, r.likes | 0, r.comments | 0, r.shares | 0));
+    for (const m of metas) stmts.push(videoStmt.bind(platform, m.id, int(m.pub), m.title || '', m.chan || '', m.cover || '', Date.now()));
+    for (const r of rows) stmts.push(sampleStmt.bind(platform, r.id, int(r.ts), int(r.views), int(r.likes), int(r.comments), int(r.shares)));
     // chunked so one enormous backfill can't exceed the per-batch statement limit
     for (let i = 0; i < stmts.length; i += 200) await env.DB.batch(stmts.slice(i, i + 200));
     return { rows: rows.length, metas: metas.length };
@@ -231,16 +241,16 @@ async function tick(env) {
   // write so a D1 fault can't leave KV updated but the mirror silently behind — and it
   // never throws, so it can't stop the KV write either.
   let d1 = { skipped: 'nothing new' };
-  if (!s.d1Backfilled && env.DB) {
+  if (s.d1Backfilled !== D1_BACKFILL_V && env.DB) {
     d1 = await d1Backfill(env, 'yt', s.videos, (id, rec) => ({ id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' }));
-    if (!d1.error) { s.d1Backfilled = now; }   // persisted with the KV write below
+    if (!d1.error) { s.d1Backfilled = D1_BACKFILL_V; }   // persisted with the KV write below
     d1.backfill = true;
   } else if (d1rows.length) {
     d1 = await d1Write(env, 'yt', d1rows, d1metas);
   }
   const d1pruned = await d1Prune(env, now);
 
-  if (changed || s.d1Backfilled === now) {
+  if (changed || d1.backfill) {
     s.updated = now;
     await env.MINUTE.put(KV_KEY, JSON.stringify(s));
   }
@@ -640,15 +650,15 @@ async function ttTick(env) {
       if (now - snap.videos[id].create_time * 1000 >= hotMs && !snap.videos[id].s.length) delete snap.videos[id];
     }
     // shadow into D1 — same contract as the YouTube side: never throws, KV unaffected
-    if (!snap.d1Backfilled && env.DB) {
+    if (snap.d1Backfilled !== D1_BACKFILL_V && env.DB) {
       const r = await d1Backfill(env, 'tt', snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
-      if (!r.error) snap.d1Backfilled = now;
+      if (!r.error) snap.d1Backfilled = D1_BACKFILL_V;
       d1 = r; d1.backfill = true;
     } else if (d1rows.length) {
       d1 = await d1Write(env, 'tt', d1rows, d1metas);
     }
 
-    if (JSON.stringify(snap.videos) !== before || snap.d1Backfilled === now) {
+    if (JSON.stringify(snap.videos) !== before || d1.backfill) {
       snap.updated = now;
       await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
       wrote++;

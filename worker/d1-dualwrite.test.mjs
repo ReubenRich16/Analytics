@@ -70,7 +70,7 @@ console.log('\n1. Dual-write: KV unchanged, D1 mirrored');
 }
 console.log('\n2. Second tick only writes the new sample (no re-backfill)');
 {
-  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = NOW;
+  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = 2;   // current version
   const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
   const DB = mockD1();
   const env = { MINUTE: KV, DB, YT_API_KEY:'k', CHANNEL_ID:'UC1' };
@@ -120,6 +120,30 @@ console.log('\n6. Prune only fires in its daily slot');
   check('prunes at 03:07 UTC', a.pruned === 42, JSON.stringify(a));
   check('skips every other minute', !!b.skipped, JSON.stringify(b));
 }
+console.log('\n7. Timestamps survive the write (regression: `| 0` truncated epoch ms to 1969)');
+{
+  const DB = mockD1();
+  const PUB = 1785759351134;                 // real epoch ms, well past 2^31
+  await W.d1Write({DB}, 'yt', [{id:'v1', ts:PUB, views:3e9, likes:1, comments:0, shares:0}],
+                             [{id:'v1', pub:PUB, title:'t', chan:'c'}]);
+  const vrow = [...DB.rows.videos.values()][0];
+  const srow = [...DB.rows.samples.values()][0];
+  check('published_at kept in full', vrow[2] === PUB, vrow[2] + ' (expected ' + PUB + ')');
+  check('published_at is not negative', vrow[2] > 0, vrow[2]);
+  check('sample ts kept in full', srow[2] === PUB, srow[2]);
+  check('a 3-billion view count does not wrap', srow[3] === 3e9, srow[3]);
+}
+console.log('\n8. Backfill re-runs when the version is bumped');
+{
+  const st = JSON.parse(JSON.stringify(seedState)); st.d1Backfilled = 1;   // an older version
+  const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
+  const DB = mockD1();
+  const r = await W.tick({ MINUTE: KV, DB, YT_API_KEY:'k', CHANNEL_ID:'UC1' });
+  check('stale version triggers a re-run', r.d1.backfill === true, JSON.stringify(r.d1));
+  const after = JSON.parse(KV.store.get('minute-v1'));
+  check('flag updated to the new version', after.d1Backfilled === 2, after.d1Backfilled);
+}
+
 globalThis.fetch = realFetch;
 console.log('\n' + (fail? '✗ '+fail+' FAILED, ':'') + pass + ' passed');
 process.exit(fail?1:0);
