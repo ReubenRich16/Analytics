@@ -54,7 +54,23 @@ data/             recorded history, committed by the robots
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
+- **Four rooms** — Now, Videos, Audience, Ideas — with a **One page** switch that turns
+  them off and stacks every card exactly as it was before, so nothing is ever out of reach
+- An **answer card** at the top: four chips that say in a sentence how today went, how the
+  newest upload landed, who's watching and when you're next due. Computed from numbers
+  already on the page, so it costs no extra quota
+- **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
+  number fills the screen, confetti falls and a party sound plays. Once per milestone ever
 - 14 themes, sound on new likes/subscribers, and a phone-friendly layout
+
+**Type and motion**
+
+Numbers are set in **Sora**, everything you read in **Figtree**. Eight motions carry the
+moments that matter: headline numbers roll like an odometer, cards arrive staggered, a new
+like sends a ring and hearts off its tile, charts draw with the fill rising underneath,
+the deep-dive grows out of the row you tapped, loading shimmers in the real shape instead
+of shoving the page, the date range slides in the direction you moved, and milestones get
+the full-screen treatment. Every one of them respects `prefers-reduced-motion`.
 
 **How the charts are drawn**
 
