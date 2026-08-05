@@ -227,6 +227,12 @@ Both stores are still written every tick. D1 answers reads; if it fails *or come
 empty while KV has data*, KV answers instead and the page never notices — the JSON is
 identical either way. The `X-CC-Source` response header names whichever one answered.
 
+**Keeping both is the settled decision, not an unfinished migration.** The plan once had a
+final step that retired KV after D1 had proved itself; it was dropped on purpose. The
+fallback is only real because KV is still being written, retiring it would save around 96
+writes a day out of 1,000, and it would turn a one-line rollback into a migration. If you
+are reading this and about to "finish the job" — don't.
+
 | Query | Effect |
 |---|---|
 | *(none)* | D1, falling back to KV |
