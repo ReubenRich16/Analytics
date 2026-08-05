@@ -32,11 +32,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'   # wrangler requires Node >= 22
-      # Apply the D1 schema before deploying, so the tables always exist by the time
-      # the new code runs. Every statement is IF NOT EXISTS, so this is a no-op on
-      # every deploy after the first.
+      # Apply the D1 schema before deploying, so the tables always exist by the time the
+      # new code runs. Every statement is IF NOT EXISTS, so this is a no-op after the first.
+      #
+      # Deliberately non-blocking. CLOUDFLARE_API_TOKEN was issued from the "Edit
+      # Cloudflare Workers" template before that template included D1, so it currently
+      # returns "Authentication error [code: 10000]" here. A schema that is already
+      # applied must not stop the Worker deploying — that would turn a missing permission
+      # into an outage. The warning below says exactly what to fix, and once the token is
+      # re-issued this step becomes authoritative again with no further change.
       - name: Apply D1 schema
+        continue-on-error: true
+        id: d1schema
         run: npx wrangler@latest d1 execute channel-command --remote --file schema.sql
+      - name: Warn if the schema could not be applied
+        if: steps.d1schema.outcome == 'failure'
+        run: |
+          echo "::warning::D1 schema was NOT applied — CLOUDFLARE_API_TOKEN is missing the D1 permission."
+          echo "::warning::Re-create the token at dash.cloudflare.com/profile/api-tokens using the"
+          echo "::warning::'Edit Cloudflare Workers' template (which now includes D1) and update the"
+          echo "::warning::CLOUDFLARE_API_TOKEN repo secret. The deploy below still proceeded."
       # Deploy so the Worker exists (this also applies the KV and D1 bindings and the
       # every-minute cron trigger from wrangler.toml).
       - name: Deploy Worker
