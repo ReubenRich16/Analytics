@@ -253,6 +253,29 @@ async function aiHandler(request, env) {
 // Stores each channel's device-local bundle (keyword research, Studio CTR, minute-race
 // history) in KV keyed by the channel id, and only serves it back to a signed-in owner of
 // that channel. Uses the YouTube login only — no Drive scope — so restricted accounts work.
+// Which YouTube video is the same post as which TikTok. Owner-locked exactly like
+// /sync, and stored per channel so both devices see the same confirmed pairs.
+// Written only when someone confirms or unlinks a pair, so it costs almost no KV budget.
+async function pairsHandler(request, env) {
+  const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+  const auth = request.headers.get('Authorization') || '';
+  let token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  let body = null;
+  if (request.method === 'POST') { try { body = await request.json(); } catch (e) {} if (!token && body) token = body.token || ''; }
+  const owner = await verifyOwner(token, channels);
+  if (!owner) return json({ error: 'Not authorised — sign in with one of the tracked channels.' }, 401);
+  const key = 'pairs:' + owner;
+  if (request.method === 'POST') {
+    if (!body || !Array.isArray(body.pairs)) return json({ error: 'no pairs array' }, 400);
+    try { await env.MINUTE.put(key, JSON.stringify(body.pairs.slice(0, 400))); }
+    catch (e) { return json({ error: 'store failed' }, 502); }
+    return json({ ok: true, n: Math.min(400, body.pairs.length) });
+  }
+  let stored = '[]';
+  try { stored = (await env.MINUTE.get(key)) || '[]'; } catch (e) {}
+  return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+}
+
 async function syncHandler(request, env) {
   const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
   const auth = request.headers.get('Authorization') || '';
@@ -566,6 +589,11 @@ async function route(request, env) {
     if (url.pathname === '/sync') {
       if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
       return syncHandler(request, env);
+    }
+    // confirmed YouTube↔TikTok video pairings (owner-locked, same auth as /sync)
+    if (url.pathname === '/pairs') {
+      if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
+      return pairsHandler(request, env);
     }
     // manual trigger for testing: /run does one tick immediately
     if (url.pathname === '/run') {

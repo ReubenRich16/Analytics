@@ -8,6 +8,7 @@ tracking, letter-grade report cards, coaching and an AI idea studio.
 |---|---|
 | **YouTube dashboard** | <https://reubenrich16.github.io/Analytics/> |
 | **TikTok dashboard** | <https://reubenrich16.github.io/Analytics/tiktok.html> |
+| **Compare** | <https://reubenrich16.github.io/Analytics/compare.html> |
 | **Bookmark this** (enables the Worker features) | `…/Analytics/?worker=https://yt.reubenrichardson37.workers.dev` |
 
 **Cost: $0.** GitHub Pages, GitHub Actions, the YouTube APIs, Cloudflare Workers
@@ -93,6 +94,28 @@ and they all follow the same rules so they read the same way:
   written label, not colour alone, because several themes are deliberately
   monochromatic.
 
+**Compare** (the third page)
+
+Links a YouTube upload to its TikTok counterpart and answers three things. Pairing is
+suggested automatically — caption similarity with hashtags and emoji stripped, how close
+the two were posted, and whether the TikTok looks like a cut — but **nothing is linked
+until you confirm it**, because a wrong pair would poison every number below. There's a
+manual picker for anything the suggester misses. Confirmed pairs are stored on the Worker
+(owner-locked, same auth as sync) and fall back to the device if there's no Worker.
+
+- **Side by side** — totals and rates for both, plus each post's **percentile within its own
+  platform's back catalogue**. That's the honest comparison: TikTok counts a view the moment
+  playback starts, YouTube long-form wants a real watch, so the raw counts are two different
+  rulers. The page says so, on the page.
+- **The launch race** — both curves indexed to each platform's own typical launch (100 =
+  normal). Only covers the window both sides recorded; the Worker keeps TikTok's first six
+  hours, so that's usually the limit, and the page tells you the actual overlap.
+- **Time to a thousand** — a clock, so no units problem, with your usual YouTube pace as a
+  third bar.
+
+> Neither platform gives you launch history, so curves exist only from when the robots were
+> already watching. Anything posted before then has none and can't get one retrospectively.
+
 **YouTube only** (TikTok's API simply doesn't expose these)
 
 Watch time, retention curves, **retention vs other YouTube videos of similar
@@ -175,6 +198,7 @@ of TikTok. Free, no card.
 | `/run` | run both trackers now (handy for testing) |
 | `/models` | which Gemini models your key can actually call |
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
+| `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
 
@@ -238,7 +262,7 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ## Repo layout
 
 ```
-yt-dashboard/   index.html · tiktok.html · style.css · privacy.html · terms.html
+yt-dashboard/   index.html · tiktok.html · compare.html · style.css · privacy.html · terms.html
 worker/         worker.js · wrangler.toml
 scripts/        snapshot.mjs · rank.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json
