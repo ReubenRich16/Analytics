@@ -37,3 +37,30 @@ CREATE TABLE IF NOT EXISTS videos (
 -- The primary key already covers per-video reads. This one is for the nightly prune,
 -- which deletes by age across every platform at once.
 CREATE INDEX IF NOT EXISTS idx_samples_prune ON samples (ts);
+
+-- The one the served bundle actually needs.
+--
+-- The bundle query is `WHERE platform = ? AND ts >= ?`, and the primary key is
+-- (platform, video_id, ts). Because video_id sits BETWEEN the two constrained columns,
+-- ts cannot join the seek: SQLite finds the start of the platform's partition and then
+-- walks every row in it, discarding everything outside the window. That is invisible
+-- while the table is young and becomes the whole cost as retention fills up — the
+-- partition grows to 60 days while a request only ever wants the last 3.
+--
+-- Measured on the live database, same query returning the same 9 rows:
+--   without this index   1,076 rows read  (the entire partition)
+--   with this index         18 rows read
+-- a 60x cut on a one-day-old table, and the ratio grows linearly with retention.
+--
+-- Every column the bundle selects is listed, which makes it a COVERING index: the
+-- query is answered from the index alone and never touches the table. Confirmed via
+-- EXPLAIN QUERY PLAN, which goes from
+--   SEARCH samples USING PRIMARY KEY (platform=?)
+-- to
+--   SEARCH samples USING COVERING INDEX idx_samples_window (platform=? AND ts>?)
+--
+-- The cost is one extra index row per sample insert and roughly double the storage for
+-- the samples table. Against 100,000 row-writes and 5 GB a day, that is nothing; the
+-- 5,000,000 rows-READ limit is the one that was in danger.
+CREATE INDEX IF NOT EXISTS idx_samples_window
+  ON samples (platform, ts, video_id, views, likes, comments, shares);
