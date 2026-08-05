@@ -134,6 +134,77 @@ async function d1Backfill(env, platform, videos, shape) {
   return d1Write(env, platform, rows, metas);
 }
 
+/* --- phase 2: the read path, rebuilt from D1 ------------------------------
+   These reproduce the exact bundle shape the dashboards already consume, so that
+   switching over in phase 3 is a change of source and nothing else. Served only
+   when ?src=d1 is passed, so the default path stays on KV until the two have been
+   proved identical. The marker goes in a response header, never in the payload,
+   so the bodies stay byte-comparable.
+
+   The videos table keeps 60 days but KV only ever served KEEP_DAYS, so the window
+   is matched here for parity; phase 4 widens it deliberately rather than by
+   accident. A video with no samples in the window is dropped, mirroring KV's prune.
+--------------------------------------------------------------------------- */
+async function d1YtBundle(env, days) {
+  const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
+  const [vres, sres] = await Promise.all([
+    env.DB.prepare('SELECT video_id, published_at, title, channel FROM videos WHERE platform = ?').bind('yt').all(),
+    env.DB.prepare('SELECT video_id, ts, views, likes, comments FROM samples WHERE platform = ? AND ts >= ? ORDER BY video_id, ts').bind('yt', cutoff).all()
+  ]);
+  const byId = {};
+  for (const r of (sres.results || [])) (byId[r.video_id] = byId[r.video_id] || []).push([r.ts, r.views, r.likes, r.comments]);
+  const videos = {};
+  for (const v of (vres.results || [])) {
+    const s = byId[v.video_id];
+    if (!s || !s.length) continue;
+    videos[v.video_id] = { pub: new Date(v.published_at).toISOString(), title: v.title || '', chan: v.channel || '', s };
+  }
+  return { videos };
+}
+
+async function d1TtBundle(env, days) {
+  const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
+  const [vres, sres] = await Promise.all([
+    env.DB.prepare('SELECT video_id, published_at, title, cover FROM videos WHERE platform = ?').bind('tt').all(),
+    env.DB.prepare('SELECT video_id, ts, views, likes, comments, shares FROM samples WHERE platform = ? AND ts >= ? ORDER BY video_id, ts').bind('tt', cutoff).all()
+  ]);
+  const byId = {};
+  for (const r of (sres.results || [])) (byId[r.video_id] = byId[r.video_id] || []).push([r.ts, r.views, r.likes, r.comments, r.shares]);
+  const videos = {};
+  for (const v of (vres.results || [])) {
+    const s = byId[v.video_id];
+    if (!s || !s.length) continue;
+    videos[v.video_id] = { create_time: Math.round(v.published_at / 1000), title: v.title || '', cover: v.cover || '', s };
+  }
+  return { videos };
+}
+
+// Compare the two sources field by field, so phase 3 flips on evidence rather than hope.
+// Only reports on what the dashboards actually read: the video set, its publish time and
+// title, and every sample's timestamp and counts.
+function d1Diff(kvVideos, d1Videos) {
+  const kvIds = Object.keys(kvVideos || {}).sort(), d1Ids = Object.keys(d1Videos || {}).sort();
+  const onlyKv = kvIds.filter(i => !d1Ids.includes(i));
+  const onlyD1 = d1Ids.filter(i => !kvIds.includes(i));
+  const differing = [];
+  for (const id of kvIds.filter(i => d1Ids.includes(i))) {
+    const a = kvVideos[id], b = d1Videos[id], why = [];
+    if (String(a.pub) !== String(b.pub)) why.push('pub ' + a.pub + ' vs ' + b.pub);
+    if ((a.title || '') !== (b.title || '')) why.push('title');
+    const as = a.s || [], bs = b.s || [];
+    if (as.length !== bs.length) why.push('sample count ' + as.length + ' vs ' + bs.length);
+    else for (let i = 0; i < as.length; i++) {
+      if (as[i][0] !== bs[i][0] || as[i][1] !== bs[i][1]) { why.push('sample ' + i + ' differs'); break; }
+    }
+    if (why.length) differing.push({ id, why });
+  }
+  return {
+    match: !onlyKv.length && !onlyD1.length && !differing.length,
+    counts: { kv: kvIds.length, d1: d1Ids.length },
+    onlyInKv: onlyKv, onlyInD1: onlyD1, differing
+  };
+}
+
 // Drop samples past the retention window. Deletes count toward D1's daily row-write
 // budget, so this runs once a day rather than every tick.
 async function d1Prune(env, now) {
@@ -566,6 +637,14 @@ async function ttHandler(request, env, url) {
     let snap = {}, followers = [];
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || '{}'); } catch (e) {}
     try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+    // phase 2: ?src=d1 rebuilds the videos half from D1. followers stays on KV either
+    // way — it's eight writes a day, so there's nothing to gain by migrating it.
+    if (url.searchParams.get('src') === 'd1' && env.DB) {
+      try {
+        const b = await d1TtBundle(env, +url.searchParams.get('days') || 0);
+        return json({ ...snap, videos: b.videos, followers });
+      } catch (e) { /* fall through to the KV snapshot */ }
+    }
     return json({ ...snap, followers });
   }
   if (p === '/tiktok/sync') {
@@ -716,9 +795,29 @@ async function route(request, env) {
       let picked = null; try { picked = await env.MINUTE.get('ai-model'); } catch (e) {}
       return json({ picked, generateContentModels: await listGenerateModels(env.GEMINI_KEY) });
     }
-    // default: serve the recorded minute bundle for the dashboard to merge
+    // phase 2 verification: build both bundles and report whether they agree.
+    // The bundle at / is already public, so a comparison of it discloses nothing new.
+    if (url.pathname === '/d1diff') {
+      if (!env.DB) return json({ error: 'no D1 binding' }, 501);
+      try {
+        let kv = {};
+        try { kv = (await env.MINUTE.get(KV_KEY, 'json')) || {}; } catch (e) {}
+        const d1 = await d1YtBundle(env);
+        return json({ youtube: d1Diff(kv.videos || {}, d1.videos) });
+      } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
+    }
+
+    // default: serve the recorded minute bundle for the dashboard to merge.
+    // ?src=d1 serves the same shape rebuilt from D1 — phase 2, opt-in only, so the
+    // dashboards keep reading KV until the two are proved identical.
+    if (url.searchParams.get('src') === 'd1' && env.DB) {
+      try {
+        const b = await d1YtBundle(env, +url.searchParams.get('days') || 0);
+        return new Response(JSON.stringify(b), { headers: { 'Content-Type': 'application/json', 'X-CC-Source': 'd1', ...CORS } });
+      } catch (e) { /* fall through to KV rather than fail the dashboard */ }
+    }
     let body = '{}';
     try { body = (await env.MINUTE.get(KV_KEY)) || '{}'; } catch (e) {}
-    return new Response(body, { headers: { 'Content-Type': 'application/json', ...CORS } });
+    return new Response(body, { headers: { 'Content-Type': 'application/json', 'X-CC-Source': 'kv', ...CORS } });
   }
 }
