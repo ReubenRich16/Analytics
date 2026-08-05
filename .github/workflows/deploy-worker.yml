@@ -32,7 +32,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'   # wrangler requires Node >= 22
-      # Deploy first so the Worker exists (this also applies the KV binding and the
+      # Apply the D1 schema before deploying, so the tables always exist by the time
+      # the new code runs. Every statement is IF NOT EXISTS, so this is a no-op on
+      # every deploy after the first.
+      - name: Apply D1 schema
+        run: npx wrangler@latest d1 execute channel-command --remote --file schema.sql
+      # Deploy so the Worker exists (this also applies the KV and D1 bindings and the
       # every-minute cron trigger from wrangler.toml).
       - name: Deploy Worker
         run: npx wrangler@latest deploy
