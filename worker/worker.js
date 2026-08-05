@@ -28,6 +28,7 @@
  * Setup lives in ../README.md ("Per-minute offline tracker").
  */
 
+const D1_KEEP_DAYS = 60;    // how long D1 holds launch samples (KV still prunes at KEEP_DAYS)
 const HOT_HOURS   = 6;      // record a video minute-by-minute for this long after publish
 const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice new uploads
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
@@ -68,6 +69,74 @@ async function loadState(env) {
   s.videos = s.videos || {};   // { vid: { pub, title, chan, s: [[ts,views,likes,comments],...] } }
   s.lastScan = s.lastScan || 0;
   return s;
+}
+
+/* ===========================================================================
+   D1 mirror — phase 1 of the KV→D1 migration.
+
+   KV is still the source of truth for everything the dashboards read. This only
+   shadows the same samples into D1 so the two can be compared before anything
+   switches over.
+
+   Every entry point is wrapped and returns instead of throwing. A missing binding,
+   a schema problem or a D1 outage must never break the KV path or the cron — the
+   dashboards are still served entirely from KV, so a fault here has to be
+   invisible to them. Removing the three call sites reverts the whole phase.
+   =========================================================================== */
+
+// One row per (platform, video, minute). INSERT OR IGNORE against the composite
+// primary key makes a re-run or a double-fired cron a no-op rather than an error.
+async function d1Write(env, platform, rows, metas) {
+  if (!env.DB) return { skipped: 'no binding' };
+  if (!rows.length && !metas.length) return { skipped: 'nothing to write' };
+  try {
+    const sampleStmt = env.DB.prepare(
+      'INSERT OR IGNORE INTO samples (platform, video_id, ts, views, likes, comments, shares) VALUES (?,?,?,?,?,?,?)');
+    const videoStmt = env.DB.prepare(
+      'INSERT INTO videos (platform, video_id, published_at, title, channel, cover, first_seen) VALUES (?,?,?,?,?,?,?) ' +
+      'ON CONFLICT(platform, video_id) DO UPDATE SET title=excluded.title, published_at=excluded.published_at, ' +
+      'channel=excluded.channel, cover=excluded.cover');
+    const stmts = [];
+    for (const m of metas) stmts.push(videoStmt.bind(platform, m.id, m.pub | 0, m.title || '', m.chan || '', m.cover || '', Date.now()));
+    for (const r of rows) stmts.push(sampleStmt.bind(platform, r.id, r.ts, r.views | 0, r.likes | 0, r.comments | 0, r.shares | 0));
+    // chunked so one enormous backfill can't exceed the per-batch statement limit
+    for (let i = 0; i < stmts.length; i += 200) await env.DB.batch(stmts.slice(i, i + 200));
+    return { rows: rows.length, metas: metas.length };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+}
+
+// Copy whatever KV already holds into D1, once, so the migration doesn't start from
+// an empty table and lose the launch curves recorded in the last few days. Idempotent
+// via INSERT OR IGNORE; the caller records that it ran so it isn't repeated.
+async function d1Backfill(env, platform, videos, shape) {
+  const rows = [], metas = [];
+  for (const [id, rec] of Object.entries(videos || {})) {
+    const meta = shape(id, rec);
+    if (meta) metas.push(meta);
+    for (const s of (rec.s || [])) {
+      rows.push(platform === 'tt'
+        ? { id, ts: s[0], views: s[1], likes: s[2], comments: s[3], shares: s[4] }
+        : { id, ts: s[0], views: s[1], likes: s[2], comments: s[3], shares: 0 });
+    }
+  }
+  return d1Write(env, platform, rows, metas);
+}
+
+// Drop samples past the retention window. Deletes count toward D1's daily row-write
+// budget, so this runs once a day rather than every tick.
+async function d1Prune(env, now) {
+  if (!env.DB) return { skipped: 'no binding' };
+  const d = new Date(now);
+  if (d.getUTCHours() !== 3 || d.getUTCMinutes() !== 7) return { skipped: 'not the daily slot' };
+  try {
+    const cutoff = now - D1_KEEP_DAYS * 864e5;
+    const r = await env.DB.prepare('DELETE FROM samples WHERE ts < ?').bind(cutoff).run();
+    return { pruned: (r && r.meta && r.meta.changes) || 0 };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
 }
 
 // Find fresh (< HOT_HOURS old) uploads across all tracked channels.
@@ -124,6 +193,7 @@ async function tick(env) {
 
   // (3) sample the hot videos' live stats (1 quota unit per 50)
   let sampled = 0;
+  const d1rows = [], d1metas = [];
   if (hotIds.length) {
     for (const part of chunk(hotIds, 50)) {
       try {
@@ -132,7 +202,10 @@ async function tick(env) {
           const st = it.statistics;
           const rec = s.videos[it.id];
           if (!rec) continue;
-          rec.s.push([now, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)]);
+          const row = [now, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)];
+          rec.s.push(row);
+          d1rows.push({ id: it.id, ts: now, views: row[1], likes: row[2], comments: row[3], shares: 0 });
+          d1metas.push({ id: it.id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' });
           sampled++;
         }
       } catch (e) { /* skip this sample; the curve tolerates a gap */ }
@@ -152,11 +225,26 @@ async function tick(env) {
   // allows 1,000 KV writes/day; a once-a-minute unconditional write would blow through it
   // (1,440/day) on its own, so quiet minutes must cost nothing.
   const changed = JSON.stringify(s.videos) !== before;
-  if (changed) {
+
+  // (6) Shadow the same samples into D1. Phase 1 of the migration: KV above is still
+  // what the dashboards read, this only builds the parallel copy. Runs before the KV
+  // write so a D1 fault can't leave KV updated but the mirror silently behind — and it
+  // never throws, so it can't stop the KV write either.
+  let d1 = { skipped: 'nothing new' };
+  if (!s.d1Backfilled && env.DB) {
+    d1 = await d1Backfill(env, 'yt', s.videos, (id, rec) => ({ id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' }));
+    if (!d1.error) { s.d1Backfilled = now; }   // persisted with the KV write below
+    d1.backfill = true;
+  } else if (d1rows.length) {
+    d1 = await d1Write(env, 'yt', d1rows, d1metas);
+  }
+  const d1pruned = await d1Prune(env, now);
+
+  if (changed || s.d1Backfilled === now) {
     s.updated = now;
     await env.MINUTE.put(KV_KEY, JSON.stringify(s));
   }
-  return { hot: hotIds.length, sampled, wrote: changed };
+  return { hot: hotIds.length, sampled, wrote: changed, d1, d1pruned };
 }
 
 /* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
@@ -506,7 +594,7 @@ async function ttTick(env) {
   try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
   if (!list.length) return { accounts: 0 };
   const now = Date.now(), hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
-  let sampled = 0, wrote = 0;
+  let sampled = 0, wrote = 0, d1 = { skipped: 'nothing new' };
   for (const openId of list) {
     const token = await ttAccessToken(env, openId);
     if (!token) continue;
@@ -537,24 +625,36 @@ async function ttTick(env) {
 
     let vids = [];
     try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
+    const d1rows = [], d1metas = [];
     for (const v of vids) {
       const ct = (v.create_time || 0) * 1000;
       if (!ct || now - ct > hotMs) continue;             // only the launch window
       const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
       rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
+      d1rows.push({ id: v.id, ts: now, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
+      d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' });
       sampled++;
     }
     for (const id of Object.keys(snap.videos)) {
       snap.videos[id].s = (snap.videos[id].s || []).filter(x => x[0] >= cutoff);
       if (now - snap.videos[id].create_time * 1000 >= hotMs && !snap.videos[id].s.length) delete snap.videos[id];
     }
-    if (JSON.stringify(snap.videos) !== before) {
+    // shadow into D1 — same contract as the YouTube side: never throws, KV unaffected
+    if (!snap.d1Backfilled && env.DB) {
+      const r = await d1Backfill(env, 'tt', snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
+      if (!r.error) snap.d1Backfilled = now;
+      d1 = r; d1.backfill = true;
+    } else if (d1rows.length) {
+      d1 = await d1Write(env, 'tt', d1rows, d1metas);
+    }
+
+    if (JSON.stringify(snap.videos) !== before || snap.d1Backfilled === now) {
       snap.updated = now;
       await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
       wrote++;
     }
   }
-  return { accounts: list.length, sampled, wrote };
+  return { accounts: list.length, sampled, wrote, d1 };
 }
 
 export default {
