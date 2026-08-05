@@ -108,8 +108,8 @@ manual picker for anything the suggester misses. Confirmed pairs are stored on t
   playback starts, YouTube long-form wants a real watch, so the raw counts are two different
   rulers. The page says so, on the page.
 - **The launch race** — both curves indexed to each platform's own typical launch (100 =
-  normal). Only covers the window both sides recorded; the Worker keeps TikTok's first six
-  hours, so that's usually the limit, and the page tells you the actual overlap.
+  normal). Only covers the window both sides recorded; the Worker keeps each post's first 48
+  hours, and the page tells you the actual overlap.
 - **Time to a thousand** — a clock, so no units problem, with your usual YouTube pace as a
   third bar.
 
@@ -214,7 +214,14 @@ days you most wanted it.
 
 Samples now live in **D1** (`worker/schema.sql`), whose free tier allows **100,000 rows a
 day** and 5 GB, kept for 60 days. One row per post per minute instead of one rewrite of
-everything, so the same load sits at a few percent of the budget.
+everything — which is what let the launch window go from **6 hours to 48**, still sampled
+once a minute the whole way through.
+
+Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
+back only the minutes it hasn't seen, because re-shipping a 48-hour window every three
+minutes would exhaust D1's 5,000,000 daily row-reads before the day was out. And the KV
+mirror is written at most every 15 minutes rather than every minute — a roster change or a
+failed D1 write still persists immediately, but ordinary sample growth waits.
 
 Both stores are still written every tick. D1 answers reads; if it fails *or comes back
 empty while KV has data*, KV answers instead and the page never notices — the JSON is

@@ -1670,12 +1670,24 @@
   // open) into the local minute-race history. The Worker stores absolute timestamps; we
   // convert each to "minutes since publish" — the same shape the on-device recorder uses.
   let workerPulled = false;
+  // The newest sample timestamp already merged in. Sent back as ?since= so a poll costs
+  // only the minutes that are actually new — the Worker now keeps 48 hours per video, and
+  // re-shipping the whole retention window every three minutes would burn through its
+  // database read allowance in a few hours of having the page open.
+  const WSINCE_KEY = 'cc_wsince';
+  let workerSince = +(localStorage.getItem(WSINCE_KEY) || 0) || 0;
   async function pullWorkerMinutes() {
     if (!workerUrl) return;
+    // if there's nothing stored locally, ask for everything regardless of the watermark —
+    // otherwise clearing the saved curves would leave the page permanently unable to
+    // re-fetch them, since the Worker would keep answering "nothing new since then"
+    if (!Object.keys(snaps).length) workerSince = 0;
     let bundle = null;
-    try { const r = await fetch(workerUrl, { cache: 'no-store' }); bundle = r.ok ? await r.json() : null; } catch (e) { return; }
+    const sep = workerUrl.includes('?') ? '&' : '?';
+    const url = workerUrl + (workerSince ? sep + 'since=' + workerSince : '');
+    try { const r = await fetch(url, { cache: 'no-store' }); bundle = r.ok ? await r.json() : null; } catch (e) { return; }
     if (!bundle || !bundle.videos) return;
-    let changed = false;
+    let changed = false, newest = workerSince;
     for (const [vid, rec] of Object.entries(bundle.videos)) {
       if (!rec || !rec.pub || !Array.isArray(rec.s) || !rec.s.length) continue;
       const pubMs = new Date(rec.pub).getTime();
@@ -1686,6 +1698,7 @@
       const arr = snaps[vid] || (snaps[vid] = []);
       const byAge = new Map(arr.map(p => [p[0], p]));
       for (const smp of rec.s) {
+        if (smp[0] > newest) newest = smp[0];
         const age = Math.round((smp[0] - pubMs) / 60000);
         if (age < 0) continue;
         const ex = byAge.get(age);
@@ -1700,6 +1713,11 @@
       for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
       try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
       if (latestVid) renderLiveRace();
+    }
+    // only advance the watermark once the samples behind it are safely stored
+    if (newest > workerSince) {
+      workerSince = newest;
+      try { localStorage.setItem(WSINCE_KEY, String(newest)); } catch (e) {}
     }
     workerPulled = true;
   }

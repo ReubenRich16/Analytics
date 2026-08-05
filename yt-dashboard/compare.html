@@ -509,7 +509,25 @@
     if (!rec || !rec.s || rec.s.length < 2) return [];
     return rec.s.map(s => [Math.max(0, (s[0] - pub) / HOUR), s[1]]).filter(s => s[0] >= 0).sort((a, b) => a[0] - b[0]);
   }
-  const atHour = (series, h) => { let v = null; for (const s of series) { if (s[0] <= h) v = s[1]; else break; } return v; };
+  // The value at hour h, or null past the end of what was actually recorded.
+  //
+  // The bound matters. Without it this held the final value forever, so a post whose curve
+  // stops at 6 hours was counted as if it had been flat from there to the end of the span.
+  // Once the Worker started recording 48 hours, the span widened to match — and every
+  // older, shorter curve got dragged along at its 6-hour total, dropping the median that
+  // "your typical launch" divides by. A post performing exactly normally then reads far
+  // above 100%. Stopping where the evidence stops is the honest answer; build() already
+  // renders a null as a break rather than a number.
+  //
+  // The epsilon is not decoration: pts is stepped by span/40 against `h <= span + 1e-9`,
+  // so float drift puts the last h a hair above the series' final x, and a strict compare
+  // would silently drop the last point of the user's own line too.
+  const atHour = (series, h) => {
+    if (!series.length || h > series[series.length - 1][0] + 1e-6) return null;
+    let v = null;
+    for (const s of series) { if (s[0] <= h) v = s[1]; else break; }
+    return v;
+  };
   // the platform's own typical launch: the median of every other post that has a curve
   function typicalCurve(all, span) {
     const curves = all.filter(c => c.length > 1);
@@ -517,7 +535,9 @@
     const out = [];
     for (let h = 0; h <= span; h += span / 40) {
       const vals = curves.map(c => atHour(c, h)).filter(v => v != null).sort((a, b) => a - b);
-      if (!vals.length) { out.push([h, null]); continue; }
+      // one surviving curve is an anecdote, not a typical launch — and past the point where
+      // most posts stop, the few that continue are exactly the unusual ones
+      if (vals.length < 2) { out.push([h, null]); continue; }
       out.push([h, vals[vals.length >> 1]]);
     }
     return out;
@@ -568,7 +588,7 @@
     const covered = ts.length > 1 ? ts[ts.length - 1][0] : 0;
     $('raceExplain').innerHTML = 'Recorded by the snapshot robot on YouTube and by your Worker on TikTok. ' +
       'This pair overlaps for <b>' + (span < 2 ? Math.round(span * 60) + ' minutes' : Math.round(span) + ' hours') + '</b>' +
-      (covered && covered < 6.5 ? ' — the Worker only records TikTok’s first six hours, which is the shorter side here.' : '.');
+      (covered && covered < 47 ? ' — the Worker records TikTok’s first 48 hours, and this post hasn’t run that long yet.' : '.');
     $('raceContent').innerHTML = raceChart(pts, series, span) +
       '<div class="legend">' + series.map(s => '<span class="lg-item"><span class="lg-key" style="background:' + s.colour + '"></span>' + s.name + '</span>').join('') +
       (raceMode === 'idx' ? '<span class="lg-item"><span class="lg-key" style="background:var(--muted)"></span>your typical launch (=100)</span>' : '') +

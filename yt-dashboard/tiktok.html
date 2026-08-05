@@ -289,7 +289,17 @@
     opts = opts || {};
     const w = 620, h = 178, L = 66, R = 18, T = 18, B = 30, ci = ++chartId;
     const sc = niceScale(Math.min(...pts, 0), Math.max(...pts, 1), 4);
-    const X = i => L + (w - L - R) * (i / (pts.length - 1));
+    // opts.at is the real time of each point. Without it the x axis is the array index,
+    // which is only the same thing while samples arrive at a perfectly steady rate — and
+    // they don't: a missed cron tick, an API hiccup, or a spell of serving from the coarser
+    // KV fallback all leave uneven gaps. Spacing those evenly stretches quiet stretches and
+    // compresses busy ones, so a constant view rate can render as a curve that accelerates.
+    // The card is titled "recorded minute by minute", so the axis has to actually be time.
+    const at = Array.isArray(opts.at) && opts.at.length === pts.length ? opts.at : null;
+    const t0 = at ? at[0] : 0, tN = at ? at[at.length - 1] : 1;
+    const X = at
+      ? i => L + (w - L - R) * ((at[i] - t0) / (tN - t0 || 1))
+      : i => L + (w - L - R) * (i / (pts.length - 1));
     const Y = v => h - B - (h - B - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
     const base = h - B;
     let frame = '';
@@ -303,14 +313,31 @@
     if (opts.x1) frame += '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     const xs = pts.map((_, i) => X(i)), ys = pts.map(Y);
     ttReg.set(ci, { tips: opts.tips || pts.map(v => fmt.format(v) + ' views'), xs, ys, L, R, w, color });
-    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
-    for (let i = 1; i < pts.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    // A gap far longer than the usual spacing is a stretch where nothing was recorded, not
+    // a steady climb. Joining across it would draw a straight line that looks like measured
+    // growth, so the path breaks instead and the gap reads as what it is: no data.
+    let maxGap = Infinity;
+    if (at && pts.length > 2) {
+      const dts = []; for (let i = 1; i < at.length; i++) dts.push(at[i] - at[i - 1]);
+      dts.sort((a, b) => a - b);
+      maxGap = Math.max(4 * dts[dts.length >> 1], 6e5);   // never break on a couple of missed minutes
+    }
+    const segs = [[0]];
+    for (let i = 1; i < pts.length; i++) {
+      if (at && at[i] - at[i - 1] > maxGap) segs.push([i]);
+      else segs[segs.length - 1].push(i);
+    }
+    const pt = i => xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    const d = segs.map(seg => 'M' + seg.map(pt).join(' L')).join(' ');
+    const dFill = segs.filter(seg => seg.length > 1).map(seg =>
+      'M' + xs[seg[0]].toFixed(1) + ',' + base + ' L' + seg.map(pt).join(' L') +
+      ' L' + xs[seg[seg.length - 1]].toFixed(1) + ',' + base + ' Z').join(' ');
     const ey = Math.max(T + 10, ys[ys.length - 1] - 10);
     return '<svg class="chart" data-tci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
       '<defs><linearGradient id="ttg' + ci + '" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0" stop-color="' + color + '" stop-opacity="0.14"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.01"/></linearGradient></defs>' +
       frame +
-      '<path d="' + d + ' L' + xs[xs.length - 1].toFixed(1) + ',' + base + ' L' + xs[0].toFixed(1) + ',' + base + ' Z" fill="url(#ttg' + ci + ')"/>' +
+      '<path d="' + dFill + '" fill="url(#ttg' + ci + ')"/>' +
       '<line class="cline" y1="' + T + '" y2="' + base + '" style="display:none"/>' +
       '<path class="line anim" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' +
       '<text class="val" x="' + (w - R) + '" y="' + ey.toFixed(1) + '" text-anchor="end">' + esc(axisNum(pts[pts.length - 1])) + '</text>' +
@@ -329,8 +356,13 @@
     if (!d || !d.tips.length) return;
     const rect = svg.getBoundingClientRect();
     const xv = (e.clientX - rect.left) / rect.width * d.w;
-    let idx = Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
-    idx = Math.max(0, Math.min(d.tips.length - 1, idx));
+    // nearest point by actual pixel position, not by assuming the points are evenly
+    // spaced — they aren't once the x axis is real time (see opts.at in lineChart)
+    let idx = 0, best = Infinity;
+    for (let i = 0; i < d.xs.length; i++) {
+      const dist = Math.abs(d.xs[i] - xv);
+      if (dist < best) { best = dist; idx = i; }
+    }
     const line = svg.querySelector('.cline');
     if (line) { line.setAttribute('x1', d.xs[idx]); line.setAttribute('x2', d.xs[idx]); line.style.display = 'block'; }
     const dot = svg.querySelector('.cdot');
@@ -343,6 +375,57 @@
   }
   document.addEventListener('pointermove', ttMoveTip);
   document.addEventListener('pointerdown', ttMoveTip);
+
+  /* ---------- recorded history: merge, never replace ----------
+     A /tiktok/history response is not the whole truth and must not be treated as it.
+     It is a delta when we send ?since=, and it is a coarser copy whenever the Worker is
+     serving from the KV fallback instead of D1. Assigning it over `hist` — which is what
+     this used to do, on boot, on every third poll, and on Refresh — makes points that are
+     already drawn disappear mid-session and the sample count jump around. Unioning by
+     timestamp cannot do that: a response can only ever add.
+     Keeping the union in localStorage also means a reload starts from what was already
+     recorded rather than re-fetching two days of samples. */
+  const TT_HIST_KEY = 'tt_hist';
+  let histSince = 0;
+  const newestTs = h => {
+    let m = 0;
+    for (const r of Object.values((h && h.videos) || {})) for (const s of (r.s || [])) if (s[0] > m) m = s[0];
+    return m;
+  };
+  function loadHist() {
+    try {
+      const h = JSON.parse(localStorage.getItem(TT_HIST_KEY) || 'null');
+      if (h && h.videos) { hist = h; histSince = newestTs(h); }
+    } catch (e) { /* corrupt or unavailable — start from the server */ }
+  }
+  function mergeHist(b) {
+    if (!b) return;
+    if (!hist || !hist.videos) hist = { videos: {} };
+    // followers / updated / totals arrive whole every time, so they replace
+    for (const k of Object.keys(b)) if (k !== 'videos') hist[k] = b[k];
+    for (const [id, rec] of Object.entries(b.videos || {})) {
+      if (!rec) continue;
+      const cur = hist.videos[id];
+      if (!cur) { hist.videos[id] = rec; continue; }
+      cur.create_time = rec.create_time || cur.create_time;
+      cur.title = rec.title || cur.title;
+      cur.cover = rec.cover || cur.cover;
+      const byTs = new Map((cur.s || []).map(s => [s[0], s]));
+      for (const s of (rec.s || [])) byTs.set(s[0], s);      // same minute, newer read wins
+      cur.s = [...byTs.values()].sort((a, b2) => a[0] - b2[0]);
+    }
+    // keep the local copy bounded — newest posts only
+    const ids = Object.keys(hist.videos).sort((a, b2) => (hist.videos[b2].create_time || 0) - (hist.videos[a].create_time || 0));
+    for (const id of ids.slice(20)) delete hist.videos[id];
+    histSince = newestTs(hist);
+    try { localStorage.setItem(TT_HIST_KEY, JSON.stringify(hist)); } catch (e) { /* quota — memory copy still fine */ }
+  }
+  // ?since= keeps a poll to just the new minutes instead of the whole retention window
+  async function pullHistory() {
+    try { mergeHist(await api('/tiktok/history' + (histSince ? '?since=' + histSince : ''))); }
+    catch (e) { /* keep whatever is already drawn */ }
+  }
+  loadHist();
 
   /* ---------- auth ---------- */
   function signIn() {
@@ -372,7 +455,7 @@
     ['profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
-    try { hist = await api('/tiktok/history'); } catch (e) { hist = null; }
+    await pullHistory();
     intervalMs = +$('interval').value;
     await poll();
     if (timer) clearInterval(timer);
@@ -408,7 +491,7 @@
       // re-pull the Worker's recordings periodically so the minute chart keeps growing
       // while a launch is live, not only when Refresh is pressed
       pollCount++;
-      if (pollCount % 3 === 0) { try { hist = await api('/tiktok/history'); } catch (e) {} }
+      if (pollCount % 3 === 0) await pullHistory();
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
       clearError();
       $('liveDot').classList.add('on');
@@ -502,13 +585,14 @@
       html += '<div class="dsection"><h4>Views since it went live — recorded minute by minute</h4>' +
         '<p class="explain">Captured by your Worker in the background, even when nobody had this page open. TikTok itself provides no history — this is built from your own recordings.</p>' +
         lineChart(pts, 'var(--live)', 'Views over time', {
+          at: rec.s.map(s => s[0]),
           tips: rec.s.map(s => fmt.format(s[1]) + ' views — ' + fmtAgo(s[0])),
           x0: fmtAgo(rec.s[0][0]), x1: 'now'
         }) +
         '<p class="dnote" style="margin-top:6px">' + rec.s.length + ' samples · first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
     } else {
       html += '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
-        '6 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
+        '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
     }
     // how it compares to the account's own typical post
     const others = videos.filter(x => x.id !== v.id);
@@ -690,7 +774,7 @@
   /* ---------- events ---------- */
   $('signInBtn').addEventListener('click', signIn);
   $('signOutBtn').addEventListener('click', () => signOut());
-  $('refreshBtn').addEventListener('click', () => { if (session) { api('/tiktok/history').then(h => { hist = h; }).catch(() => {}); poll(true); } });
+  $('refreshBtn').addEventListener('click', () => { if (session) { pullHistory().then(() => { renderTable(); showSlot(slotIdx); }); poll(true); } });
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused;
     $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
