@@ -281,6 +281,30 @@ console.log('\n11. rosterOf ignores samples and notices everything else');
   check('a metadata fingerprint change is', W.rosterOf(a) !== W.rosterOf({ v: { ...a.v, d1m: 'y' } }));
 }
 
+console.log('\n12. A failed write must not mark the metadata as stated');
+{
+  // the sequence that would otherwise hide a video forever: D1 is down for the video's
+  // first sample (metadata marked as stated anyway), then recovers. Samples retry
+  // naturally as new rows -- the videos row would never be retried, and the bundle
+  // walks videos, so the curve would exist in the samples table and appear nowhere.
+  const st = JSON.parse(JSON.stringify(seedState));
+  st.d1Backfilled = W.D1_BACKFILL_V;                 // no backfill in the way
+  const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
+
+  const down = mockD1({ fail: true });
+  const r1 = await W.tick({ MINUTE: KV, DB: down, YT_API_KEY:'k', CHANNEL_ID:'UC1' });
+  check('the failed tick reports its error', !!(r1.d1 && r1.d1.error), JSON.stringify(r1.d1));
+  const afterFail = JSON.parse(KV.store.get('minute-v1'));
+  check('fingerprint NOT persisted after the failure', !afterFail.videos.v1.d1m,
+    JSON.stringify(afterFail.videos.v1.d1m));
+
+  const up = mockD1();
+  await W.tick({ MINUTE: KV, DB: up, YT_API_KEY:'k', CHANNEL_ID:'UC1' });
+  check('the healthy tick re-states the metadata', up.rows.videos.size === 1, up.rows.videos.size);
+  const afterOk = JSON.parse(KV.store.get('minute-v1'));
+  check('and only now records it as stated', !!afterOk.videos.v1.d1m, JSON.stringify(afterOk.videos.v1.d1m));
+}
+
 globalThis.fetch = realFetch;
 console.log('\n' + (fail? '✗ '+fail+' FAILED, ':'') + pass + ' passed');
 process.exit(fail?1:0);

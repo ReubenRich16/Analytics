@@ -385,7 +385,7 @@ async function tick(env) {
 
   // (3) sample the hot videos' live stats (1 quota unit per 50)
   let sampled = 0;
-  const d1rows = [], d1metas = [];
+  const d1rows = [], d1metas = [], metaPending = [];
   if (hotIds.length) {
     for (const part of chunk(hotIds, 50)) {
       try {
@@ -397,11 +397,16 @@ async function tick(env) {
           const row = [now, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)];
           rec.s.push(row);
           d1rows.push({ id: it.id, ts: now, views: row[1], likes: row[2], comments: row[3], shares: 0 });
-          // only re-state the metadata when it isn't already what D1 holds
+          // only re-state the metadata when it isn't already what D1 holds. The
+          // fingerprint is NOT recorded here — only after the write below succeeds.
+          // Recording it first would mean one failed write marks the metadata as stated
+          // forever: samples retry naturally as new rows on later ticks, the videos row
+          // never does, and the bundle walks videos — so the whole curve would sit in
+          // the samples table while every dashboard shows nothing.
           const fp = metaFp(rec.pub, rec.title);
           if (rec.d1m !== fp) {
             d1metas.push({ id: it.id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' });
-            rec.d1m = fp;
+            metaPending.push([rec, fp]);
           }
           sampled++;
         }
@@ -418,9 +423,8 @@ async function tick(env) {
     if (now - new Date(rec.pub).getTime() >= hotMs && !rec.s.length) delete s.videos[vid];
   }
 
-  // (5) Has anything changed, and does it have to be persisted right now?
+  // (5) Has anything changed?
   const changed = JSON.stringify(s.videos) !== before;
-  const rosterChanged = rosterOf(s.videos) !== rosterBefore;
 
   // (6) Record the samples in D1, which is now the source the dashboards read. Runs
   // before the KV write so a D1 fault can't leave KV updated but the mirror behind — and
@@ -428,12 +432,23 @@ async function tick(env) {
   let d1 = { skipped: 'nothing new' };
   if (s.d1Backfilled !== D1_BACKFILL_V && env.DB) {
     d1 = await d1Backfill(env, 'yt', s.videos, (id, rec) => ({ id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' }));
-    if (!d1.error) { s.d1Backfilled = D1_BACKFILL_V; }   // persisted with the KV write below
+    if (!d1.error) {
+      s.d1Backfilled = D1_BACKFILL_V;   // persisted with the KV write below
+      // a successful backfill states every video's metadata, not just this tick's
+      for (const rec of Object.values(s.videos)) rec.d1m = metaFp(rec.pub, rec.title);
+    }
     d1.backfill = true;
   } else if (d1rows.length) {
     d1 = await d1Write(env, 'yt', d1rows, d1metas);
   }
+  // the fingerprint only becomes true once the write lands; on failure it stays unset,
+  // so the next tick states the metadata again instead of believing it already did
+  if (!d1.error) for (const [rec, fp] of metaPending) rec.d1m = fp;
   const d1pruned = await d1Prune(env, now);
+
+  // computed here, after the fingerprint commit, so a newly stated metadata row is
+  // itself a roster change and persists to KV immediately rather than waiting out the gate
+  const rosterChanged = rosterOf(s.videos) !== rosterBefore;
 
   // (7) Persist. D1 already has this minute; KV is the read-fallback, and writing it every
   // minute costs ~1,800 writes/day against a free tier of 1,000 — which is what this was
@@ -853,16 +868,17 @@ async function ttTick(env) {
 
     let vids = [];
     try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
-    const d1rows = [], d1metas = [];
+    const d1rows = [], d1metas = [], metaPending = [];
     for (const v of vids) {
       const ct = (v.create_time || 0) * 1000;
       if (!ct || now - ct > hotMs) continue;             // only the launch window
       const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
       rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
       d1rows.push({ id: v.id, ts: now, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
-      // only re-state the metadata when it isn't already what D1 holds (see metaFp)
+      // only re-state the metadata when it isn't already what D1 holds (see metaFp).
+      // Like the YouTube side, the fingerprint commits only after the write succeeds.
       const fp = metaFp(ct, rec.title);
-      if (rec.d1m !== fp) { d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' }); rec.d1m = fp; }
+      if (rec.d1m !== fp) { d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' }); metaPending.push([rec, fp]); }
       sampled++;
     }
     for (const id of Object.keys(snap.videos)) {
@@ -875,11 +891,15 @@ async function ttTick(env) {
     let acct = { skipped: 'nothing new' };
     if (snap.d1Backfilled !== D1_BACKFILL_V && env.DB) {
       const r = await d1Backfill(env, ttKey(openId), snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
-      if (!r.error) snap.d1Backfilled = D1_BACKFILL_V;
+      if (!r.error) {
+        snap.d1Backfilled = D1_BACKFILL_V;
+        for (const rec of Object.values(snap.videos)) rec.d1m = metaFp((rec.create_time || 0) * 1000, rec.title);
+      }
       acct = r; acct.backfill = true;
     } else if (d1rows.length) {
       acct = await d1Write(env, ttKey(openId), d1rows, d1metas);
     }
+    if (!acct.error) for (const [rec, fp] of metaPending) rec.d1m = fp;
     d1 = acct;
 
     // same gate as tick(): the roster and the backfill flag persist immediately, sample
