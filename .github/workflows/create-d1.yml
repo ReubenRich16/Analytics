@@ -1,0 +1,61 @@
+name: Create the D1 database (one-off)
+
+# MANUAL ONLY — this never runs on its own.
+#
+# Creates the D1 database that will hold the launch-history samples, then prints its
+# id so it can go into worker/wrangler.toml. Safe to re-run: if the database already
+# exists, creation is skipped and the existing id is printed instead.
+#
+# Running this also proves whether CLOUDFLARE_API_TOKEN has D1 permission — the token
+# was originally made with the "Edit Cloudflare Workers" template, which on older
+# tokens predates D1. If this job fails on permissions, re-issue the token with the
+# same template and the D1 permission will be included.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # wrangler requires Node >= 22
+
+      - name: Check the token can see D1 at all
+        run: |
+          echo "Listing existing D1 databases on this account…"
+          npx wrangler@latest d1 list || {
+            echo ""
+            echo "::error::Could not list D1 databases. The API token most likely lacks the"
+            echo "::error::D1 permission. Re-create CLOUDFLARE_API_TOKEN with the"
+            echo "::error::'Edit Cloudflare Workers' template and update the repo secret."
+            exit 1
+          }
+
+      - name: Create the database if it isn't there yet
+        run: |
+          if npx wrangler@latest d1 list | grep -q 'channel-command'; then
+            echo "channel-command already exists — skipping creation."
+          else
+            npx wrangler@latest d1 create channel-command
+          fi
+
+      - name: Print the id to copy
+        run: |
+          echo ""
+          echo "==================== COPY THE ID BELOW ===================="
+          npx wrangler@latest d1 info channel-command || npx wrangler@latest d1 list
+          echo "==========================================================="
+          echo "Send the uuid shown against 'channel-command'."
+          echo "It is not a secret — like the KV namespace id, it only identifies"
+          echo "a resource inside your own account."
