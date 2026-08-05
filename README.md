@@ -183,7 +183,8 @@ of TikTok. Free, no card.
    `GEMINI_KEY` (optional, for AI) and `TIKTOK_CLIENT_SECRET` (optional, for
    TikTok).
 3. Run **Deploy per-minute Worker to Cloudflare** from the Actions tab. It
-   deploys the code, applies the KV binding and the one-minute cron from
+   applies [`worker/schema.sql`](worker/schema.sql) to D1, deploys the code with
+   the KV + D1 bindings and the one-minute cron from
    [`worker/wrangler.toml`](worker/wrangler.toml), and uploads the secrets.
 4. Open the dashboard once with `?worker=https://…workers.dev` appended.
 
@@ -196,11 +197,34 @@ of TikTok. Free, no card.
 |---|---|
 | `/` | the recorded YouTube minute bundle |
 | `/run` | run both trackers now (handy for testing) |
+| `/d1diff` | compares the D1 and KV copies field by field and reports any disagreement |
 | `/models` | which Gemini models your key can actually call |
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
+
+**Where the minute samples live**
+
+They started in a single KV blob, rewritten once a minute while any post was inside its
+launch window. Cloudflare's free KV tier allows **1,000 writes a day**, and two or three
+uploads across both platforms produce overlapping windows running most of the day — around
+**2,000 writes**, so sampling silently stopped once the cap was hit, on exactly the busy
+days you most wanted it.
+
+Samples now live in **D1** (`worker/schema.sql`), whose free tier allows **100,000 rows a
+day** and 5 GB, kept for 60 days. One row per post per minute instead of one rewrite of
+everything, so the same load sits at a few percent of the budget.
+
+Both stores are still written every tick. D1 answers reads; if it fails *or comes back
+empty while KV has data*, KV answers instead and the page never notices — the JSON is
+identical either way. The `X-CC-Source` response header names whichever one answered.
+
+| Query | Effect |
+|---|---|
+| *(none)* | D1, falling back to KV |
+| `?src=d1` | force D1, and report an error rather than falling back |
+| `?src=kv` | force KV |
 
 ### 4. TikTok
 

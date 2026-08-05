@@ -1,2 +1,3 @@
 .worker-under-test.mjs
 .worker-readpath.mjs
+.worker-failover.mjs

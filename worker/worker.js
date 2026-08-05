@@ -53,9 +53,14 @@ const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  // X-CC-Source names the store that answered a read (see "phase 3" below). A custom
+  // response header is invisible to cross-origin fetch() unless it is exposed, and the
+  // dashboards are served from github.io while this runs on workers.dev — without this
+  // line the header would only ever be visible in devtools, never to the page.
+  'Access-Control-Expose-Headers': 'X-CC-Source',
   'Cache-Control': 'no-store',
 };
-const json = (obj, status) => new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json', ...CORS } });
+const json = (obj, status, extra) => new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json', ...CORS, ...extra } });
 
 async function api(ep, params, key) {
   const u = new URL(YT + ep);
@@ -78,16 +83,16 @@ async function loadState(env) {
 }
 
 /* ===========================================================================
-   D1 mirror — phase 1 of the KV→D1 migration.
+   The D1 store — the KV→D1 migration.
 
-   KV is still the source of truth for everything the dashboards read. This only
-   shadows the same samples into D1 so the two can be compared before anything
-   switches over.
+   Both stores are written on every tick, and as of phase 3 D1 is the one that
+   answers reads, with KV as an automatic fallback (see "phase 3" further down).
+   Dual-writing continues deliberately: it is what makes the fallback real rather
+   than decorative, and what keeps a rollback to KV a one-line change.
 
-   Every entry point is wrapped and returns instead of throwing. A missing binding,
-   a schema problem or a D1 outage must never break the KV path or the cron — the
-   dashboards are still served entirely from KV, so a fault here has to be
-   invisible to them. Removing the three call sites reverts the whole phase.
+   Every entry point here is wrapped and returns instead of throwing. A missing
+   binding, a schema problem or a D1 outage must not break the KV path or the cron
+   — KV is the safety net, so a fault on this side has to leave it untouched.
    =========================================================================== */
 
 // One row per (platform, video, minute). INSERT OR IGNORE against the composite
@@ -204,6 +209,26 @@ async function d1TtBundle(env, openId, days) {
   }
   return { videos };
 }
+
+/* --- phase 3: which store answers a read ----------------------------------
+   D1 is now the default; KV is the automatic fallback. Both are still written every
+   tick, so falling back costs nothing but a shorter history.
+
+   Falling back means more than catching a throw. A D1 fault that comes back as an
+   empty result set is indistinguishable, at the type level, from "nothing has been
+   recorded yet" — and serving that would blank every launch curve on the page without
+   raising anything, which is precisely the silent failure this migration exists to end.
+   So an empty answer falls back too, but only when KV actually holds something;
+   otherwise a genuinely quiet account would be pinned to KV forever and never see its
+   own first D1 sample.
+
+   ?src=d1 and ?src=kv still force one store, so either side stays inspectable — and a
+   forced read reports its failure rather than quietly answering from the other one,
+   which would make the diagnostic lie. X-CC-Source always names whoever answered.
+--------------------------------------------------------------------------- */
+const hasVideos = o => !!(o && o.videos && Object.keys(o.videos).length);
+const hasVideosJson = t => { try { return hasVideos(JSON.parse(t)); } catch (e) { return false; } };
+const withSrc = (body, src) => new Response(body, { headers: { 'Content-Type': 'application/json', 'X-CC-Source': src, ...CORS } });
 
 // Compare the two sources field by field, so phase 3 flips on evidence rather than hope.
 // Only reports on what the dashboards actually read: the video set, its publish time and
@@ -663,15 +688,19 @@ async function ttHandler(request, env, url) {
     let snap = {}, followers = [];
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || '{}'); } catch (e) {}
     try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
-    // phase 2: ?src=d1 rebuilds the videos half from D1. followers stays on KV either
-    // way — it's eight writes a day, so there's nothing to gain by migrating it.
-    if (url.searchParams.get('src') === 'd1' && env.DB) {
+    // phase 3: D1 answers by default, KV falls back. followers stays on KV either way —
+    // it's eight writes a day, so there is nothing to gain by migrating it.
+    const src = url.searchParams.get('src');
+    if (src !== 'kv' && env.DB) {
       try {
         const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0);
-        return json({ ...snap, videos: b.videos, followers });
-      } catch (e) { /* fall through to the KV snapshot */ }
+        if (hasVideos(b) || src === 'd1' || !hasVideos(snap))
+          return json({ ...snap, videos: b.videos, followers }, 200, { 'X-CC-Source': 'd1' });
+      } catch (e) {
+        if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);
+      }
     }
-    return json({ ...snap, followers });
+    return json({ ...snap, followers }, 200, { 'X-CC-Source': 'kv' });
   }
   if (p === '/tiktok/sync') {
     const key = 'tt:sync:' + openId;
@@ -833,17 +862,24 @@ async function route(request, env) {
       } catch (e) { return json({ error: String((e && e.message) || e) }, 500); }
     }
 
-    // default: serve the recorded minute bundle for the dashboard to merge.
-    // ?src=d1 serves the same shape rebuilt from D1 — phase 2, opt-in only, so the
-    // dashboards keep reading KV until the two are proved identical.
-    if (url.searchParams.get('src') === 'd1' && env.DB) {
+    // default: serve the recorded minute bundle for the dashboard to merge. Phase 3
+    // rebuilds it from D1 unless that comes back empty or broken, in which case the KV
+    // blob answers instead — same bytes either way, so nothing downstream can tell.
+    const src = url.searchParams.get('src');
+    let kvBody = null;                                     // read at most once, and only if needed
+    const kvText = async () => {
+      if (kvBody === null) { try { kvBody = (await env.MINUTE.get(KV_KEY)) || '{}'; } catch (e) { kvBody = '{}'; } }
+      return kvBody;
+    };
+    if (src !== 'kv' && env.DB) {
       try {
         const b = await d1YtBundle(env, +url.searchParams.get('days') || 0);
-        return new Response(JSON.stringify(b), { headers: { 'Content-Type': 'application/json', 'X-CC-Source': 'd1', ...CORS } });
-      } catch (e) { /* fall through to KV rather than fail the dashboard */ }
+        if (hasVideos(b) || src === 'd1' || !hasVideosJson(await kvText()))
+          return withSrc(JSON.stringify(b), 'd1');
+      } catch (e) {
+        if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);
+      }
     }
-    let body = '{}';
-    try { body = (await env.MINUTE.get(KV_KEY)) || '{}'; } catch (e) {}
-    return new Response(body, { headers: { 'Content-Type': 'application/json', 'X-CC-Source': 'kv', ...CORS } });
+    return withSrc(await kvText(), 'kv');
   }
 }
