@@ -145,6 +145,13 @@ async function d1Backfill(env, platform, videos, shape) {
    is matched here for parity; phase 4 widens it deliberately rather than by
    accident. A video with no samples in the window is dropped, mirroring KV's prune.
 --------------------------------------------------------------------------- */
+// YouTube publishes at second resolution ("2026-08-04T11:53:04Z") but toISOString()
+// always pads the milliseconds ("…04.000Z"). Both parse to the same instant, so nothing
+// would have broken — but the phase-2 diff is only worth running if it can be made to
+// say "identical", so the padding is stripped when it carries no information. A genuine
+// sub-second timestamp keeps its milliseconds.
+const isoOf = ms => new Date(ms).toISOString().replace(/\.000Z$/, 'Z');
+
 async function d1YtBundle(env, days) {
   const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
   const [vres, sres] = await Promise.all([
@@ -157,7 +164,7 @@ async function d1YtBundle(env, days) {
   for (const v of (vres.results || [])) {
     const s = byId[v.video_id];
     if (!s || !s.length) continue;
-    videos[v.video_id] = { pub: new Date(v.published_at).toISOString(), title: v.title || '', chan: v.channel || '', s };
+    videos[v.video_id] = { pub: isoOf(v.published_at), title: v.title || '', chan: v.channel || '', s };
   }
   return { videos };
 }

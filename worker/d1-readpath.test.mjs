@@ -94,6 +94,16 @@ const DB = withAll(mockD1());
     JSON.stringify(slim(kvState.videos)) === JSON.stringify(slim(d1.videos)));
 }
 
+console.log('\n1b. ISO formatting matches YouTube exactly (no padded .000Z)');
+{
+  const d1 = await W.d1YtBundle({ DB });
+  const pubs = Object.values(d1.videos).map(v => v.pub);
+  check('no padded milliseconds', pubs.every(p => !/\.000Z$/.test(p)), pubs.join(' '));
+  check('still a valid instant', pubs.every(p => !isNaN(Date.parse(p))), pubs.join(' '));
+  check('round-trips to the same ms',
+    Object.entries(d1.videos).every(([id, v]) => Date.parse(v.pub) === Date.parse(kvState.videos[id].pub)));
+}
+
 console.log('\n2. The diff actually catches a mismatch');
 {
   const broken = JSON.parse(JSON.stringify(kvState.videos));
