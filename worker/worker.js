@@ -35,9 +35,22 @@ const D1_KEEP_DAYS = 60;    // how long D1 holds launch samples (KV still prunes
 // that had already backfilled under the shared 'tt' key gets rewritten under its own.
 // Samples are INSERT OR IGNORE, so a re-run only ever fixes metadata.
 const D1_BACKFILL_V = 3;
-const HOT_HOURS   = 6;      // record a video minute-by-minute for this long after publish
+// Record a video minute-by-minute for this long after publish. Was 6 hours while the
+// samples lived in a KV blob rewritten once a minute; D1 stores one row per sample
+// instead, so the cost of a wider window is rows (of 100,000 a day) rather than KV
+// writes (of 1,000 a day). At 3 posts/day/platform this window keeps ~12 videos hot at
+// once = ~17,280 samples/day, and each insert costs 2 row-writes (the table plus the
+// covering index), so ~35% of the daily budget. Sampling stays flat at one a minute for
+// the whole window: a tiered cadence would save rows, but it also makes the gap between
+// consecutive samples vary, which silently breaks any chart that plots by array position.
+const HOT_HOURS   = 48;
 const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice new uploads
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
+// How long the KV mirror may lag. D1 is the record; KV is the read-fallback, and it only
+// has to be good enough to keep the page drawing while D1 is unavailable. Writing it
+// every minute would cost ~1,800 writes/day against a 1,000/day free tier — which is what
+// the setup was already doing, and quietly failing at. See the write gate in tick().
+const KV_WRITE_MIN = 15;
 const KV_KEY      = 'minute-v1';
 const YT          = 'https://www.googleapis.com/youtube/v3/';
 // Seed list of text chat models, tried in order. Each has its OWN free-tier daily quota and
@@ -173,8 +186,14 @@ async function d1Backfill(env, platform, videos, shape) {
 // sub-second timestamp keeps its milliseconds.
 const isoOf = ms => new Date(ms).toISOString().replace(/\.000Z$/, 'Z');
 
-async function d1YtBundle(env, days) {
-  const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
+// `since` makes the read incremental. Without it every poll ships the whole retention
+// window — with a 48-hour launch window that is ~26,000 rows, and at one poll every three
+// minutes across a couple of open dashboards it runs through D1's 5,000,000 rows-read/day
+// well before the day is out. The dashboards merge rather than replace, so they only ever
+// need what they haven't already got; a video with nothing new simply doesn't appear.
+// Metadata always travels with the samples, so a partial response is still self-describing.
+async function d1YtBundle(env, days, since) {
+  const cutoff = Math.max(Date.now() - (days || KEEP_DAYS) * 864e5, +since || 0);
   const [vres, sres] = await Promise.all([
     env.DB.prepare('SELECT video_id, published_at, title, channel FROM videos WHERE platform = ?').bind('yt').all(),
     env.DB.prepare('SELECT video_id, ts, views, likes, comments FROM samples WHERE platform = ? AND ts >= ? ORDER BY video_id, ts').bind('yt', cutoff).all()
@@ -192,8 +211,8 @@ async function d1YtBundle(env, days) {
 
 // Scoped to one account: the caller has already resolved the session, and the bundle it
 // returns stands in for that account's KV snapshot, which is account-scoped too.
-async function d1TtBundle(env, openId, days) {
-  const cutoff = Date.now() - (days || KEEP_DAYS) * 864e5;
+async function d1TtBundle(env, openId, days, since) {
+  const cutoff = Math.max(Date.now() - (days || KEEP_DAYS) * 864e5, +since || 0);
   const part = ttKey(openId);
   const [vres, sres] = await Promise.all([
     env.DB.prepare('SELECT video_id, published_at, title, cover FROM videos WHERE platform = ?').bind(part).all(),
@@ -264,8 +283,27 @@ async function d1Prune(env, now) {
   if (d.getUTCHours() !== 3 || d.getUTCMinutes() !== 7) return { skipped: 'not the daily slot' };
   try {
     const cutoff = now - D1_KEEP_DAYS * 864e5;
-    const r = await env.DB.prepare('DELETE FROM samples WHERE ts < ?').bind(cutoff).run();
-    return { pruned: (r && r.meta && r.meta.changes) || 0 };
+    // Delete one platform at a time so the (platform, ts, …) covering index can seek.
+    // A bare `WHERE ts < ?` has no platform to seek on and needs a dedicated index on ts
+    // — which would cost a third row-write on every sample insert, all day, every day,
+    // purely to serve one DELETE a night. Trading that for a handful of extra statements
+    // once every 24 hours is the right way round.
+    const parts = await env.DB.prepare('SELECT DISTINCT platform FROM videos').all();
+    let pruned = 0;
+    for (const p of (parts.results || [])) {
+      const r = await env.DB.prepare('DELETE FROM samples WHERE platform = ? AND ts < ?').bind(p.platform, cutoff).run();
+      pruned += (r && r.meta && r.meta.changes) || 0;
+    }
+    // Videos age out too, or the table grows forever and every bundle read pays for it
+    // (the videos SELECT has no time bound — it can't, the bundle needs each curve's
+    // metadata). The extra hotMs of margin matters: a video keeps producing samples until
+    // HOT_HOURS after it was published, so pruning strictly at `published_at < cutoff`
+    // would delete the row while its last samples were still inside the retention window,
+    // orphaning them — present in the table but invisible in the bundle, which walks
+    // videos. Outliving the last possible sample is what keeps that from happening.
+    const vcut = cutoff - HOT_HOURS * 3600e3;
+    const vr = await env.DB.prepare('DELETE FROM videos WHERE published_at < ?').bind(vcut).run();
+    return { pruned, videos: (vr && vr.meta && vr.meta.changes) || 0, platforms: (parts.results || []).length };
   } catch (e) {
     return { error: String((e && e.message) || e) };
   }
@@ -297,6 +335,22 @@ async function scanFresh(channels, key) {
   return fresh;
 }
 
+// Everything about the tracked videos except their samples: which videos exist, when they
+// went live, what they're called, and what D1 has already been told. Used to decide
+// whether a KV write can be deferred — sample growth can wait, the roster cannot.
+function rosterOf(videos) {
+  return JSON.stringify(Object.keys(videos || {}).sort().map(id => {
+    const r = videos[id] || {};
+    return [id, r.pub, r.title, r.chan, r.create_time, r.cover, r.d1m];
+  }));
+}
+
+// The metadata D1 should be holding for a video. Compared against rec.d1m so the
+// videos-table upsert only fires when something actually changed: it used to run once per
+// sample per video — ~17,280 identical rewrites a day — because the meta was pushed
+// alongside every row.
+const metaFp = (a, b) => String(a == null ? '' : a) + ' ' + String(b == null ? '' : b);
+
 async function tick(env) {
   const key = env.YT_API_KEY;
   const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -307,6 +361,12 @@ async function tick(env) {
   const s = await loadState(env);
   // exact record of what's stored, so we can avoid writing when nothing actually changed
   const before = JSON.stringify(s.videos);
+  // …and the same for everything EXCEPT the sample arrays. Sample growth can wait for the
+  // KV_WRITE_MIN gate; a change to the roster itself never can. hotIds below is derived
+  // from s.videos, so if a newly discovered video isn't persisted the next tick reloads a
+  // state that has never heard of it and doesn't sample it — losing the opening minutes of
+  // a launch from D1 as well, since d1rows only covers what's in hotIds.
+  const rosterBefore = rosterOf(s.videos);
 
   // (1) Scan for new uploads on a fixed 5-minute boundary. Deriving the cadence from the
   // clock (rather than a stored lastScan) means quiet minutes need no KV write at all.
@@ -337,7 +397,12 @@ async function tick(env) {
           const row = [now, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)];
           rec.s.push(row);
           d1rows.push({ id: it.id, ts: now, views: row[1], likes: row[2], comments: row[3], shares: 0 });
-          d1metas.push({ id: it.id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' });
+          // only re-state the metadata when it isn't already what D1 holds
+          const fp = metaFp(rec.pub, rec.title);
+          if (rec.d1m !== fp) {
+            d1metas.push({ id: it.id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' });
+            rec.d1m = fp;
+          }
           sampled++;
         }
       } catch (e) { /* skip this sample; the curve tolerates a gap */ }
@@ -353,15 +418,13 @@ async function tick(env) {
     if (now - new Date(rec.pub).getTime() >= hotMs && !rec.s.length) delete s.videos[vid];
   }
 
-  // (5) Write back ONLY when the recorded data actually differs. Cloudflare's free tier
-  // allows 1,000 KV writes/day; a once-a-minute unconditional write would blow through it
-  // (1,440/day) on its own, so quiet minutes must cost nothing.
+  // (5) Has anything changed, and does it have to be persisted right now?
   const changed = JSON.stringify(s.videos) !== before;
+  const rosterChanged = rosterOf(s.videos) !== rosterBefore;
 
-  // (6) Shadow the same samples into D1. Phase 1 of the migration: KV above is still
-  // what the dashboards read, this only builds the parallel copy. Runs before the KV
-  // write so a D1 fault can't leave KV updated but the mirror silently behind — and it
-  // never throws, so it can't stop the KV write either.
+  // (6) Record the samples in D1, which is now the source the dashboards read. Runs
+  // before the KV write so a D1 fault can't leave KV updated but the mirror behind — and
+  // it never throws, so it can't stop the KV write either.
   let d1 = { skipped: 'nothing new' };
   if (s.d1Backfilled !== D1_BACKFILL_V && env.DB) {
     d1 = await d1Backfill(env, 'yt', s.videos, (id, rec) => ({ id, pub: new Date(rec.pub).getTime(), title: rec.title || '', chan: rec.chan || '' }));
@@ -372,11 +435,28 @@ async function tick(env) {
   }
   const d1pruned = await d1Prune(env, now);
 
-  if (changed || d1.backfill) {
+  // (7) Persist. D1 already has this minute; KV is the read-fallback, and writing it every
+  // minute costs ~1,800 writes/day against a free tier of 1,000 — which is what this was
+  // doing before the window widened, silently failing once the cap was hit. So sample
+  // growth waits for the KV_WRITE_MIN gate and KV becomes a coarser copy of the same
+  // curves. Three things are never deferred:
+  //   rosterChanged — hotIds is derived from what's stored, so an unpersisted discovery is
+  //                   a video nothing samples next minute (see rosterBefore above)
+  //   d1.backfill   — d1Backfilled lives in this blob; unpersisted, the whole backfill
+  //                   re-runs on the following tick, and every tick after that
+  //   d1.error      — D1 didn't take this minute, so KV is the only place it can survive
+  // NOTE the shape: `mustWrite || (changed && due)`, never `changed && (mustWrite || due)`.
+  // s.d1Backfilled is not inside s.videos, so a backfill that changes nothing else leaves
+  // `changed` false — and gating on it would drop the flag, re-running the entire backfill
+  // on the next tick, and the one after that, forever.
+  const due = now - (s.updated || 0) >= KV_WRITE_MIN * 60000;
+  const mustWrite = rosterChanged || !!d1.backfill || (!!d1.error && changed);
+  const wrote = mustWrite || (changed && due);
+  if (wrote) {
     s.updated = now;
     await env.MINUTE.put(KV_KEY, JSON.stringify(s));
   }
-  return { hot: hotIds.length, sampled, wrote: changed, d1, d1pruned };
+  return { hot: hotIds.length, sampled, wrote, deferred: changed && !wrote, d1, d1pruned };
 }
 
 /* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
@@ -693,8 +773,10 @@ async function ttHandler(request, env, url) {
     const src = url.searchParams.get('src');
     if (src !== 'kv' && env.DB) {
       try {
-        const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0);
-        if (hasVideos(b) || src === 'd1' || !hasVideos(snap))
+        const since = +url.searchParams.get('since') || 0;
+        const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0, since);
+        // see the note on the YouTube route: an empty incremental read is a normal answer
+        if (since || hasVideos(b) || src === 'd1' || !hasVideos(snap))
           return json({ ...snap, videos: b.videos, followers }, 200, { 'X-CC-Source': 'd1' });
       } catch (e) {
         if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);
@@ -746,6 +828,7 @@ async function ttTick(env) {
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || 'null') || snap; } catch (e) {}
     snap.videos = snap.videos || {};
     const before = JSON.stringify(snap.videos);
+    const rosterBefore = rosterOf(snap.videos);
     const hot = Object.keys(snap.videos).filter(id => now - (snap.videos[id].create_time * 1000) < hotMs);
     // sample every minute while a post is hot; otherwise only look for new posts on the
     // 5-minute boundary (clock-derived, so quiet minutes need no KV write)
@@ -776,23 +859,34 @@ async function ttTick(env) {
       const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
       rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
       d1rows.push({ id: v.id, ts: now, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
-      d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' });
+      // only re-state the metadata when it isn't already what D1 holds (see metaFp)
+      const fp = metaFp(ct, rec.title);
+      if (rec.d1m !== fp) { d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' }); rec.d1m = fp; }
       sampled++;
     }
     for (const id of Object.keys(snap.videos)) {
       snap.videos[id].s = (snap.videos[id].s || []).filter(x => x[0] >= cutoff);
       if (now - snap.videos[id].create_time * 1000 >= hotMs && !snap.videos[id].s.length) delete snap.videos[id];
     }
-    // shadow into D1 — same contract as the YouTube side: never throws, KV unaffected
+    // record into D1 — same contract as the YouTube side: never throws, KV unaffected.
+    // `acct` is per-account on purpose: a single `d1` shared across the loop let one
+    // account's backfill flag decide whether the NEXT account's snapshot was written.
+    let acct = { skipped: 'nothing new' };
     if (snap.d1Backfilled !== D1_BACKFILL_V && env.DB) {
       const r = await d1Backfill(env, ttKey(openId), snap.videos, (id, rec) => ({ id, pub: (rec.create_time || 0) * 1000, title: rec.title || '', cover: rec.cover || '' }));
       if (!r.error) snap.d1Backfilled = D1_BACKFILL_V;
-      d1 = r; d1.backfill = true;
+      acct = r; acct.backfill = true;
     } else if (d1rows.length) {
-      d1 = await d1Write(env, ttKey(openId), d1rows, d1metas);
+      acct = await d1Write(env, ttKey(openId), d1rows, d1metas);
     }
+    d1 = acct;
 
-    if (JSON.stringify(snap.videos) !== before || d1.backfill) {
+    // same gate as tick(): the roster and the backfill flag persist immediately, sample
+    // growth waits for KV_WRITE_MIN. See the long note there for why the shape matters.
+    const changed = JSON.stringify(snap.videos) !== before;
+    const rosterChanged = rosterOf(snap.videos) !== rosterBefore;
+    const due = now - (snap.updated || 0) >= KV_WRITE_MIN * 60000;
+    if (rosterChanged || acct.backfill || (acct.error && changed) || (changed && due)) {
       snap.updated = now;
       await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
       wrote++;
@@ -873,8 +967,12 @@ async function route(request, env) {
     };
     if (src !== 'kv' && env.DB) {
       try {
-        const b = await d1YtBundle(env, +url.searchParams.get('days') || 0);
-        if (hasVideos(b) || src === 'd1' || !hasVideosJson(await kvText()))
+        const since = +url.searchParams.get('since') || 0;
+        const b = await d1YtBundle(env, +url.searchParams.get('days') || 0, since);
+        // An incremental read legitimately comes back empty — it means "nothing new since
+        // you last asked", which is the common case. Falling back to KV there would ship
+        // the whole blob on every quiet poll and undo the point of asking incrementally.
+        if (since || hasVideos(b) || src === 'd1' || !hasVideosJson(await kvText()))
           return withSrc(JSON.stringify(b), 'd1');
       } catch (e) {
         if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);

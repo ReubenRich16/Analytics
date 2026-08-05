@@ -163,5 +163,36 @@ console.log('\n5. Two TikTok accounts never see each other\'s videos');
   check('YouTube is untouched by the tt prefix', !W.isTt('yt') && W.isTt('tt') && W.isTt('tt:x'));
 }
 
+console.log('\n6. ?since= returns only what the caller has not already got');
+{
+  const d1full = await W.d1YtBundle({ DB });
+  const cut = kvState.videos.vidA.s[80][0];            // 10 of vidA's 90 samples are newer
+  const inc = await W.d1YtBundle({ DB }, 0, cut);
+
+  const newerA = kvState.videos.vidA.s.filter(x => x[0] >= cut).length;
+  check('only the newer samples come back', inc.videos.vidA.s.length === newerA,
+    inc.videos.vidA.s.length + ' vs ' + newerA);
+  check('the full read is unaffected', d1full.videos.vidA.s.length === 90, d1full.videos.vidA.s.length);
+  check('a video with nothing new is simply absent', !inc.videos.vidB, Object.keys(inc.videos).join(','));
+  // a partial response still has to be self-describing, or the client cannot place the
+  // samples on a curve: pub and title travel with them
+  check('metadata still travels with the samples', inc.videos.vidA.pub === d1full.videos.vidA.pub && !!inc.videos.vidA.title);
+  check('sample rows keep their shape', inc.videos.vidA.s[0].length === 4);
+
+  // and the samples returned are genuinely a suffix of the full curve, not a resample
+  const fullTail = d1full.videos.vidA.s.slice(-newerA);
+  check('incremental rows are identical to the tail of the full read',
+    JSON.stringify(inc.videos.vidA.s) === JSON.stringify(fullTail));
+
+  // since in the future -> nothing at all, which is a valid answer
+  const none = await W.d1YtBundle({ DB }, 0, Date.now() + 3600e3);
+  check('a since past the newest sample returns an empty bundle', !Object.keys(none.videos).length);
+
+  // since must never widen the window past the retention cutoff
+  const wide = await W.d1YtBundle({ DB }, 1, 0);
+  const oneDay = kvState.videos.vidA.s.filter(x => x[0] >= NOW - 864e5).length;
+  check('since=0 does not defeat the retention window', wide.videos.vidA.s.length === oneDay);
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

@@ -136,5 +136,24 @@ console.log('\n8. X-CC-Source is readable by the dashboard cross-origin');
     r.headers.get('Access-Control-Expose-Headers'));
 }
 
+console.log('\n9. ?since= is never mistaken for an empty D1');
+{
+  // An incremental read comes back empty whenever nothing new has happened, which is the
+  // common case. If that were treated as "D1 has nothing" the fallback would ship the whole
+  // KV blob on every quiet poll — the exact traffic ?since= exists to avoid.
+  const env = { MINUTE: mockKV({ 'minute-v1': KV_BLOB }), DB: mockD1(D1_EMPTY) };
+  const { src, body, status } = await read(await hit(env, '/?since=' + (NOW - 1000)));
+  check('empty incremental answer still comes from D1', src === 'd1', src);
+  check('and is an empty bundle, not the KV blob', !Object.keys(body.videos).length, Object.keys(body.videos).join());
+  check('still a 200', status === 200, status);
+
+  // but a genuine D1 fault with ?since= must STILL fall back, or a fault during a launch
+  // would look exactly like "nothing new" forever
+  const broken = { MINUTE: mockKV({ 'minute-v1': KV_BLOB }), DB: mockD1(null, { throws: true }) };
+  const f = await read(await hit(broken, '/?since=' + (NOW - 1000)));
+  check('a throwing D1 still falls back to KV', f.src === 'kv', f.src);
+  check('and the KV data is there', !!f.body.videos.kvOnly, Object.keys(f.body.videos).join());
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);
