@@ -155,5 +155,26 @@ console.log('\n9. ?since= is never mistaken for an empty D1');
   check('and the KV data is there', !!f.body.videos.kvOnly, Object.keys(f.body.videos).join());
 }
 
+console.log('\n10. A dashboard poll must not cost a KV write');
+{
+  // /tiktok/me is called once every 60 seconds by the TikTok dashboard's poll loop. It used
+  // to cache the profile under tt:meta:<openId> on every one of those calls -- roughly 480
+  // writes a day per open tab, against a 1,000/day free tier -- to populate a key that
+  // nothing in the codebase ever read. Two open tabs would have consumed the entire budget
+  // the tracker's own write gate was built to stay inside.
+  const KV = mockKV({ 'tt:sess:S': 'open-1', 'tt:tok:open-1': JSON.stringify({ access_token: 'A', expires_at: NOW + 36e5 }) });
+  let puts = 0;
+  const wrapped = { ...KV, async get(k, t) { return KV.get(k, t); }, async put(k, v, o) { puts++; return KV.put(k, v, o); } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: { user: { open_id: 'open-1', display_name: 'X', follower_count: 5 } } }), { status: 200 });
+  const r = await W.HANDLER.fetch(
+    new Request('https://w.dev/tiktok/me', { headers: { Authorization: 'Bearer S' } }),
+    { MINUTE: wrapped, DB: mockD1(D1_EMPTY), TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' });
+  globalThis.fetch = realFetch;
+  const body = await r.json().catch(() => ({}));
+  check('the profile still comes back', r.status === 200 && body.display_name === 'X', r.status + ' ' + JSON.stringify(body));
+  check('and it cost zero KV writes', puts === 0, puts + ' write(s)');
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

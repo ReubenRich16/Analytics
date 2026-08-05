@@ -739,11 +739,12 @@ async function ttHandler(request, env, url) {
     await ttSaveTokens(env, t);
     const sid = rand(24);
     await env.MINUTE.put('tt:sess:' + sid, t.open_id, { expirationTtl: 60 * 60 * 24 * 300 });
-    // cache the profile so the cron can label videos without a live call
-    try {
-      const { body } = await ttGet('user/info/?fields=' + encodeURIComponent(TT_USER_FIELDS), t.access_token);
-      if (body && body.data && body.data.user) await env.MINUTE.put('tt:meta:' + t.open_id, JSON.stringify(body.data.user));
-    } catch (e) {}
+    // NOTE: there used to be a `tt:meta:<openId>` profile cache written here and again on
+    // every /tiktok/me. It was written in two places and read in none — the cron labels
+    // videos from the live ttFetchVideos call, not from this key. Removed rather than
+    // kept "in case": the /tiktok/me copy fired on every 60-second dashboard poll, about
+    // 480 writes a day per open tab, which on its own would have consumed the 1,000/day
+    // KV budget that the tracker's write gate exists to stay inside.
     const dest = /^https:\/\/[a-z0-9.-]*github\.io\//i.test(ret) ? ret : 'https://reubenrich16.github.io/Analytics/tiktok.html';
     return Response.redirect(dest + (dest.includes('#') ? '' : '#') + 'tt=' + sid, 302);
   }
@@ -757,7 +758,7 @@ async function ttHandler(request, env, url) {
   if (p === '/tiktok/me') {
     const { ok, body } = await ttGet('user/info/?fields=' + encodeURIComponent(TT_USER_FIELDS), token);
     if (!ok || !body.data) return json({ error: (body.error && body.error.message) || 'user info failed' }, 502);
-    await env.MINUTE.put('tt:meta:' + openId, JSON.stringify(body.data.user));
+    // deliberately no KV write here — see the note in the callback above
     return json(body.data.user);
   }
   if (p === '/tiktok/videos') {
