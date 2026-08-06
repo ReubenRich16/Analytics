@@ -46,6 +46,20 @@ jobs:
             "  \(.key)  pub=\(.value.pub)  samples=\(.value.s | length)  last_sample=\((.value.s[-1][0] / 1000) | floor | todate)  views_now=\(.value.s[-1][1])"' /tmp/bundle.json
           echo "total samples served: $(jq '[.videos[].s | length] | add // 0' /tmp/bundle.json)"
 
+      # The tracker is supposed to write one sample per video per minute. This prints the
+      # gap distribution between consecutive samples so a double-writer (gaps far below
+      # 60s) or a stall (gaps far above) is visible as data instead of a hunch.
+      - name: Sampling cadence per video
+        if: always()
+        run: |
+          jq -r '.videos | to_entries[] |
+            .key as $id | [.value.s[][0]] as $t |
+            [range(1; $t | length) | ($t[.] - $t[. - 1]) / 1000] as $d |
+            "  \($id)  gaps<50s=\([$d[] | select(. < 50)] | length)  " +
+            "~60s=\([$d[] | select(. >= 50 and . <= 70)] | length)  " +
+            ">70s=\([$d[] | select(. > 70)] | length)  " +
+            "last_sub50s_at=\((([range(1; $t | length) | select(($t[.] - $t[. - 1]) < 50000) | $t[.]] | last // 0) / 1000) | floor | todate)"' /tmp/bundle.json
+
       # Counts only — the raw accounts value never reaches the log.
       - name: Connected TikTok accounts
         if: always()
