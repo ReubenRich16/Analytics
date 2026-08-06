@@ -1,18 +1,18 @@
-name: Peek at the live D1 data (read-only)
+name: Peek at the live data (read-only)
 
-# MANUAL ONLY — runs nothing on its own. Every query is a SELECT; nothing is written.
+# MANUAL ONLY — runs nothing on its own. Every query is a read; nothing is written.
 #
-# Why this exists: the dashboards read D1 through the Worker, but there is no way to ask
-# "what does the database actually hold right now?" without the Cloudflare dashboard.
-# This prints per-platform row counts, freshness, and the tracked videos, so a health
-# check is one Actions click instead of a login.
+# Why this exists: the dashboards read D1 through the Worker, but there was no way to ask
+# "what is actually being served right now?" without opening the site and screenshots.
+# This prints it in an Actions log instead. The primary step needs no credentials at all —
+# it asks the Worker's own public route, the same one the dashboards call.
 #
 # This repo is public, so its action logs are public too. Everything printed here is
-# either aggregate (counts, timestamps) or already-public (video ids, publish times).
-# TikTok rows are partitioned by account open_id inside the platform value — that id is
-# pseudonymous but not for publishing, so platforms are collapsed to 'tiktok' before
-# printing and the accounts list is reduced to a count without the raw value ever
-# reaching the log.
+# either aggregate (counts, timestamps) or already-public (video ids, publish times,
+# view counts served by the public route). TikTok rows are partitioned by account
+# open_id — that id is pseudonymous but not for publishing, so platforms are collapsed
+# to 'tiktok' before printing and the accounts list is reduced to a count without the
+# raw value ever reaching the log.
 on:
   workflow_dispatch:
 
@@ -34,7 +34,34 @@ jobs:
         with:
           node-version: '22'   # wrangler requires Node >= 22
 
-      - name: Samples per platform — counts and freshness
+      # No credentials involved: this is the same public route the dashboards poll.
+      # X-CC-Source names the store that answered (d1, or kv if D1 fell back).
+      - name: What the Worker is actually serving
+        if: always()
+        run: |
+          curl -sS -D /tmp/headers "https://yt.reubenrichardson37.workers.dev/" -o /tmp/bundle.json
+          echo "answered by: $(grep -i '^x-cc-source' /tmp/headers | tr -d '\r')"
+          echo "videos in the served bundle:"
+          jq -r '.videos | to_entries[] |
+            "  \(.key)  pub=\(.value.pub)  samples=\(.value.s | length)  last_sample=\((.value.s[-1][0] / 1000) | floor | todate)  views_now=\(.value.s[-1][1])"' /tmp/bundle.json
+          echo "total samples served: $(jq '[.videos[].s | length] | add // 0' /tmp/bundle.json)"
+
+      # Counts only — the raw accounts value never reaches the log.
+      - name: Connected TikTok accounts
+        if: always()
+        run: |
+          n=$(npx wrangler@latest kv key get tt:accounts \
+                --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
+              | jq -r 'length' 2>/dev/null || echo 0)
+          echo "TikTok accounts connected: ${n:-0}"
+
+      # These two need the D1 permission on CLOUDFLARE_API_TOKEN, which the current token
+      # does not have (every CI call to a /d1/ API endpoint has been denied: code 10000 on
+      # import, 7403 on query). They are non-blocking so the credential-free steps above
+      # still report; once the token gains "Account / D1 / Edit" these light up too.
+      - name: Direct D1 counts (needs the D1 permission on the token)
+        if: always()
+        continue-on-error: true
         run: |
           npx wrangler@latest d1 execute channel-command --remote --json --command "
             SELECT CASE WHEN platform LIKE 'tt:%' THEN 'tiktok' ELSE 'youtube' END AS platform,
@@ -44,7 +71,9 @@ jobs:
                    datetime(MAX(ts)/1000,'unixepoch') AS newest_utc
             FROM samples GROUP BY 1"
 
-      - name: Tracked videos — public ids, ages, and per-video sample counts
+      - name: Direct D1 video list (needs the D1 permission on the token)
+        if: always()
+        continue-on-error: true
         run: |
           npx wrangler@latest d1 execute channel-command --remote --json --command "
             SELECT CASE WHEN v.platform LIKE 'tt:%' THEN 'tiktok' ELSE 'youtube' END AS platform,
@@ -52,14 +81,5 @@ jobs:
                    datetime(v.published_at/1000,'unixepoch') AS published_utc,
                    ROUND((unixepoch()*1000.0 - v.published_at)/3600000, 1) AS age_hours,
                    (SELECT COUNT(*) FROM samples s
-                     WHERE s.platform = v.platform AND s.video_id = v.video_id) AS samples,
-                   (SELECT datetime(MAX(ts)/1000,'unixepoch') FROM samples s
-                     WHERE s.platform = v.platform AND s.video_id = v.video_id) AS last_sample_utc
+                     WHERE s.platform = v.platform AND s.video_id = v.video_id) AS samples
             FROM videos v ORDER BY v.published_at DESC LIMIT 12"
-
-      - name: Connected TikTok accounts — count only, never the ids
-        run: |
-          n=$(npx wrangler@latest kv key get tt:accounts \
-                --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
-              | jq -r 'length' 2>/dev/null || echo 0)
-          echo "TikTok accounts connected: ${n:-0}"

@@ -35,13 +35,17 @@ jobs:
       # Apply the D1 schema before deploying, so the tables always exist by the time the
       # new code runs. Every statement is IF NOT EXISTS, so this is a no-op after the first.
       #
-      # Deliberately non-blocking. The first run after the database was created failed
-      # here with "Authentication error [code: 10000]", then succeeded unchanged two
-      # minutes later — a freshly created D1 database takes a moment to become visible
-      # to every API edge. A transient blip, or a missing permission on a schema that is
-      # already applied, must not stop the Worker deploying; that would turn a warning
-      # into an outage. The step below still shouts if it fails, so a real schema problem
-      # is visible rather than silent.
+      # Deliberately non-blocking — and CORRECTING an earlier comment here: this step has
+      # in fact failed on EVERY run to date ("Authentication error [code: 10000]"), because
+      # CLOUDFLARE_API_TOKEN has no D1 permission. An earlier version of this comment
+      # called the first failure a transient propagation blip and claimed a later run
+      # succeeded; that was a misreading — continue-on-error makes a failed step's
+      # conclusion read "success" in the step list, and only the warning step below tells
+      # the truth. The live schema is currently correct because it was applied out-of-band
+      # through the Cloudflare connector. To make this step real: edit the token at
+      # dash.cloudflare.com/profile/api-tokens, add "Account / D1 / Edit", and update the
+      # repo secret. Non-blocking stays right either way — a schema step must never turn
+      # a deploy into an outage.
       - name: Apply D1 schema
         continue-on-error: true
         id: d1schema

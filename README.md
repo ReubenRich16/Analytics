@@ -197,7 +197,7 @@ of TikTok. Free, no card.
 |---|---|
 | `/` | the recorded YouTube minute bundle |
 | `/run` | run both trackers now (handy for testing) |
-| `/d1diff` | compares the D1 and KV copies field by field and reports any disagreement |
+| `/d1diff` | compares the D1 and KV copies field by field (expect disagreement now: KV is deliberately coarser since the write gate — this was the phase-2 verification tool) |
 | `/models` | which Gemini models your key can actually call |
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
