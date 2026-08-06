@@ -208,6 +208,13 @@ console.log('\n9. KV write gate: sample growth waits, the roster never does');
     st.videos.v1.d1m = null;                 // filled in by the first tick below
     return st;
   };
+  // each tick must sit in its own minute: samples are filed by minute slot now, so two
+  // ticks inside one minute are correctly a no-op rather than a deferred write
+  const realNow = Date.now;
+  let minute = Math.floor(realNow() / 60000) * 60000;
+  Date.now = () => minute + 43000;
+  const nextMinute = () => { minute += 60000; };
+
   // tick 1 — d1m is unset, so the metadata is stated and the roster changes: must persist
   const KV = mockKV({ 'minute-v1': JSON.stringify(fresh()) });
   const DB = mockD1();
@@ -219,6 +226,7 @@ console.log('\n9. KV write gate: sample growth waits, the roster never does');
   check('metadata upserted once', DB.rows.videos.size === 1, DB.rows.videos.size);
 
   // tick 2 — nothing but a new sample. updated is now, so the gate is not due
+  nextMinute();
   const putsBefore = KV.puts, stmtsBefore = DB.stmts;
   const r2 = await W.tick(env);
   check('second tick defers the KV write', r2.wrote === false && r2.deferred === true, JSON.stringify(r2));
@@ -227,11 +235,13 @@ console.log('\n9. KV write gate: sample growth waits, the roster never does');
   check('and no redundant metadata upsert', DB.rows.videos.size === 1, DB.rows.videos.size);
 
   // tick 3 — same state, but the gate has come due
+  nextMinute();
   const stale = JSON.parse(KV.store.get('minute-v1'));
   stale.updated = Date.now() - 16 * 60000;
   KV.store.set('minute-v1', JSON.stringify(stale));
   const r3 = await W.tick(env);
   check('a due tick writes again', r3.wrote === true, JSON.stringify(r3));
+  Date.now = realNow;
 }
 
 console.log('\n10. A newly discovered video is never deferred');
@@ -303,6 +313,39 @@ console.log('\n12. A failed write must not mark the metadata as stated');
   check('the healthy tick re-states the metadata', up.rows.videos.size === 1, up.rows.videos.size);
   const afterOk = JSON.parse(KV.store.get('minute-v1'));
   check('and only now records it as stated', !!afterOk.videos.v1.d1m, JSON.stringify(afterOk.videos.v1.d1m));
+}
+
+console.log('\n13. A double-fired cron writes ONE row, not two');
+{
+  // Cloudflare delivers cron events at least once. Measured live before the fix: the
+  // duplicate invocation landed 1-15ms after the first, and because ts was a raw
+  // millisecond clock the two rows had different primary keys -- 605 phantom rows on one
+  // two-day-old video, ~60% of minutes duplicated. Flooring ts to the minute is what makes
+  // the (platform, video_id, ts) key able to do the job it was chosen for.
+  const st = JSON.parse(JSON.stringify(seedState));
+  st.d1Backfilled = W.D1_BACKFILL_V;
+  const KV = mockKV({ 'minute-v1': JSON.stringify(st) });
+  const DB = mockD1();
+  const env = { MINUTE: KV, DB, YT_API_KEY:'k', CHANNEL_ID:'UC1' };
+
+  const realNow = Date.now;
+  const base = Math.floor(realNow() / 60000) * 60000;
+  Date.now = () => base + 43092;          // first delivery, 43.092s into the minute
+  await W.tick(env);
+  const afterFirst = DB.rows.samples.size;
+  Date.now = () => base + 43105;          // duplicate delivery, 13ms later
+  await W.tick(env);
+  Date.now = realNow;
+
+  check('the duplicate adds no D1 row', DB.rows.samples.size === afterFirst,
+    DB.rows.samples.size + ' vs ' + afterFirst);
+  const stored = [...DB.rows.samples.values()].map(r => r[2]);
+  check('every sample sits on a minute boundary', stored.every(ts => ts % 60000 === 0), stored.join(','));
+
+  const after = JSON.parse(KV.store.get('minute-v1'));
+  const times = after.videos.v1.s.map(x => x[0]);
+  check('KV did not append the same minute twice',
+    new Set(times).size === times.length, JSON.stringify(times));
 }
 
 globalThis.fetch = realFetch;

@@ -357,6 +357,16 @@ async function tick(env) {
   if (!key || !channels.length) return { skipped: 'missing YT_API_KEY / CHANNEL_ID' };
 
   const now = Date.now();
+  // The timestamp every sample is filed under. NOT Date.now(): Cloudflare delivers cron
+  // events at least once, and the duplicate invocation of a given minute arrives a few
+  // milliseconds after the first. The samples primary key is (platform, video_id, ts), so
+  // a raw millisecond clock gives those two writes DIFFERENT keys and INSERT OR IGNORE has
+  // nothing to ignore. Measured on the live database before this fix: about 60% of minutes
+  // carried a second row 1-15ms after the first, with identical counts -- 605 phantom rows
+  // on a two-day-old video. Flooring to the minute is what the key always assumed: same
+  // minute, same key, the duplicate write dropped. Sampling is per-minute, so no
+  // resolution is lost; only the sub-minute cron jitter, which was never information.
+  const slot = Math.floor(now / 60000) * 60000;
   const hotMs = HOT_HOURS * 3600e3;
   const s = await loadState(env);
   // exact record of what's stored, so we can avoid writing when nothing actually changed
@@ -394,9 +404,11 @@ async function tick(env) {
           const st = it.statistics;
           const rec = s.videos[it.id];
           if (!rec) continue;
-          const row = [now, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)];
-          rec.s.push(row);
-          d1rows.push({ id: it.id, ts: now, views: row[1], likes: row[2], comments: row[3], shares: 0 });
+          const row = [slot, +(st.viewCount || 0), +(st.likeCount || 0), +(st.commentCount || 0)];
+          // KV has no primary key to lean on, so the same minute is skipped explicitly
+          const prev = rec.s[rec.s.length - 1];
+          if (!prev || prev[0] !== slot) rec.s.push(row);
+          d1rows.push({ id: it.id, ts: slot, views: row[1], likes: row[2], comments: row[3], shares: 0 });
           // only re-state the metadata when it isn't already what D1 holds. The
           // fingerprint is NOT recorded here — only after the write below succeeds.
           // Recording it first would mean one failed write marks the metadata as stated
@@ -835,7 +847,10 @@ async function ttTick(env) {
   let list = [];
   try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
   if (!list.length) return { accounts: 0 };
-  const now = Date.now(), hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
+  // `slot` rather than `now` for the same reason as the YouTube tick: an at-least-once
+  // cron delivery must land on the same primary key, not a key a few milliseconds along.
+  const now = Date.now(), slot = Math.floor(now / 60000) * 60000;
+  const hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
   let sampled = 0, wrote = 0, d1 = { skipped: 'nothing new' };
   for (const openId of list) {
     const token = await ttAccessToken(env, openId);
@@ -873,8 +888,9 @@ async function ttTick(env) {
       const ct = (v.create_time || 0) * 1000;
       if (!ct || now - ct > hotMs) continue;             // only the launch window
       const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
-      rec.s.push([now, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
-      d1rows.push({ id: v.id, ts: now, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
+      const prev = rec.s[rec.s.length - 1];
+      if (!prev || prev[0] !== slot) rec.s.push([slot, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
+      d1rows.push({ id: v.id, ts: slot, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
       // only re-state the metadata when it isn't already what D1 holds (see metaFp).
       // Like the YouTube side, the fingerprint commits only after the write succeeds.
       const fp = metaFp(ct, rec.title);
