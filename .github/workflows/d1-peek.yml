@@ -59,11 +59,7 @@ jobs:
 
       - name: Connected TikTok accounts — count only, never the ids
         run: |
-          npx wrangler@latest kv key get tt:accounts \
-            --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
-            | python3 -c 'import sys,json
-raw = sys.stdin.read().strip()
-try: n = len(json.loads(raw or "[]"))
-except Exception: n = 0
-print("TikTok accounts connected:", n)' \
-            || echo "TikTok accounts connected: 0 (key absent — nobody has signed in yet)"
+          n=$(npx wrangler@latest kv key get tt:accounts \
+                --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
+              | jq -r 'length' 2>/dev/null || echo 0)
+          echo "TikTok accounts connected: ${n:-0}"
