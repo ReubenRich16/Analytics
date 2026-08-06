@@ -60,6 +60,18 @@ jobs:
             ">70s=\([$d[] | select(. > 70)] | length)  " +
             "last_sub50s_at=\((([range(1; $t | length) | select(($t[.] - $t[. - 1]) < 50000) | $t[.]] | last // 0) / 1000) | floor | todate)"' /tmp/bundle.json
 
+      # The cadence step showed ~60% of gaps falling under 50s, which means something is
+      # writing more than once a minute. Printing raw consecutive timestamps in ms says
+      # whether those are near-simultaneous duplicates (a double-firing cron) or a genuine
+      # second sampler on a different phase.
+      - name: Raw timestamps of the newest samples
+        if: always()
+        run: |
+          jq -r '.videos | to_entries | max_by(.value.s[-1][0]) |
+            .key as $id | (.value.s[-14:]) as $tail |
+            "  newest 14 samples of \($id):",
+            ( $tail[] | "    ts=\(.[0])  \((.[0]/1000)|floor|todate)  +\(.[0] % 60000)ms  views=\(.[1])" )' /tmp/bundle.json
+
       # Counts only — the raw accounts value never reaches the log.
       - name: Connected TikTok accounts
         if: always()
