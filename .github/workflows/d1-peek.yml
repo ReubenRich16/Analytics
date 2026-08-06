@@ -1,0 +1,69 @@
+name: Peek at the live D1 data (read-only)
+
+# MANUAL ONLY — runs nothing on its own. Every query is a SELECT; nothing is written.
+#
+# Why this exists: the dashboards read D1 through the Worker, but there is no way to ask
+# "what does the database actually hold right now?" without the Cloudflare dashboard.
+# This prints per-platform row counts, freshness, and the tracked videos, so a health
+# check is one Actions click instead of a login.
+#
+# This repo is public, so its action logs are public too. Everything printed here is
+# either aggregate (counts, timestamps) or already-public (video ids, publish times).
+# TikTok rows are partitioned by account open_id inside the platform value — that id is
+# pseudonymous but not for publishing, so platforms are collapsed to 'tiktok' before
+# printing and the accounts list is reduced to a count without the raw value ever
+# reaching the log.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # wrangler requires Node >= 22
+
+      - name: Samples per platform — counts and freshness
+        run: |
+          npx wrangler@latest d1 execute channel-command --remote --json --command "
+            SELECT CASE WHEN platform LIKE 'tt:%' THEN 'tiktok' ELSE 'youtube' END AS platform,
+                   COUNT(*) AS samples,
+                   COUNT(DISTINCT video_id) AS videos,
+                   datetime(MIN(ts)/1000,'unixepoch') AS oldest_utc,
+                   datetime(MAX(ts)/1000,'unixepoch') AS newest_utc
+            FROM samples GROUP BY 1"
+
+      - name: Tracked videos — public ids, ages, and per-video sample counts
+        run: |
+          npx wrangler@latest d1 execute channel-command --remote --json --command "
+            SELECT CASE WHEN v.platform LIKE 'tt:%' THEN 'tiktok' ELSE 'youtube' END AS platform,
+                   v.video_id,
+                   datetime(v.published_at/1000,'unixepoch') AS published_utc,
+                   ROUND((unixepoch()*1000.0 - v.published_at)/3600000, 1) AS age_hours,
+                   (SELECT COUNT(*) FROM samples s
+                     WHERE s.platform = v.platform AND s.video_id = v.video_id) AS samples,
+                   (SELECT datetime(MAX(ts)/1000,'unixepoch') FROM samples s
+                     WHERE s.platform = v.platform AND s.video_id = v.video_id) AS last_sample_utc
+            FROM videos v ORDER BY v.published_at DESC LIMIT 12"
+
+      - name: Connected TikTok accounts — count only, never the ids
+        run: |
+          npx wrangler@latest kv key get tt:accounts \
+            --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
+            | python3 -c 'import sys,json
+raw = sys.stdin.read().strip()
+try: n = len(json.loads(raw or "[]"))
+except Exception: n = 0
+print("TikTok accounts connected:", n)' \
+            || echo "TikTok accounts connected: 0 (key absent — nobody has signed in yet)"
