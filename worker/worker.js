@@ -767,6 +767,14 @@ async function ttHandler(request, env, url) {
     a.searchParams.set('response_type', 'code');
     a.searchParams.set('redirect_uri', ttRedirect(url));
     a.searchParams.set('state', state);
+    // ?reauth=1 asks TikTok to show the consent screen instead of silently replaying the
+    // grant it already holds. Without it, signing out of this dashboard and back in
+    // reconnects the SAME account with the SAME permissions and no prompt — which makes
+    // it impossible to switch accounts or to re-grant a permission that was declined,
+    // and makes "sign out" look broken because you land straight back where you were.
+    // disable_auto_auth is a Login Kit parameter; if TikTok ever ignores it the flow is
+    // unchanged, so this is safe to send.
+    if (url.searchParams.get('reauth')) a.searchParams.set('disable_auto_auth', '1');
     return Response.redirect(a.toString(), 302);
   }
 
@@ -797,6 +805,28 @@ async function ttHandler(request, env, url) {
   // everything below needs a session
   const openId = await ttSession(env, request);
   if (!openId) return json({ error: 'Not signed in to TikTok.' }, 401);
+
+  // Genuinely disconnect the account, as opposed to the page forgetting its session id.
+  // Clearing localStorage left the stored refresh token and the tt:accounts entry in
+  // place, so the cron kept polling an account the user believed they had removed, and a
+  // fresh sign-in silently reattached the same one. Placed before the token fetch so a
+  // dead or unrefreshable token can still be disconnected.
+  if (p === '/tiktok/disconnect') {
+    if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
+    const sid = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    let list = [];
+    try { list = JSON.parse(await env.MINUTE.get('tt:accounts') || '[]'); } catch (e) {}
+    const kept = list.filter(id => id !== openId);
+    try {
+      if (sid) await env.MINUTE.delete('tt:sess:' + sid);
+      await env.MINUTE.delete('tt:tok:' + openId);
+      if (kept.length !== list.length) await env.MINUTE.put('tt:accounts', JSON.stringify(kept));
+    } catch (e) { return json({ error: 'Could not fully disconnect: ' + String((e && e.message) || e) }, 502); }
+    // the recorded snapshot is deliberately kept — it is measurement history, not
+    // credentials, and reconnecting the same account should resume rather than restart
+    return json({ ok: true, remaining: kept.length });
+  }
+
   const token = await ttAccessToken(env, openId);
   if (!token) return json({ error: 'TikTok session expired — please sign in again.', reauth: true }, 401);
 

@@ -77,6 +77,7 @@
         <input id="workerUrl" type="text" placeholder="https://yt.yourname.workers.dev" autocomplete="off">
       </div>
       <button class="primary" id="signInBtn">Sign in with TikTok</button>
+      <button class="ghost" id="switchAcctBtn" title="Forces TikTok to show its permission screen instead of reconnecting the last account automatically">Use a different account</button>
     </div>
     <p class="hint">
       The Worker holds the TikTok app secret and does the sign-in exchange, so nothing
@@ -428,19 +429,37 @@
   loadHist();
 
   /* ---------- auth ---------- */
-  function signIn() {
+  // reauth=true asks TikTok for the consent screen rather than letting it silently
+  // replay the grant it already holds — which is the only way to connect a different
+  // account, or to re-grant a permission that was declined the first time round
+  function signIn(reauth) {
     const w = ($('workerUrl').value || '').trim().replace(/\/+$/, '');
     if (!/^https:\/\/\S+$/.test(w)) { showError('Enter your Worker URL first (it looks like https://yt.yourname.workers.dev).'); return; }
     workerUrl = w;
     try { localStorage.setItem('tt_worker', w); } catch (e) {}
-    location.href = w + '/tiktok/login?return=' + encodeURIComponent(location.origin + location.pathname);
+    location.href = w + '/tiktok/login?' + (reauth ? 'reauth=1&' : '') +
+      'return=' + encodeURIComponent(location.origin + location.pathname);
   }
-  function signOut(silent) {
+  // `silent` is the 401 path: the session is already dead, so there is nothing to revoke
+  // and no point asking the Worker. Otherwise this is a deliberate disconnect, and it has
+  // to reach the Worker — forgetting the session id locally used to leave the stored
+  // refresh token and the tt:accounts entry behind, so the cron kept polling an account
+  // the user thought they had removed, and the next sign-in silently reattached it.
+  async function signOut(silent) {
+    const sid = session;
     session = '';
     try { localStorage.removeItem('tt_sess'); } catch (e) {}
     if (timer) clearInterval(timer);
-    if (!silent) location.reload();
-    else { $('setupPanel').style.display = 'block'; setStatus('signed out'); }
+    if (silent) { $('setupPanel').style.display = 'block'; setStatus('signed out'); return; }
+    setStatus('disconnecting…');
+    if (sid && workerUrl) {
+      try {
+        await fetch(workerUrl + '/tiktok/disconnect', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + sid }
+        });
+      } catch (e) { /* the local session is gone either way */ }
+    }
+    location.reload();
   }
 
   /* ---------- boot ---------- */
@@ -772,7 +791,8 @@
   }
 
   /* ---------- events ---------- */
-  $('signInBtn').addEventListener('click', signIn);
+  $('signInBtn').addEventListener('click', () => signIn(false));
+  $('switchAcctBtn').addEventListener('click', () => signIn(true));
   $('signOutBtn').addEventListener('click', () => signOut());
   $('refreshBtn').addEventListener('click', () => { if (session) { pullHistory().then(() => { renderTable(); showSlot(slotIdx); }); poll(true); } });
   $('pauseBtn').addEventListener('click', () => {

@@ -176,5 +176,52 @@ console.log('\n10. A dashboard poll must not cost a KV write');
   check('and it cost zero KV writes', puts === 0, puts + ' write(s)');
 }
 
+console.log('\n11. Disconnect actually revokes, and login can force the consent screen');
+{
+  // "Sign out" used to only forget the session id in the browser. The refresh token and
+  // the tt:accounts entry survived, so the cron kept polling an account the user believed
+  // was removed -- and because TikTok replays a grant it already holds, signing back in
+  // silently reattached the same account. That combination makes it impossible to switch
+  // to a different account at all, which is what this pair of changes exists to fix.
+  const KV = mockKV({
+    'tt:accounts': JSON.stringify(['open-me', 'open-other']),
+    'tt:sess:SID': 'open-me',
+    'tt:tok:open-me': JSON.stringify({ access_token: 'A', expires_at: NOW + 36e5 }),
+    'tt:tok:open-other': JSON.stringify({ access_token: 'B', expires_at: NOW + 36e5 })
+  });
+  KV.delete = async k => { KV.store.delete(k); };
+  const env = { MINUTE: KV, DB: mockD1(D1_EMPTY), TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' };
+
+  const r = await W.HANDLER.fetch(new Request('https://w.dev/tiktok/disconnect', {
+    method: 'POST', headers: { Authorization: 'Bearer SID' } }), env);
+  const body = await r.json().catch(() => ({}));
+  check('disconnect succeeds', r.status === 200 && body.ok === true, r.status + ' ' + JSON.stringify(body));
+  check('the session is revoked server-side', !KV.store.has('tt:sess:SID'));
+  check('the refresh token is deleted', !KV.store.has('tt:tok:open-me'));
+  check('the account is removed from the polling list',
+    JSON.parse(KV.store.get('tt:accounts')).join() === 'open-other', KV.store.get('tt:accounts'));
+  check('the OTHER account is left alone', KV.store.has('tt:tok:open-other'));
+
+  // GET must not revoke anything. Needs a live session: the POST above revoked SID, so
+  // reusing it would 401 on authentication before the method check is ever reached.
+  KV.store.set('tt:sess:SID2', 'open-other');
+  const g = await W.HANDLER.fetch(new Request('https://w.dev/tiktok/disconnect', {
+    headers: { Authorization: 'Bearer SID2' } }), env);
+  check('GET is rejected', g.status === 405, g.status);
+  check('and revoked nothing', KV.store.has('tt:tok:open-other') && KV.store.has('tt:sess:SID2'));
+}
+
+console.log('\n12. ?reauth=1 asks TikTok not to auto-authorise');
+{
+  const env = { MINUTE: mockKV({}), DB: mockD1(D1_EMPTY), TIKTOK_CLIENT_KEY: 'ck', TIKTOK_CLIENT_SECRET: 's' };
+  const plain = await W.HANDLER.fetch(new Request('https://w.dev/tiktok/login'), env);
+  const forced = await W.HANDLER.fetch(new Request('https://w.dev/tiktok/login?reauth=1'), env);
+  const loc = r => new URL(r.headers.get('Location'));
+  check('a normal login does not force the prompt', !loc(plain).searchParams.get('disable_auto_auth'));
+  check('reauth does', loc(forced).searchParams.get('disable_auto_auth') === '1');
+  check('and the rest of the flow is unchanged',
+    loc(forced).searchParams.get('client_key') === 'ck' && !!loc(forced).searchParams.get('state'));
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);
