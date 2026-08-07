@@ -900,6 +900,12 @@ async function ttTick(env) {
           fh.push([now, u.follower_count || 0, u.likes_count || 0, u.video_count || 0]);
           fh = fh.filter(x => now - x[0] < 400 * 864e5);        // keep ~13 months
           await env.MINUTE.put('tt:followers:' + openId, JSON.stringify(fh));
+          // Remember what the PROFILE claims, because it settles the question the video
+          // list on its own cannot: an empty list from an account whose profile reports
+          // zero posts is an account with nothing to track, while an empty list from a
+          // profile reporting dozens means TikTok is withholding them — a scope, sandbox
+          // authorisation or visibility problem, and a completely different fix.
+          snap.ttProfileVideos = u.video_count || 0;
         }
       }
     } catch (e) { /* never let the follower sample break the video sampling */ }

@@ -104,6 +104,7 @@ jobs:
             printf '%s' "$snap" | jq -r '
               "snapshot       : videos=\((.videos // {}) | length)  d1Backfilled=\(.d1Backfilled // "unset")  updated=\(((.updated // 0)/1000)|floor|todate)",
               "last list call : \(.ttHealth // "not recorded yet — needs a deploy plus one cron tick")\(if .ttHealthAt then "  at=" + (((.ttHealthAt)/1000)|floor|todate) else "" end)",
+              "profile claims : \(if .ttProfileVideos == null then "not sampled yet (profile is polled every ~3h)" else "\(.ttProfileVideos) posts" + (if .ttProfileVideos > 0 and ((.videos // {}) | length) == 0 then "  <-- TikTok reports posts but lists none: scope / sandbox authorisation / visibility" else "" end) end)",
               ((.videos // {}) | to_entries[] |
                 "    post samples=\(.value.s | length)  posted=\((.value.create_time // 0)|todate)  " +
                 "age_h=\((((now - (.value.create_time // 0)) / 3600) * 10 | floor) / 10)")'

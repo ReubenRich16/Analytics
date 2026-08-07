@@ -194,4 +194,41 @@ share `style.css`, so themes stay identical.
 
 - [Login Kit for Web](https://developers.tiktok.com/doc/login-kit-web)
 - [Display API overview](https://developers.tiktok.com/doc/display-api-overview)
+
+---
+
+## Troubleshooting: signed in, but no posts appear
+
+The Worker records what `video/list` returns. When that comes back empty, the cause is
+one of a few things, and they need different fixes. Run the **Peek at the live data**
+workflow from the Actions tab — it prints the state of each stage:
+
+| What the peek says | What it means |
+|---|---|
+| `accounts connected: 0` | Nobody has signed in. Open the TikTok dashboard and connect. |
+| `access token : MISSING` | Listed as an account but no stored token — sign in again. |
+| `access token : ... (EXPIRED)` | The refresh didn't happen. Sign in again. |
+| `last list call : error: scope_not_authorized...` | The `video.list` permission wasn't granted. Sign out, sign back in, and make sure every permission box is ticked on TikTok's consent screen. |
+| `last list call : ok: listed 0` **and** `profile claims: 0 posts` | The account genuinely has nothing to track. Nothing is wrong. |
+| `last list call : ok: listed 0` **and** `profile claims: N posts` | **TikTok is withholding the list.** The call succeeds, the profile admits to N posts, and none are returned. See below. |
+
+### When the profile reports posts but the list is empty
+
+This is not a bug in the Worker — TikTok answers `200 OK` with an empty array. In Sandbox
+mode the usual causes, in the order worth checking:
+
+1. **The wrong account is signed in.** The dashboard shows the display name at the top —
+   confirm it is the account whose posts you expect, not the other one.
+2. **The account isn't an authorised Sandbox target user.** In the TikTok developer portal:
+   Sandbox → Target users. The account must be listed *and* show as authorised for Login
+   Kit. Adding an account is not the same as it having accepted.
+3. **Consent was granted without `video.list`.** TikTok's consent screen lets individual
+   permissions be declined. Declining that one still produces a working sign-in that can
+   read the profile but never the posts — which looks exactly like an empty account.
+   Sign out and back in, ticking everything.
+4. **The posts aren't visible to the Display API.** Private posts, drafts, and
+   friends-only posts are not returned.
+
+Signing out and back in resolves 1 and 3, and is the quickest thing to try first.
+
 - [Sandbox mode](https://developers.tiktok.com/doc/add-a-sandbox/)
