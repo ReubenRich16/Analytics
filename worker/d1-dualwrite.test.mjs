@@ -348,6 +348,43 @@ console.log('\n13. A double-fired cron writes ONE row, not two');
     new Set(times).size === times.length, JSON.stringify(times));
 }
 
+console.log('\n14. A failing TikTok list call is recorded, not swallowed');
+{
+  // Before this, `catch (e) { continue; }` made a broken TikTok integration and a quiet
+  // week produce the identical picture: empty snapshot, no write, nothing in D1. That is
+  // exactly the ambiguity that had to be resolved by hand when D1 turned out to hold no
+  // TikTok rows at all.
+  const KV = mockKV({
+    'tt:accounts': JSON.stringify(['open-1']),
+    'tt:tok:open-1': JSON.stringify({ access_token: 'A', expires_at: Date.now() + 36e5 }),
+    'tt:snap:open-1': JSON.stringify({ videos: {}, d1Backfilled: W.D1_BACKFILL_V })
+  });
+  const DB = mockD1();
+  const env = { MINUTE: KV, DB, TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' };
+  const boom = async (u) => String(u).includes('video/list')
+    ? new Response(JSON.stringify({ error: { code: 'scope_not_authorized', message: 'video.list not granted' } }), { status: 403 })
+    : new Response('{}', { status: 200 });
+
+  // with nothing hot, ttTick only reaches the list call on a SCAN_MIN boundary
+  const realNow = Date.now;
+  const base = Math.floor(realNow() / 3600000) * 3600000;   // top of an hour: minute 0
+  Date.now = () => base + 43000;
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = boom;
+  await W.ttTick(env);
+  const snap = JSON.parse(KV.store.get('tt:snap:open-1'));
+  check('the failure is recorded on the snapshot', typeof snap.ttHealth === 'string' && /^error: /.test(snap.ttHealth), JSON.stringify(snap.ttHealth));
+  check('and stamped with a time', typeof snap.ttHealthAt === 'number', snap.ttHealthAt);
+
+  // and it must not re-write every single minute while the fault persists
+  const putsAfterFirst = KV.puts;
+  Date.now = () => base + 300000 + 43000;                   // five minutes later
+  await W.ttTick(env);
+  globalThis.fetch = prevFetch;
+  Date.now = realNow;
+  check('an unchanged fault costs no further KV writes', KV.puts === putsAfterFirst, KV.puts + ' vs ' + putsAfterFirst);
+}
+
 globalThis.fetch = realFetch;
 console.log('\n' + (fail? '✗ '+fail+' FAILED, ':'') + pass + ' passed');
 process.exit(fail?1:0);

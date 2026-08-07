@@ -710,18 +710,36 @@ const ttPost = async (path, token, payload) => {
   return { ok: r.ok, body: await r.json().catch(() => ({})) };
 };
 
+// Returns { videos, error }, NOT a bare array.
+//
+// This used to `break` on any non-ok page and return whatever had been collected, which
+// meant an expired token, a revoked video.list scope, a TikTok outage and an account that
+// genuinely has no posts all came back as the same empty list. Nothing threw, so the
+// caller's try/catch never fired and the tracker recorded "nothing to sample" in every
+// one of those cases. That is how the TikTok side could sit at zero rows in D1 looking
+// perfectly healthy from the outside.
+//
+// Partial pages are still returned — half a list beats none — with the fault alongside,
+// so a caller can report which of the two it got.
 async function ttFetchVideos(token, max) {
-  const out = []; let cursor = null;
+  const out = []; let cursor = null, error = null;
   while (out.length < (max || 60)) {
     const payload = { max_count: 20, ...(cursor ? { cursor } : {}) };
     const { ok, body } = await ttPost('video/list/?fields=' + encodeURIComponent(TT_VIDEO_FIELDS), token, payload);
     const d = body && body.data;
-    if (!ok || !d || !Array.isArray(d.videos)) break;
+    if (!ok || !d || !Array.isArray(d.videos)) {
+      // TikTok answers success as error.code === 'ok', so only another code is a fault
+      const e = body && body.error;
+      if (e && e.code && e.code !== 'ok') error = e.code + (e.message ? ': ' + e.message : '');
+      else if (!ok) error = 'http error from TikTok';
+      else error = 'unexpected response shape';
+      break;
+    }
     out.push(...d.videos);
     if (!d.has_more || !d.cursor) break;
     cursor = d.cursor;
   }
-  return out;
+  return { videos: out, error };
 }
 
 // session id -> open_id (the browser never sees a TikTok token)
@@ -789,7 +807,12 @@ async function ttHandler(request, env, url) {
     return json(body.data.user);
   }
   if (p === '/tiktok/videos') {
-    try { return json({ videos: await ttFetchVideos(token, 60) }); }
+    // surface the fault rather than presenting an empty list as an empty account
+    try {
+      const { videos, error } = await ttFetchVideos(token, 60);
+      if (error && !videos.length) return json({ error: 'TikTok refused the video list — ' + error }, 502);
+      return json({ videos, ...(error ? { partial: error } : {}) });
+    }
     catch (e) { return json({ error: String(e.message || e) }, 502); }
   }
   if (p === '/tiktok/history') {
@@ -881,8 +904,29 @@ async function ttTick(env) {
       }
     } catch (e) { /* never let the follower sample break the video sampling */ }
 
-    let vids = [];
-    try { vids = await ttFetchVideos(token, 20); } catch (e) { continue; }
+    let vids = [], fetchErr = null;
+    try {
+      const r = await ttFetchVideos(token, 20);
+      vids = r.videos;
+      if (r.error) fetchErr = r.error.slice(0, 160);
+    } catch (e) { fetchErr = String((e && e.message) || e).slice(0, 160); }
+    // A failed list call used to `continue` silently, which looks exactly like "this
+    // account has no recent posts": both leave the snapshot empty and write nothing, so
+    // from the outside a broken integration and a quiet week are the same picture — and
+    // that is precisely the question that could not be answered when D1 turned out to
+    // hold no TikTok rows at all. Record the outcome, and persist it when it CHANGES, so
+    // the two can be told apart without costing a write every minute.
+    const health = fetchErr ? 'error: ' + fetchErr : 'ok: listed ' + vids.length;
+    const healthChanged = snap.ttHealth !== health;
+    if (healthChanged) { snap.ttHealth = health; snap.ttHealthAt = now; }
+    if (fetchErr) {
+      if (healthChanged) {
+        snap.updated = now;
+        await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
+        wrote++;
+      }
+      continue;
+    }
     const d1rows = [], d1metas = [], metaPending = [];
     for (const v of vids) {
       const ct = (v.create_time || 0) * 1000;
@@ -923,7 +967,7 @@ async function ttTick(env) {
     const changed = JSON.stringify(snap.videos) !== before;
     const rosterChanged = rosterOf(snap.videos) !== rosterBefore;
     const due = now - (snap.updated || 0) >= KV_WRITE_MIN * 60000;
-    if (rosterChanged || acct.backfill || (acct.error && changed) || (changed && due)) {
+    if (healthChanged || rosterChanged || acct.backfill || (acct.error && changed) || (changed && due)) {
       snap.updated = now;
       await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
       wrote++;
