@@ -72,14 +72,43 @@ jobs:
             "  newest 14 samples of \($id):",
             ( $tail[] | "    ts=\(.[0])  \((.[0]/1000)|floor|todate)  +\(.[0] % 60000)ms  views=\(.[1])" )' /tmp/bundle.json
 
-      # Counts only — the raw accounts value never reaches the log.
-      - name: Connected TikTok accounts
+      # Where the TikTok pipeline stops. An account is connected but D1 holds no TikTok
+      # rows at all, and the difference between "no token", "token expired", "no posts in
+      # the window" and "written but not mirrored" is four different fixes. Every value
+      # here is derived — the open_id and the access token never reach the log.
+      - name: TikTok pipeline state
         if: always()
+        env:
+          NS: 24a3e8ab02904af499a07b6928687b48
         run: |
-          n=$(npx wrangler@latest kv key get tt:accounts \
-                --namespace-id 24a3e8ab02904af499a07b6928687b48 --remote 2>/dev/null \
-              | jq -r 'length' 2>/dev/null || echo 0)
-          echo "TikTok accounts connected: ${n:-0}"
+          kv() { npx wrangler@latest kv key get "$1" --namespace-id "$NS" --remote 2>/dev/null; }
+          accounts=$(kv tt:accounts)
+          n=$(printf '%s' "$accounts" | jq -r 'length' 2>/dev/null || echo 0)
+          echo "accounts connected: ${n:-0}"
+          [ "${n:-0}" -eq 0 ] && exit 0
+
+          oid=$(printf '%s' "$accounts" | jq -r '.[0]')
+          tok=$(kv "tt:tok:$oid")
+          if [ -z "$tok" ]; then
+            echo "access token   : MISSING — the account is listed but has no stored token"
+          else
+            printf '%s' "$tok" | jq -r --argjson now "$(date +%s000)" '
+              "access token   : present, expires_at=\(((.expires_at // 0)/1000)|floor|todate) " +
+              (if ((.expires_at // 0) > $now) then "(valid)" else "(EXPIRED — refresh needed)" end)'
+          fi
+
+          snap=$(kv "tt:snap:$oid")
+          if [ -z "$snap" ]; then
+            echo "snapshot       : MISSING — the cron has never recorded this account"
+          else
+            printf '%s' "$snap" | jq -r '
+              "snapshot       : videos=\((.videos // {}) | length)  d1Backfilled=\(.d1Backfilled // "unset")  updated=\(((.updated // 0)/1000)|floor|todate)",
+              ((.videos // {}) | to_entries[] |
+                "    post samples=\(.value.s | length)  posted=\((.value.create_time // 0)|todate)  " +
+                "age_h=\((((now - (.value.create_time // 0)) / 3600) * 10 | floor) / 10)")'
+          fi
+
+          echo "note: D1 rows for this account appear under platform 'tt:<open_id>'"
 
       # These two need the D1 permission on CLOUDFLARE_API_TOKEN, which the current token
       # does not have (every CI call to a /d1/ API endpoint has been denied: code 10000 on
