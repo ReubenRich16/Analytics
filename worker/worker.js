@@ -721,6 +721,24 @@ const ttPost = async (path, token, payload) => {
 //
 // Partial pages are still returned — half a list beats none — with the fault alongside,
 // so a caller can report which of the two it got.
+// Remember how the last sign-in attempt ended, so "it won't let her in" becomes a fact
+// instead of a screenshot. One key, overwritten each attempt, and sign-ins are rare, so
+// the KV cost is nil. Deliberately records NOTHING identifying: no open_id, no code, no
+// token — only when it happened, whether it worked, and TikTok's own error text.
+//
+// The absence of a record is itself the diagnosis. TikTok shows its own error page for
+// problems it detects before redirecting (a non-target account, a sandbox misconfigured
+// for the app), and in those cases the callback never runs. So a failed attempt that
+// leaves no entry here means TikTok refused it upstream, which points at the developer
+// portal rather than at anything this Worker does.
+async function noteAuth(env, ok, error) {
+  try {
+    await env.MINUTE.put('tt:lastauth', JSON.stringify({
+      at: Date.now(), ok: !!ok, error: String(error || '').slice(0, 200)
+    }), { expirationTtl: 60 * 60 * 24 * 30 });
+  } catch (e) { /* diagnostics must never break a sign-in */ }
+}
+
 async function ttFetchVideos(token, max) {
   const out = []; let cursor = null, error = null;
   while (out.length < (max || 60)) {
@@ -787,6 +805,7 @@ async function ttHandler(request, env, url) {
     await env.MINUTE.delete('tt:state:' + state);
     if (err || !code) {
       const detail = url.searchParams.get('error_description') || err || 'no code';
+      await noteAuth(env, false, detail);
       // non_sandbox_target is the one people will actually hit, and TikTok's own wording
       // ("This may be due to specific app settings") gives no clue what to do. It means
       // the account signing in is not a registered Sandbox target user — nothing to do
@@ -801,8 +820,9 @@ async function ttHandler(request, env, url) {
     }
     let t;
     try { t = await ttTokenCall(env, { grant_type: 'authorization_code', code, redirect_uri: ttRedirect(url) }); }
-    catch (e) { return ttErrorPage(e.message, ttRedirect(url)); }
+    catch (e) { await noteAuth(env, false, 'token exchange: ' + e.message); return ttErrorPage(e.message, ttRedirect(url)); }
     await ttSaveTokens(env, t);
+    await noteAuth(env, true, '');
     const sid = rand(24);
     await env.MINUTE.put('tt:sess:' + sid, t.open_id, { expirationTtl: 60 * 60 * 24 * 300 });
     // NOTE: there used to be a `tt:meta:<openId>` profile cache written here and again on
@@ -948,7 +968,14 @@ async function ttTick(env) {
           // zero posts is an account with nothing to track, while an empty list from a
           // profile reporting dozens means TikTok is withholding them — a scope, sandbox
           // authorisation or visibility problem, and a completely different fix.
-          snap.ttProfileVideos = u.video_count || 0;
+          // NOTE: deliberately NOT stashed on the snapshot. An earlier version set
+          // snap.ttProfileVideos here, which could never persist: the snapshot is only
+          // written when the health string, the roster or the samples change, and on a
+          // quiet account none of them do — so the value was rewritten in memory and
+          // discarded every five minutes, and the peek reported "not sampled yet" four
+          // days running. The count is already the 4th column of the follower history
+          // being written on the line above, so read it from there instead of keeping a
+          // second copy that depends on an unrelated write actually happening.
         }
       }
     } catch (e) { /* never let the follower sample break the video sampling */ }

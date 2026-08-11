@@ -82,6 +82,18 @@ jobs:
           NS: 24a3e8ab02904af499a07b6928687b48
         run: |
           kv() { npx wrangler@latest kv key get "$1" --namespace-id "$NS" --remote 2>/dev/null; }
+
+          # How the most recent sign-in ATTEMPT ended. Absence is meaningful: TikTok shows
+          # its own error page for anything it rejects before redirecting, so a failed
+          # attempt that leaves no record here was refused upstream — a developer-portal
+          # problem, not a Worker one.
+          last=$(kv tt:lastauth)
+          if [ -z "$last" ]; then
+            echo "last sign-in   : no attempt has reached the Worker (either none tried, or TikTok refused before redirecting)"
+          else
+            printf '%s' "$last" | jq -r '"last sign-in   : \(if .ok then "SUCCEEDED" else "FAILED — " + .error end)  at=\((.at/1000)|floor|todate)"'
+          fi
+
           accounts=$(kv tt:accounts)
           n=$(printf '%s' "$accounts" | jq -r 'length' 2>/dev/null || echo 0)
           echo "accounts connected: ${n:-0}"
@@ -104,12 +116,22 @@ jobs:
             printf '%s' "$snap" | jq -r '
               "snapshot       : videos=\((.videos // {}) | length)  d1Backfilled=\(.d1Backfilled // "unset")  updated=\(((.updated // 0)/1000)|floor|todate)",
               "last list call : \(.ttHealth // "not recorded yet — needs a deploy plus one cron tick")\(if .ttHealthAt then "  at=" + (((.ttHealthAt)/1000)|floor|todate) else "" end)",
-              "profile claims : \(if .ttProfileVideos == null then "not sampled yet (profile is polled every ~3h)" else "\(.ttProfileVideos) posts" + (if .ttProfileVideos > 0 and ((.videos // {}) | length) == 0 then "  <-- TikTok reports posts but lists none: scope / sandbox authorisation / visibility" else "" end) end)",
               ((.videos // {}) | to_entries[] |
                 "    post samples=\(.value.s | length)  posted=\((.value.create_time // 0)|todate)  " +
                 "age_h=\((((now - (.value.create_time // 0)) / 3600) * 10 | floor) / 10)")'
           fi
 
+          # The profile's own post count, read from the follower history where it already
+          # lives as the 4th column. It settles what the video list alone cannot: an empty
+          # list from a profile claiming 0 posts is an account with nothing to track, while
+          # an empty list from a profile claiming dozens means TikTok is withholding them.
+          fh=$(kv "tt:followers:$oid")
+          if [ -z "$fh" ]; then
+            echo "profile claims : not sampled yet (polled every ~3h)"
+          else
+            printf '%s' "$fh" | jq -r 'if length == 0 then "profile claims : no samples yet"
+              else (.[-1]) as $l | "profile claims : \($l[3]) posts, \($l[1]) followers  at=\((($l[0])/1000)|floor|todate)" end'
+          fi
           echo "note: D1 rows for this account appear under platform 'tt:<open_id>'"
 
       # These two need the D1 permission on CLOUDFLARE_API_TOKEN, which the current token
