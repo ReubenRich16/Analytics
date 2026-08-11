@@ -25,7 +25,21 @@
 
   .pair-row { display:flex; gap:12px; align-items:center; background:var(--panel-2); border:1px solid var(--line);
     border-radius:12px; padding:11px 13px; flex-wrap:wrap; margin-bottom:8px; }
-  .pair-row .who { flex:1 1 230px; min-width:0; }
+  .pair-row .who { flex:1 1 300px; min-width:0; display:flex; flex-direction:column; gap:8px; }
+  .pair-row.linked { opacity:.8; }
+  /* the two sides sit as rows so the frames stack vertically and line up with each other,
+     which is what makes "same video or not?" answerable at a glance */
+  .pside { display:flex; gap:9px; align-items:center; min-width:0; }
+  .pmeta { min-width:0; flex:1; }
+  .pthumb { flex:none; border-radius:6px; border:1px solid var(--line); background:var(--panel-2);
+            object-fit:cover; display:block; }
+  /* YouTube frames are 16:9, TikTok covers are 9:16 — matching their real shapes is a
+     cue in itself, and forcing one aspect on both would crop the subject out of one */
+  .pthumb.y { width:72px; height:41px; }
+  .pthumb.t { width:32px; height:57px; }
+  .pthumb.none { opacity:.35; }
+  .gap { margin-top:4px; font-size:11px; color:var(--muted); }
+  .gap.far { color:var(--text); font-weight:600; }
   .pair-row .who b { display:block; font-size:13px; font-weight:700; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
   .pair-row .who small { color:var(--muted); font-size:11.5px; }
@@ -334,6 +348,9 @@
       for (const it of d.items) {
         ytVideos.push({
           id: it.id, title: it.snippet.title,
+          // the frame matters as much as the caption when confirming a pair: two posts can
+          // share a title and be different cuts, and the eye catches that instantly
+          thumb: (((it.snippet.thumbnails || {}).medium || (it.snippet.thumbnails || {}).default) || {}).url || '',
           pub: new Date(it.snippet.publishedAt).getTime(),
           dur: isoDur(it.contentDetails && it.contentDetails.duration),
           views: +(it.statistics.viewCount || 0),
@@ -353,6 +370,7 @@
     const list = (v && v.videos) || (v && v.data && v.data.videos) || [];
     ttVideos = list.map(x => ({
       id: x.id, title: x.title || x.video_description || '',
+      thumb: x.cover_image_url || '',
       pub: (x.create_time || 0) * 1000, dur: x.duration || 0,
       views: +(x.view_count || 0), likes: +(x.like_count || 0),
       comments: +(x.comment_count || 0), shares: +(x.share_count || 0)
@@ -377,6 +395,37 @@
   }
 
   /* ---------- render: suggestions + linked ---------- */
+
+  // One side of a proposed pair: the frame, the caption, and when it went up. Captions
+  // alone are a weak basis for confirming a match — the suggester already scores on them,
+  // so agreeing on caption similarity only re-states what the machine guessed. The
+  // thumbnail and the date are the independent evidence a person can actually judge.
+  const dstamp = ms => !ms ? 'date unknown'
+    : new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
+      ' · ' + new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  function side(kind, badge, v) {
+    const t = v.thumb
+      ? '<img class="pthumb ' + kind + '" src="' + esc(v.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">'
+      : '<span class="pthumb ' + kind + ' none" aria-hidden="true"></span>';
+    return '<div class="pside">' + t +
+      '<div class="pmeta"><b><span class="pf ' + kind + '">' + badge + '</span>' + esc(v.title || '(no caption)') + '</b>' +
+      '<small>' + esc(dstamp(v.pub)) + '</small></div></div>';
+  }
+  // Only the WARNING, never the gap itself — whyText already states how far apart the two
+  // were posted, and printing it twice in the same row is noise that makes the row look
+  // like it is saying two things when it is saying one. This adds the judgement whyText
+  // does not make: past about three days, a caption match is usually a coincidence of
+  // wording rather than the same video, and that deserves calling out next to a button
+  // whose whole job is confirming the pair.
+  function gapNote(a, b) {
+    if (!a || !b) return '';
+    const h = Math.abs(a - b) / 3600e3;
+    if (h <= 72) return '';
+    // deliberately does not repeat the number whyText just printed — this line exists to
+    // add the judgement, not the measurement
+    return '<div class="gap far">Worth a careful look — this may be a caption coincidence rather than the same video.</div>';
+  }
+
   function renderPairing() {
     const linkedY = new Set(pairs.map(p => p.y)), linkedT = new Set(pairs.map(p => p.t));
     const cands = [];
@@ -398,18 +447,30 @@
     }
     $('suggestions').innerHTML = top.length ? top.map(c =>
       '<div class="pair-row" data-y="' + esc(c.y.id) + '" data-t="' + esc(c.t.id) + '">' +
-        '<div class="who"><b><span class="pf y">▶ YT</span>' + esc(c.y.title) + '</b>' +
-        '<b style="margin-top:3px"><span class="pf t">♪ TT</span>' + esc(c.t.title || '(no caption)') + '</b></div>' +
-        '<div class="why">' + whyText(c.s) + '</div>' +
+        '<div class="who">' +
+          side('y', '▶ YT', c.y) +
+          side('t', '♪ TT', c.t) +
+        '</div>' +
+        '<div class="why">' + whyText(c.s) + gapNote(c.y.pub, c.t.pub) + '</div>' +
         '<div class="acts"><button class="ghost link-yes">Yes, link</button>' +
         '<button class="ghost link-no">Not the same</button></div></div>').join('')
       : '<p class="dnote">No confident matches right now. Captions that differ a lot, or posts more than a week apart, won’t be suggested — link those by hand below.</p>';
 
     $('linkedList').innerHTML = pairs.length ? '<p class="dnote" style="margin-bottom:8px">Linked (' + pairs.length + '):</p>' +
       pairs.map((p, i) => {
+        // a confirmed pair keeps its frames and dates: that is how a wrong link gets
+        // spotted later, when the numbers it feeds start looking odd
         const y = ytVideos.find(v => v.id === p.y), t = ttVideos.find(v => v.id === p.t);
-        return '<div class="pair-row" style="opacity:.75"><div class="who"><b>' + esc(y ? y.title : p.y) + '</b>' +
-          '<small>' + esc(t ? (t.title || '(no caption)') : p.t) + '</small></div>' +
+        const who = (y && t)
+          ? side('y', '▶ YT', y) + side('t', '♪ TT', t)
+          : '<div class="pside"><div class="pmeta"><b>' + esc(y ? y.title : p.y) + '</b>' +
+            '<small>' + esc(t ? (t.title || '(no caption)') : p.t) + '</small></div></div>';
+        // a linked row has no whyText, so here the gap IS worth stating outright
+        const gapH = (y && t && y.pub && t.pub) ? Math.abs(y.pub - t.pub) / 3600e3 : null;
+        const gap = gapH == null ? '' : '<div class="gap' + (gapH > 72 ? ' far' : '') + '">Posted ' +
+          (gapH < 48 ? Math.round(gapH) + ' hours' : Math.round(gapH / 24) + ' days') + ' apart</div>';
+        return '<div class="pair-row linked"><div class="who">' + who + '</div>' +
+          '<div class="why">' + gap + '</div>' +
           '<div class="acts"><button class="ghost unlink" data-i="' + i + '">Unlink</button></div></div>';
       }).join('') : '';
 
