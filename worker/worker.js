@@ -779,6 +779,16 @@ async function ttHandler(request, env, url) {
     const state = rand(16);
     const ret = url.searchParams.get('return') || '';
     await env.MINUTE.put('tt:state:' + state, ret, { expirationTtl: 900 });
+    // Record that an attempt STARTED, separately from how it ended. Paired with
+    // tt:lastauth this is what makes an upstream refusal visible: TikTok renders its own
+    // error page for a rejection it makes before redirecting, so the callback never runs
+    // and nothing else would show the attempt happened at all. A start with no matching
+    // finish is therefore the signature of "TikTok said no on its own page" — as opposed
+    // to no start at all, which just means nobody pressed the button.
+    try {
+      await env.MINUTE.put('tt:laststart', JSON.stringify({ at: Date.now(), reauth: !!url.searchParams.get('reauth') }),
+        { expirationTtl: 60 * 60 * 24 * 30 });
+    } catch (e) { /* diagnostics must never block a sign-in */ }
     const a = new URL(TT_AUTH);
     a.searchParams.set('client_key', env.TIKTOK_CLIENT_KEY);
     a.searchParams.set('scope', TT_SCOPES);

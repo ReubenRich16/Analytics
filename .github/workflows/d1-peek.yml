@@ -87,11 +87,20 @@ jobs:
           # its own error page for anything it rejects before redirecting, so a failed
           # attempt that leaves no record here was refused upstream — a developer-portal
           # problem, not a Worker one.
-          last=$(kv tt:lastauth)
-          if [ -z "$last" ]; then
-            echo "last sign-in   : no attempt has reached the Worker (either none tried, or TikTok refused before redirecting)"
+          start=$(kv tt:laststart); last=$(kv tt:lastauth)
+          s_at=$(printf '%s' "$start" | jq -r '.at // 0' 2>/dev/null || echo 0)
+          f_at=$(printf '%s' "$last"  | jq -r '.at // 0' 2>/dev/null || echo 0)
+          if [ "${s_at:-0}" = "0" ]; then
+            echo "last attempt   : nobody has pressed sign-in since this was deployed"
           else
-            printf '%s' "$last" | jq -r '"last sign-in   : \(if .ok then "SUCCEEDED" else "FAILED — " + .error end)  at=\((.at/1000)|floor|todate)"'
+            printf '%s' "$start" | jq -r '"attempt started: \((.at/1000)|floor|todate)\(if .reauth then "  (via Use a different account)" else "  (plain sign-in — TikTok may reuse the browsers current account)" end)"'
+            if [ "${f_at:-0}" = "0" ] || [ "${f_at:-0}" -lt "${s_at:-0}" ]; then
+              echo "           ...  : NO CALLBACK followed it — TikTok rejected the attempt on its own"
+              echo "                  error page and never returned. That is a developer-portal"
+              echo "                  problem (target user / sandbox), not a Worker one."
+            else
+              printf '%s' "$last" | jq -r '"           ...  : \(if .ok then "SUCCEEDED" else "came back FAILED — " + .error end)  at=\((.at/1000)|floor|todate)"'
+            fi
           fi
 
           accounts=$(kv tt:accounts)
