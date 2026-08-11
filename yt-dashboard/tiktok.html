@@ -195,6 +195,19 @@
 
 </div>
 
+<!-- The milestone moment. Same markup and the same styles as the YouTube page — the
+     party CSS already lives in the shared style.css, so this needed no new rules. -->
+<canvas id="confettiCv"></canvas>
+<div id="party" role="dialog" aria-modal="true" aria-label="Milestone reached">
+  <div class="scrim"></div>
+  <div class="core">
+    <div class="plb" id="partyLabel">Followers</div>
+    <div class="pnum" id="partyNum">0</div>
+    <div class="psub" id="partySub">You just hit a new milestone</div>
+    <div class="pnote" id="partyNote"></div>
+    <button class="pclose" id="partyClose">Lovely</button>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -377,6 +390,166 @@
   document.addEventListener('pointermove', ttMoveTip);
   document.addEventListener('pointerdown', ttMoveTip);
 
+  // shared with the YouTube page through the same localStorage key, so the sound
+  // preference follows the person rather than the tab they happen to be on
+  let soundOn = true; try { soundOn = localStorage.getItem('cc_sound') !== 'off'; } catch (e) {}
+  const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let audioCtx = null; const lastChime = {};
+  function unlockAudio() {
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
+  }
+
+  /* ---------- the milestone moment ----------
+     Full screen, everything behind it blurred, confetti down the whole page and a
+     party sound. Fires once per milestone ever — the ones already passed are
+     recorded so a reload can't replay them. */
+  const CELEB_KEY = 'cc_celebrated';
+  const celebrated = () => { try { return JSON.parse(localStorage.getItem(CELEB_KEY) || '{}'); } catch (e) { return {}; } };
+  const setCeleb = (key, val) => { try { const c = celebrated(); c[key] = val; localStorage.setItem(CELEB_KEY, JSON.stringify(c)); } catch (e) {} };
+
+  function partySound() {
+    if (!soundOn) return;
+    unlockAudio();
+    if (!audioCtx) return;
+    const c = audioCtx, now = c.currentTime;
+    const master = c.createGain(); master.gain.value = 0.85; master.connect(c.destination);
+    // the popper: a short filtered noise burst
+    const len = Math.floor(0.22 * c.sampleRate), buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    const src = c.createBufferSource(); src.buffer = buf;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1500; bp.Q.value = 0.6;
+    const g0 = c.createGain(); g0.gain.value = 0.32;
+    src.connect(bp); bp.connect(g0); g0.connect(master); src.start(now);
+    // a rising major arpeggio, each note with an octave sparkle on top
+    [523.25, 659.25, 783.99, 1046.5, 1318.51].forEach((f, i) => {
+      const t = now + 0.06 + i * 0.088;
+      const o = c.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.2, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.6);
+      const o2 = c.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2;
+      const g2 = c.createGain();
+      g2.gain.setValueAtTime(0, t); g2.gain.linearRampToValueAtTime(0.06, t + 0.015);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+      o2.connect(g2); g2.connect(master); o2.start(t); o2.stop(t + 0.4);
+    });
+    // a tail of glitter
+    for (let i = 0; i < 16; i++) {
+      const t = now + 0.5 + Math.random() * 1.1;
+      const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = 1500 + Math.random() * 2400;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.045, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.22);
+    }
+  }
+
+  const CONFETTI_COLOURS = ['#ff3b30', '#ffcf5a', '#3ddc84', '#5aa9ff', '#ff5c8a', '#b58cff', '#ffffff'];
+  let confRaf = null, confResize = null;
+  function confetti(dur) {
+    const cv = $('confettiCv'); if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const size = () => { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+    size();
+    if (confResize) removeEventListener('resize', confResize);
+    confResize = size; addEventListener('resize', confResize);
+    cv.style.display = 'block';
+    // density from area, and seeded across the whole height plus a screen above it,
+    // so the page is covered from the first frame rather than filling in slowly
+    const N = Math.round(Math.max(120, Math.min(260, (innerWidth * innerHeight) / 3600)));
+    const P = Array.from({ length: N }, (_, i) => ({
+      x: Math.random() * innerWidth, y: Math.random() * innerHeight * 1.9 - innerHeight * 0.9,
+      w: 6 + Math.random() * 7, h: 9 + Math.random() * 11,
+      vy: 2.4 + Math.random() * 3.4, vx: (Math.random() - 0.5) * 1.2,
+      rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.24,
+      sw: Math.random() * Math.PI * 2, ss: 0.02 + Math.random() * 0.04,
+      c: CONFETTI_COLOURS[i % CONFETTI_COLOURS.length]
+    }));
+    const t0 = performance.now();
+    const frame = now => {
+      const el = now - t0, fade = Math.max(0, Math.min(1, (dur - el) / 900));
+      ctx.clearRect(0, 0, innerWidth, innerHeight); ctx.globalAlpha = fade;
+      for (const p of P) {
+        p.sw += p.ss; p.x += p.vx + Math.sin(p.sw) * 0.9; p.y += p.vy; p.rot += p.vr;
+        if (p.y > innerHeight + 40) { p.y = -30; p.x = Math.random() * innerWidth; }
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillStyle = p.c;
+        const flutter = Math.abs(Math.cos(p.sw * 1.6)); // paper turning edge-on
+        ctx.fillRect(-p.w / 2, -p.h * flutter / 2, p.w, p.h * flutter);
+        ctx.restore();
+      }
+      if (el < dur) confRaf = requestAnimationFrame(frame);
+      else stopConfetti();
+    };
+    confRaf = requestAnimationFrame(frame);
+  }
+  function stopConfetti() {
+    if (confRaf) { cancelAnimationFrame(confRaf); confRaf = null; }
+    if (confResize) { removeEventListener('resize', confResize); confResize = null; }
+    const cv = $('confettiCv'); if (!cv) return;
+    cv.getContext('2d').clearRect(0, 0, innerWidth, innerHeight);
+    cv.style.display = 'none';
+  }
+  let lastPartyFocus = null;
+  function celebrate(value, label, note) {
+    $('partyLabel').textContent = label;
+    $('partyNum').textContent = fmt.format(value);
+    $('partySub').textContent = 'You just hit a new milestone';
+    $('partyNote').textContent = note || '';
+    lastPartyFocus = document.activeElement;
+    $('party').classList.add('on');
+    $('partyClose').focus();
+    if (reducedMotion) return; // the moment still happens, just without motion or noise
+    partySound(); confetti(5400);
+  }
+  function closeParty() {
+    $('party').classList.remove('on');
+    stopConfetti();
+    try { if (lastPartyFocus && lastPartyFocus.focus) lastPartyFocus.focus(); } catch (e) {}
+  }
+  // TikTok's own counters. Only the three the profile reports directly are eligible:
+  // followers, lifetime likes, and post count. The views figure on this page is summed
+  // over the posts the API hands back — at most the 60 most recent — so it FALLS as older
+  // posts scroll out of that window. A milestone on a number that can go down would
+  // either fire on a rebound it never really crossed, or never fire at all, and either
+  // way it would be celebrating an artefact of pagination rather than an achievement.
+  function checkMilestones(u) {
+    if (!u || !u.open_id) return;
+    const who = 'tt:' + u.open_id;
+    [['follower_count', 'Followers', 'followers', 'people who chose to keep seeing your work'],
+     ['likes_count',    'Total likes', 'likes',    'separate moments where somebody tapped the heart'],
+     ['video_count',    'Posts',      'posts',     'things you made and put out into the world']
+    ].forEach(([field, label, word, note]) => {
+      const cur = u[field];
+      if (!cur || !isFinite(cur)) return;
+      const seenKey = who + ':' + field + ':seen';
+      const seen = celebrated();
+      const last = seen[seenKey];
+      // first sight of this account: record where it already is and celebrate nothing, so
+      // connecting a mature account never replays milestones passed months ago
+      if (typeof last !== 'number') { setCeleb(seenKey, cur); return; }
+      if (cur <= last) return;
+      const target = nextMilestone(last);
+      const hitKey = who + ':' + field + ':' + target;
+      setCeleb(seenKey, cur);
+      if (cur >= target && !seen[hitKey]) {
+        setCeleb(hitKey, 1);
+        celebrate(target, label, fmt.format(target) + ' ' + word + ' — ' + note + '.');
+      }
+    });
+  }
+  function nextMilestone(cur) {
+    const mags = [1, 2.5, 5, 7.5];
+    let p = Math.max(2, Math.floor(Math.log10(Math.max(10, cur))));
+    for (let e = p - 1; e <= p + 2; e++) for (const m of mags) {
+      const v = m * Math.pow(10, e);
+      if (v > cur) return Math.round(v);
+    }
+    return Math.round(cur * 2);
+  }
+
   /* ---------- recorded history: merge, never replace ----------
      A /tiktok/history response is not the whole truth and must not be treated as it.
      It is a delta when we send ?since=, and it is a coarser copy whenever the Worker is
@@ -491,6 +664,7 @@
       const [v, u] = await Promise.all([api('/tiktok/videos'), api('/tiktok/me')]);
       videos = (v.videos || []).filter(x => x && x.id);
       me = u || me;
+      checkMilestones(me);
       const totals = { views: 0, likes: 0, comments: 0, followers: me.follower_count || 0 };
       for (const x of videos) { totals.views += x.view_count || 0; totals.likes += x.like_count || 0; totals.comments += x.comment_count || 0; }
       [['viewsNum', 'viewsDelta', 'views'], ['likesNum', 'likesDelta', 'likes'], ['followersNum', 'followersDelta', 'followers'], ['commentsNum', 'commentsDelta', 'comments']]
@@ -791,6 +965,8 @@
   }
 
   /* ---------- events ---------- */
+  $('partyClose').addEventListener('click', closeParty);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('party').classList.contains('on')) closeParty(); });
   $('signInBtn').addEventListener('click', () => signIn(false));
   $('switchAcctBtn').addEventListener('click', () => signIn(true));
   $('signOutBtn').addEventListener('click', () => signOut());
