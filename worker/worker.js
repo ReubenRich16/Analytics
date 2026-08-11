@@ -785,7 +785,20 @@ async function ttHandler(request, env, url) {
     const ret = (await env.MINUTE.get('tt:state:' + state)) ;
     if (ret === null) return new Response('Sign-in expired or invalid. Please try again.', { status: 400, headers: CORS });
     await env.MINUTE.delete('tt:state:' + state);
-    if (err || !code) return new Response('TikTok sign-in was cancelled or failed: ' + (url.searchParams.get('error_description') || err || 'no code'), { status: 400, headers: CORS });
+    if (err || !code) {
+      const detail = url.searchParams.get('error_description') || err || 'no code';
+      // non_sandbox_target is the one people will actually hit, and TikTok's own wording
+      // ("This may be due to specific app settings") gives no clue what to do. It means
+      // the account signing in is not a registered Sandbox target user — nothing to do
+      // with scopes, the token, or this Worker.
+      const hint = /non_sandbox_target/i.test(detail)
+        ? ' — this account is not a Sandbox target user. In the TikTok developer portal open your app,'
+          + ' go to Sandbox → Target users → Add account, and sign in AS this account to accept the'
+          + ' invitation. Being added is not enough on its own; the invitation has to be accepted from'
+          + ' that account. Then try connecting again.'
+        : '';
+      return ttErrorPage('TikTok sign-in failed: ' + detail + hint, ttRedirect(url));
+    }
     let t;
     try { t = await ttTokenCall(env, { grant_type: 'authorization_code', code, redirect_uri: ttRedirect(url) }); }
     catch (e) { return ttErrorPage(e.message, ttRedirect(url)); }

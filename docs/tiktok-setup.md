@@ -209,8 +209,33 @@ workflow from the Actions tab — it prints the state of each stage:
 | `access token : MISSING` | Listed as an account but no stored token — sign in again. |
 | `access token : ... (EXPIRED)` | The refresh didn't happen. Sign in again. |
 | `last list call : error: scope_not_authorized...` | The `video.list` permission wasn't granted. Sign out, sign back in, and make sure every permission box is ticked on TikTok's consent screen. |
+| TikTok's own page says `non_sandbox_target` | That account isn't a Sandbox target user — it can't sign in at all yet. See below. |
 | `last list call : ok: listed 0` **and** `profile claims: 0 posts` | The account genuinely has nothing to track. Nothing is wrong. |
 | `last list call : ok: listed 0` **and** `profile claims: N posts` | **TikTok is withholding the list.** The call succeeds, the profile admits to N posts, and none are returned. See below. |
+
+### "Something went wrong … non_sandbox_target"
+
+TikTok shows this on its own page, before returning to the dashboard, and the wording
+("This may be due to specific app settings") does not say what to change. It means
+exactly one thing: **the account signing in is not a registered Sandbox target user.**
+
+It is not a scope problem, not a token problem, and nothing to do with the Worker. While
+the app is in Sandbox mode only accounts on the target-user list may sign in at all.
+
+To fix it:
+
+1. Open the app in the [TikTok developer portal](https://developers.tiktok.com/).
+2. Go to **Sandbox** → open your sandbox → **Target users** → **Add account**.
+3. You will be redirected to a TikTok login. **Log in as the account you are adding** —
+   not as the app owner — and accept the Developer Terms.
+4. Check the account now appears in Target users *and* shows as authorised.
+
+Step 3 is the one that gets missed. Adding an account creates an invitation; it does not
+take effect until someone signs in as that account and accepts. An account sitting in the
+list unaccepted produces this same error.
+
+Easiest done on the phone or laptop already logged into that account, or in a private
+window so it doesn't clash with your own session.
 
 ### When the profile reports posts but the list is empty
 
