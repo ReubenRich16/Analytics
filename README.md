@@ -48,6 +48,10 @@ data/             recorded history, committed by the robots
 - **Latest-upload card** with ◀ ▶ to cycle recent posts
 - **Minute-by-minute launch tracking** — recorded by the Worker even when nobody
   has the site open, because the platforms don't provide it
+- **Plateau projection** — "where is this one heading?", on the latest-upload card.
+  A progress bar toward the launch's own likely finish, a plain-English sentence with
+  the range, and a **Curve** toggle that carries the recorded line forward as a dashed
+  projection inside a cone. See *How the projection works* below
 - **Report Card** — an age-adjusted A+…F grade versus your own back catalogue,
   with "beats X% of your uploads" and tailored tips
 - **Account breakdown** — lifetime totals and per-post averages
@@ -93,6 +97,32 @@ and they all follow the same rules so they read the same way:
   that shows every video at once. The newest upload is called out by size *and* a
   written label, not colour alone, because several themes are deliberately
   monochromatic.
+
+**How the projection works**
+
+It doesn't guess, it counts. Curve fitting was tried first and abandoned: a launch is
+S-shaped — it crawls while the platform decides whether to surface it, then climbs — and
+every growth curve fitted the tail well and the first hours badly, which is the half that
+matters. So instead, the launches already recorded say what share of a post's 48-hour
+total had usually arrived by hour X. Today's count divided by that share is the estimate.
+
+The margin is measured rather than assumed. Each recorded launch is left out in turn and
+predicted from the others, and the worst miss becomes the band — so an account whose posts
+behave alike gets a tight range and one whose posts vary gets a wide one, from its own
+data. Four rules keep it honest:
+
+- **Nothing under four hours.** The leave-one-out error reached −90% there. It says so
+  plainly rather than showing a range wide enough to be meaningless.
+- **Nothing when the account is too varied** to call within about half. Same reasoning.
+- **Reference curves with holes are thrown away.** Two videos look flat from 6h to 24h and
+  then double; that is the sampling gap from before the Worker's window widened from 6
+  hours to 48, not behaviour, and treating it as real would under-call every launch after.
+- **The low end never sits below the count already banked**, and the band is never
+  narrower than the resolution the validation itself had.
+
+Accuracy on the curves recorded so far: ±19% at six hours, ±11% at twelve, ±2% by
+eighteen. `node scripts/plateau.test.mjs` lifts the model straight out of the page and
+pins those properties.
 
 **Compare** (the third page)
 

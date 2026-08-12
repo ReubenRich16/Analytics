@@ -392,6 +392,31 @@
   .hbar-row .hfill { height:100%; background:var(--accent); border-radius:0 4px 4px 0; min-width:2px; }
   .hbar-row .hval { flex:0 0 92px; text-align:right; font-family:var(--f-mono); font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .dnote { font-size:11px; color:var(--muted); line-height:1.5; }
+
+  /* Plateau projection — how far a launch has come, and where it is heading.
+     One hue with two treatments, never two hues. The obvious encoding is
+     --live for recorded and --gold for projected, and it fails: across the
+     fourteen themes that pair drops to ΔE 10.6 for normal vision in `honey`
+     (and 14.8 in rosenight), well under the separation floor. Solidity,
+     dashing and lightness are the channels every theme keeps, so those carry
+     the distinction and the hue never has to. */
+  .pjbar { display:flex; flex-direction:column; gap:8px; }
+  .pjtop { display:flex; justify-content:space-between; align-items:baseline; gap:12px; font-size:13px; }
+  .pjtop b { color:var(--text); font-family:var(--f-num); font-variant-numeric:tabular-nums; }
+  .pjtop .pjaim { color:var(--muted); font-family:var(--f-num); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .pjtrack { position:relative; height:22px; background:var(--ink); border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  /* the pale block is where it is likely to end; the solid fill is what is already in.
+     lo is clamped to never fall below the current count, so a strip of bare track
+     always separates the two — the 2px surface gap, earned by the geometry. */
+  .pjband { position:absolute; top:0; bottom:0; background:var(--live); opacity:.22; }
+  .pjfill { position:absolute; top:0; bottom:0; left:0; background:var(--live); border-radius:0 6px 6px 0; min-width:3px; }
+  .pjtick { position:absolute; top:0; bottom:0; width:2px; background:var(--text); opacity:.85; }
+  .pjnote { font-size:11px; color:var(--muted); line-height:1.5; }
+  .pjline { font-size:13.5px; line-height:1.6; color:var(--muted); margin-top:10px; }
+  .pjline b { color:var(--text); font-family:var(--f-num); font-variant-numeric:tabular-nums; }
+  .pjtabs { margin-bottom:12px; }
+  .pjtabs button { flex:none; min-width:0; padding:6px 13px; }
+
   .loading { color:var(--muted); font-size:12px; font-family:'IBM Plex Mono',monospace; padding:8px 0; }
 
   /* ---- detail drawer: persistent right-side panel ---- */

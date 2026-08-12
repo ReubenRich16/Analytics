@@ -740,6 +740,261 @@
     }
   }
 
+  /* ---------- plateau projection: where is this one heading? ----------
+     No curve fitting. Every growth curve tried here fit the tail well and the first
+     hours badly, because a launch is S-shaped: it crawls while the algorithm decides
+     whether to push it, then climbs. So this counts instead. The finished launches the
+     Worker has already recorded say what share of a post's 48-hour total had usually
+     arrived by hour X; today's count divided by that share is the estimate, and the
+     spread between the account's own posts is the margin.
+
+     Validated by leaving each recorded curve out and predicting it from the others:
+     the error reached −90% before 4 hours, −16% at 6, −10% at 12 and ±2% by 18. Hence
+     PJ_MIN_AGE — under four hours the honest answer is that nobody can tell, and the
+     card says so rather than showing a range so wide it still reads as a prediction. */
+  const PJ_HORIZON = 48 * 60;   // minutes — the launch window the Worker records in full
+  const PJ_MIN_AGE = 4 * 60;
+  const PJ_COVER = 44 * 60;     // a reference curve has to almost reach the horizon
+  const PJ_GAP = 120;           // minutes — a bigger hole is a recording artefact, not behaviour
+  const PJ_MIN_REFS = 2;
+  // The margin measured on the first three curves that ever finished, keyed by age.
+  // Used only until there are enough recorded launches to measure the error live (see
+  // pjError) — with two references the spread between them is all there is, and two
+  // curves can agree by luck, so a ±3% band on a four-hour-old post would be a lie.
+  const PJ_FLOOR = [[240, .34], [360, .19], [720, .11], [1080, .03], [PJ_HORIZON, .01]];
+
+  // views at age t (minutes), linearly interpolated; null before the curve starts
+  function pjAt(c, t) {
+    if (!c || !c.length || t < c[0][0]) return null;
+    let prev = c[0];
+    for (const p of c) {
+      if (p[0] <= t) { prev = p; continue; }
+      return prev[1] + (p[1] - prev[1]) * (t - prev[0]) / Math.max(1, p[0] - prev[0]);
+    }
+    return prev[1];
+  }
+  // A finished launch, usable as a reference. Three rejections, all load-bearing: a curve
+  // that starts late is missing exactly the hours being predicted; a curve with a hole in
+  // it is a recording artefact rather than behaviour, and treating the hole as real would
+  // badly under-call everything after it; and a curve too small for a ratio to survive
+  // rounding.
+  function pjRef(c) {
+    if (!c || c.length < 8 || c[0][0] > 45) return null;
+    let last = c[0][0];
+    for (const p of c) {
+      if (p[0] > PJ_HORIZON) break;
+      if (p[0] - last > PJ_GAP) return null;
+      last = p[0];
+    }
+    if (last < PJ_COVER) return null;
+    const final = pjAt(c, PJ_HORIZON);
+    return final >= 25 ? { c, final } : null;
+  }
+  const pjMed = a => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const pjShares = (refs, t) => refs.map(r => pjAt(r.c, t) / r.final).filter(s => s > .02 && s <= 1.001);
+  function pjFloorAt(t) {
+    let prev = PJ_FLOOR[0];
+    for (const p of PJ_FLOOR) {
+      if (t <= p[0]) return prev[1] + (p[1] - prev[1]) * Math.max(0, Math.min(1, (t - prev[0]) / Math.max(1, p[0] - prev[0])));
+      prev = p;
+    }
+    return prev[1];
+  }
+  // the age at which a typical launch already holds 90% of its 48-hour total —
+  // what "most of the rest arrives in the next …" is counting down to
+  function pjSettle(refs) {
+    for (let t = 60; t <= PJ_HORIZON; t += 30) { const s = pjShares(refs, t); if (s.length && pjMed(s) >= .9) return t; }
+    return PJ_HORIZON;
+  }
+  const pjDur = m => m >= 150 ? Math.round(m / 60) + ' hours' : m >= 75 ? '2 hours' : m >= 45 ? 'hour' : Math.max(5, Math.round(m / 5) * 5) + ' minutes';
+  // The margin is measured, not assumed. Each reference is left out in turn, its own
+  // 48-hour total predicted from the median of the others at this age, and the worst miss
+  // kept — the leave-one-out error of this exact model on this exact account. So the band
+  // widens by itself for a channel whose launches vary and tightens for one whose don't,
+  // instead of trusting PJ_FLOOR, which is only the error measured on the first three
+  // curves that ever finished. The spread of the references alone is not enough: with a
+  // handful of curves the next one lands outside their min-max about as often as inside.
+  // Leave-one-out flatters itself: the curve it holds back is the one the remaining
+  // references can see least of, so its miss understates the miss on a video that was
+  // never in the set at all. Measured on synthetic accounts, 1.6 is where the held-out
+  // curve stops escaping its own band; below that the extreme member of a four-curve
+  // account slips out by about a percent.
+  const PJ_SAFETY = 1.6;
+  function pjError(refs, age) {
+    if (refs.length < PJ_MIN_REFS + 1) return null;   // needs two others to leave one out
+    let worst = 0;
+    for (let i = 0; i < refs.length; i++) {
+      const sh = pjShares(refs.filter((_, j) => j !== i), age);
+      const own = pjAt(refs[i].c, age);
+      if (sh.length < PJ_MIN_REFS || !(own > 0)) return null;
+      worst = Math.max(worst, Math.abs(own / pjMed(sh) / refs[i].final - 1));
+    }
+    return worst * PJ_SAFETY;
+  }
+  function pjProject(refs, age, views) {
+    if (!refs || refs.length < PJ_MIN_REFS) return { state: 'nomodel' };
+    if (age >= PJ_HORIZON) return { state: 'done' };
+    if (age < PJ_MIN_AGE) return { state: 'early' };
+    if (!(views > 0)) return { state: 'early' };
+    const sh = pjShares(refs, age);
+    if (sh.length < PJ_MIN_REFS) return { state: 'nomodel' };
+    const med = pjMed(sh), mid = views / med;
+    const err = pjError(refs, age);
+    // a range this wide is not a prediction, it is a shrug with a number attached
+    if (err != null && err > .45) return { state: 'loose' };
+    // the band is the spread of the reference shares, widened to whichever margin the
+    // model has actually earned at this age
+    // never narrower than the resolution the validation itself had: a ±0.2% band on a
+    // view count is false precision, and counts jitter by more than that on their own
+    const fl = Math.max(mid * (err != null ? err : pjFloorAt(age)), mid * .015, 3);
+    const lo = Math.max(views, Math.round(Math.min(views / Math.max(...sh), mid - fl)));
+    const hi = Math.round(Math.max(views / Math.min(...sh), mid + fl, lo + 1));
+    return {
+      state: 'ok', med, mid: Math.round(mid), lo, hi,
+      pct: Math.max(0, Math.min(1, views / mid)), rest: Math.max(0, pjSettle(refs) - age)
+    };
+  }
+
+  // Option C — the launch as progress toward its own finish. The track's full length is
+  // the optimistic end of the range, so the pale block always meets the right edge and
+  // the eye reads "how much of the bar is filled" as "how far along this is".
+  function pjBarHtml(p, views) {
+    const pc = v => Math.max(0, Math.min(100, v / p.hi * 100));
+    return '<div class="pjbar">' +
+      '<div class="pjtop"><b>' + fmt.format(views) + ' views so far</b>' +
+      '<span class="pjaim">heading for ~' + fmt.format(p.mid) + '</span></div>' +
+      '<div class="pjtrack">' +
+        '<div class="pjband" style="left:' + pc(p.lo).toFixed(1) + '%;width:' + (pc(p.hi) - pc(p.lo)).toFixed(1) + '%"></div>' +
+        '<div class="pjfill" style="width:' + pc(views).toFixed(1) + '%"></div>' +
+        '<div class="pjtick" style="left:' + pc(p.mid).toFixed(1) + '%"></div>' +
+      '</div>' +
+      // never round up to a flat 100 while the projection still expects more to arrive —
+      // "100% of the way there · most of the rest lands in the next 3 hours" is nonsense
+      '<div class="pjnote">about ' + (views >= p.mid ? 100 : Math.min(99, Math.round(p.pct * 100))) + '% of the way there' +
+      (p.rest > 0 ? ' · most of the rest lands in the next ' + pjDur(p.rest) : ' · past the point where a typical launch has settled') +
+      '</div></div>';
+  }
+
+  // Option B — the same answer as a sentence, for where a chart would not fit
+  function pjSentenceHtml(p) {
+    return '<p class="pjline">Heading for about <b>' + fmt.format(p.mid) + ' views</b> in its first 48 hours — likely ' +
+      fmt.format(p.lo) + ' to ' + fmt.format(p.hi) + '. ' +
+      (p.rest > 0 ? 'Most of the rest arrives in the next ' + pjDur(p.rest) + '.' : 'It is already past the point where a typical launch has settled.') +
+      '</p>';
+  }
+
+  // Option A — the recorded curve carried forward. One hue throughout: solid for what was
+  // measured, dashed past the "now" rule for what is projected. The cone pinches to nothing
+  // at now and opens to the full range at 48h, because the uncertainty is in what is still
+  // to come, not in what was already counted.
+  function pjCurveHtml(curve, refs, p, age, views) {
+    const w = 620, h = 190, L = 66, R = 18, T = 18, B = 30, base = h - B;
+    const sc = niceScale(0, p.hi, 4);
+    const X = t => L + (w - L - R) * Math.max(0, Math.min(1, t / PJ_HORIZON));
+    const Y = v => base - (base - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
+    let frame = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) frame += '<line class="grid-line" x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (w - R) + '" y2="' + y.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
+    }
+    frame += '<line class="axis-line" x1="' + L + '" y1="' + base + '" x2="' + (w - R) + '" y2="' + base + '"/>';
+    for (const hh of [0, 12, 24, 36, 48]) frame += '<text class="ax" x="' + X(hh * 60).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="' +
+      (hh === 0 ? 'start' : hh === 48 ? 'end' : 'middle') + '">' + hh + 'h</text>';
+    // the recorded side, thinned to something a path string can carry
+    const rec = (curve || []).filter(pt => pt[0] <= age + 1 && pt[1] != null);
+    const step = Math.max(1, Math.ceil(rec.length / 180));
+    const thin = rec.filter((_, i) => i % step === 0);
+    if (rec.length && thin[thin.length - 1] !== rec[rec.length - 1]) thin.push(rec[rec.length - 1]);
+    let d = '';
+    thin.forEach((pt, i) => { d += (i ? ' L' : 'M') + X(pt[0]).toFixed(1) + ',' + Y(pt[1]).toFixed(1); });
+    if (d) d += ' L' + X(age).toFixed(1) + ',' + Y(views).toFixed(1);
+    // u(t) is the fraction of the REMAINING share that a typical launch has taken in by t,
+    // so every projected line leaves the recorded endpoint exactly and none of them jump
+    const u = t => { const s = pjShares(refs, t); return s.length ? Math.max(0, Math.min(1, (pjMed(s) - p.med) / (1 - p.med || 1))) : 0; };
+    const steps = [];
+    for (let i = 0; i <= 24; i++) steps.push(age + (PJ_HORIZON - age) * i / 24);
+    const seg = target => steps.map((t, i) => (i ? ' L' : 'M') + X(t).toFixed(1) + ',' + Y(views + (target - views) * u(t)).toFixed(1)).join('');
+    const cone = seg(p.hi) + steps.slice().reverse().map(t => ' L' + X(t).toFixed(1) + ',' + Y(views + (p.lo - views) * u(t)).toFixed(1)).join('') + ' Z';
+    const nx = X(age).toFixed(1);
+    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' +
+      esc('Views recorded to ' + Math.round(age / 60) + ' hours old, then projected toward about ' + fmt.format(p.mid) + ' by 48 hours') + '">' +
+      frame +
+      // stroked as well as filled: at twelve hours the range is only a few percent of the
+      // plot's height, and a fill that faint at that size is not a mark, it is a smudge
+      '<path d="' + cone + '" style="fill:var(--live);opacity:.16;stroke:var(--live);stroke-opacity:.4;stroke-width:1"/>' +
+      '<path d="' + seg(p.mid) + '" style="fill:none;stroke:var(--live);stroke-width:2;stroke-dasharray:6 5;opacity:.8"/>' +
+      '<line class="refline" x1="' + nx + '" y1="' + T + '" x2="' + nx + '" y2="' + base + '"/>' +
+      (d ? '<path class="line" d="' + d + '" style="fill:none;stroke:var(--live);stroke-width:2.4"/>' : '') +
+      '<circle cx="' + nx + '" cy="' + Y(views).toFixed(1) + '" r="4.5" style="fill:var(--live);stroke:var(--ink);stroke-width:2"/>' +
+      '<text class="ax" x="' + (X(age) + 6).toFixed(1) + '" y="' + (T + 10) + '">now</text>' +
+      '<text class="val" x="' + (w - R) + '" y="' + Math.max(T + 10, Y(p.mid) - 9).toFixed(1) + '" text-anchor="end">~' + esc(axisNum(p.mid)) + '</text>' +
+      '</svg>';
+  }
+
+  // The Worker stores absolute timestamps; the model works in minutes since posting.
+  function pjCurveOf(id, createTime, rec) {
+    const t0 = (createTime || 0) * 1000;
+    if (!t0 || !rec || !Array.isArray(rec.s) || !rec.s.length) return null;
+    const out = [];
+    for (const s of rec.s) { const a = Math.round((s[0] - t0) / 60000); if (a >= 0) out.push([a, s[1]]); }
+    return out.length ? out.sort((a, b) => a[0] - b[0]) : null;
+  }
+
+  // Progress by default, the curve one tap away. Not persisted — like the other view
+  // switches here it resets each visit.
+  let pjView = 'bar', pjCur = null;
+  function pjBodyHtml(p, views, curve, refs, age) {
+    if (p.state === 'early') return '<p class="dnote">Too early to call where this one lands — under four hours the estimate was out by as much as 90% when tested against your own finished posts. Check back once it is a few hours old.</p>';
+    if (p.state === 'loose') return '<p class="dnote">Not callable yet — your posts vary enough that at this age the estimate could still be out by more than half. It sharpens over the next few hours.</p>';
+    if (p.state === 'nomodel') return '<p class="dnote">Not enough complete launches recorded yet to say where this one lands. Your Worker keeps the first 48 hours of every post — once two of them are complete and gap-free, the projection appears here.</p>';
+    if (p.state === 'done') {
+      const f = curve ? pjAt(curve, PJ_HORIZON) : null;
+      if (f == null) return '<p class="dnote">Past its first 48 hours, so the launch projection has retired.</p>';
+      const settled = Math.round(f);
+      return '<p class="pjline">Its launch window is over — it took <b>' + fmt.format(settled) + ' views</b> in its first 48 hours' +
+        (views > settled ? ', and has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>';
+    }
+    return '<div class="range-row pjtabs">' +
+        '<button class="ghost' + (pjView === 'curve' ? '' : ' active') + '" data-pj="bar">Progress</button>' +
+        '<button class="ghost' + (pjView === 'curve' ? ' active' : '') + '" data-pj="curve">Curve</button>' +
+      '</div>' +
+      (pjView === 'curve'
+        ? pjCurveHtml(curve, refs, p, age, views) +
+          '<p class="dnote" style="margin-top:6px">Solid is what was recorded. Dashed is where it is heading, and the shaded band is the range — it narrows as the post matures, because the projection is recomputed on every sample.</p>'
+        : pjBarHtml(p, views)) +
+      pjSentenceHtml(p);
+  }
+  function renderProjection(v) {
+    const el = $('pjWrap');
+    if (!el) return;
+    pjCur = v || pjCur;
+    v = pjCur;
+    if (!v || !v.create_time) { el.innerHTML = ''; return; }
+    const age = Math.max(0, Math.round((Date.now() - v.create_time * 1000) / 60000));
+    const vids = (hist && hist.videos) || {};
+    const refs = [];
+    // the post being projected never votes on its own share curve
+    for (const [id, rec] of Object.entries(vids)) {
+      if (id === v.id) continue;
+      const r = pjRef(pjCurveOf(id, rec && rec.create_time, rec));
+      if (r) refs.push(r);
+    }
+    const curve = pjCurveOf(v.id, v.create_time, vids[v.id]);
+    const p = pjProject(refs, age, v.view_count || 0);
+    if (p.state === 'done' && !curve) { el.innerHTML = ''; return; } // nothing useful to say
+    el.innerHTML = '<div class="dsection"><h4>Where this one is heading</h4>' +
+      '<p class="explain">No guessing: your finished launches already say what share of a post’s first-48-hour total has usually arrived by this age. Today’s count divided by that share is the estimate, and the spread between your own posts is the margin.</p>' +
+      pjBodyHtml(p, v.view_count || 0, curve, refs, age) + '</div>';
+  }
+  // delegated, because the block redraws itself on every poll
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-pj]') : null;
+    if (!b) return;
+    pjView = b.dataset.pj;
+    renderProjection();
+  });
+
   /* ---------- latest post + minute race ---------- */
   let slotIdx = 0;
   const recent = () => videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0)).slice(0, 4);
@@ -760,7 +1015,9 @@
     renderLatest(v);
   }
   function renderLatest(v) {
-    let html = '';
+    // filled by renderProjection() once the card is in the DOM — it is the first thing
+    // on the card because "where is this heading" is the question the card exists to answer
+    let html = '<div id="pjWrap"></div>';
     html += '<div class="metric-grid m8">' +
       mcell('Views', fmt.format(v.view_count || 0)) +
       mcell('Likes', fmt.format(v.like_count || 0)) +
@@ -804,6 +1061,7 @@
         '</div></div></div></div>';
     }
     $('latestContent').innerHTML = html;
+    renderProjection(v);
   }
 
   /* ---------- breakdown + coaching ---------- */
