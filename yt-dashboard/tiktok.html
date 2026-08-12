@@ -271,6 +271,31 @@
   const ageDays = v => Math.max(1 / 24, (Date.now() - v.create_time * 1000) / 864e5);
   const capOf = v => (v.title || v.video_description || '').trim() || '(no caption)';
   const paceOf = v => (v.view_count || 0) / ageDays(v);
+  /* The comparable figure for every post — see pjScore. Built once per render because it
+     needs the whole recorded history to project a launch that is still running, and cached
+     on the post id so the ranking helpers below can just look it up. Null for a post too
+     new to compare and not yet projectable; those abstain from rankings rather than being
+     counted as zero, which would punish them for being new. */
+  let scoreCache = null;
+  function buildScores() {
+    const vids = (hist && hist.videos) || {};
+    const refs = [], cands = [];
+    for (const [id, rec] of Object.entries(vids)) {
+      if (!rec || !rec.create_time) continue;
+      const c = pjCurveOf(id, rec.create_time, rec);
+      cands.push({ curve: c, age: Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000)) });
+      const r = pjRef(c); if (r) refs.push(r);
+    }
+    scoreCache = new Map();
+    for (const v of videos) {
+      const rec = vids[v.id], c = rec ? pjCurveOf(v.id, rec.create_time, rec) : null;
+      const ageM = Math.max(0, Math.round((Date.now() - v.create_time * 1000) / 60000));
+      scoreCache.set(v.id, pjScore(c, ageM, v.view_count || 0,
+        refs.filter(r => r.c !== c), cands.filter(cc => cc.curve !== c)));
+    }
+  }
+  const scoreOf = v => (scoreCache && scoreCache.has(v.id)) ? scoreCache.get(v.id) : null;
+  const scored = () => videos.filter(v => scoreOf(v) != null);
   const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
   const hashtagsOf = v => [...new Set(((v.title || '') + ' ' + (v.video_description || '')).toLowerCase().match(/#[\p{L}0-9_]+/gu) || [])];
   const fmtAgo = ts => {
@@ -766,6 +791,7 @@
       pollCount++;
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
+      buildScores();
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
       clearError();
       $('liveDot').classList.add('on');
@@ -997,32 +1023,40 @@
     };
   }
 
-  /* The age-fair reach figure: what a launch did, or is heading for, in its FIRST 48 HOURS.
+  /* The comparable figure for any video: a TOTAL over a comparable stretch of its own
+     life, rather than a total divided by how long it has been alive.
 
-     The metric it replaces was views divided by age in days, described on screen as
+     The metric this replaces was views divided by age in days, described on screen as
      "age-adjusted, so new and old compare fairly". It is neither. Views arrive on an
      S-curve, heavily front-loaded, so dividing by age does not remove age from the number
      — it inverts it. On this account's own recorded curves the SAME video reads 2,407
-     views/day six hours in and 19 views/day at sixty days. The day-one floor in the old
-     helper clamps what actually reached the screen to about a 40x swing, which is still
-     enough to rank a video top of the catalogue on its first morning and bottom of it two
-     months later on identical performance. Sixty per cent of the letter grade was that
-     number; on TikTok, where the floor is an hour rather than a day and there is no
-     engagement component to dilute it, all of it was.
+     views/day six hours in and 19 at sixty days. The day-one floor in the old helper
+     clamped what reached the screen to about a 40x swing, still enough to rank a video top
+     of the catalogue on its first morning and bottom of it two months later on identical
+     performance. Sixty per cent of the YouTube letter grade was that number; on TikTok,
+     where the floor was an hour and nothing diluted it, all of it was.
 
-     A first-48-hours total has no such problem, because every video is measured over the
-     same stretch of its own life. Recorded where the curve reaches the horizon, projected
-     while the launch is still running, and null where neither is possible — null being the
-     honest answer for a video that was never recorded, rather than a number that is really
-     a clock. */
-  function pj48(curve, age, views, refs, cands) {
-    if (curve && pjClean(curve) >= PJ_COVER) return pjAt(curve, PJ_HORIZON);
-    if (age < PJ_HORIZON) {
-      const p = pjProject(refs, age, views, cands);
-      if (p.state === 'ok') return p.mid;
-    }
-    return null;
+     Past the launch window the answer is simply the lifetime count. That works because the
+     launch IS almost all of it: on the recorded curves the tail after hour 48 adds well
+     under half a per cent a day, so a video's total is its launch total plus a slow
+     trickle. Inside the window the count is not comparable yet, so the projection stands
+     in for it, and where even that is unavailable the answer is null — unknown, not a
+     guess.
+
+     One residual bias, stated rather than hidden: an older video carries more of that slow
+     tail, so it scores a little higher than an equivalent new one — roughly a quarter over
+     two months. That runs OPPOSITE to the bias it replaces and is two orders of magnitude
+     smaller, and it becomes measurable, and correctable, once the cold tail has been
+     recording for a few weeks. Deliberately NOT mixing in the recorded 48-hour total where
+     one happens to exist: that would score recorded videos on the launch alone and
+     unrecorded ones on launch-plus-tail, making the ranking depend on which videos the
+     Worker happened to be running for. */
+  function pjScore(curve, age, views, refs, cands) {
+    if (age >= PJ_HORIZON) return views > 0 ? views : null;
+    const p = pjProject(refs, age, views, cands);
+    return p.state === 'ok' ? p.mid : null;
   }
+
   // Percentile within a pool, plus the pool size — the size is half the answer, because
   // "beats 100%" of two things is not the same claim as "beats 100%" of eighty.
   //
@@ -1259,21 +1293,8 @@
        is a ratio of views and so is not affected by age at all. */
     const others = videos.filter(x => x.id !== v.id);
     if (others.length >= 3) {
-      const vids2 = (hist && hist.videos) || {};
-      const refs = [], cands = [];
-      for (const [id, rec] of Object.entries(vids2)) {
-        if (!rec || !rec.create_time) continue;
-        const c = pjCurveOf(id, rec.create_time, rec);
-        cands.push({ curve: c, age: Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000)) });
-        const r = pjRef(c); if (r) refs.push(r);
-      }
-      const r48Of = x => {
-        const rec2 = vids2[x.id], c = rec2 ? pjCurveOf(x.id, rec2.create_time, rec2) : null;
-        const ageM = Math.max(0, Math.round((Date.now() - x.create_time * 1000) / 60000));
-        return pj48(c, ageM, x.view_count || 0, refs.filter(r => r.c !== c), cands.filter(cc => cc.curve !== c));
-      };
-      const mine = r48Of(v);
-      const pool = videos.map(r48Of).filter(x => x != null);
+      const mine = scoreOf(v);
+      const pool = videos.map(scoreOf).filter(x => x != null);
       const rank = pool.length >= 4 ? pjRank(pool, mine) : null;
       const engs = others.map(engOf).sort((a, b) => a - b);
       const engRank = pjRank(videos.map(engOf), engOf(v));
@@ -1285,14 +1306,14 @@
       const idx = Math.round(engOf(v) / medEng * 100);
       html += '<div class="dsection"><h4>Report card</h4><p class="explain">' +
         (rank
-          ? 'Each post\u2019s first-48-hour total against the ' + rank.n + ' launches recorded so far, so a new post and an old one are measured over the same stretch of their own lives.'
-          : 'Engagement rate only \u2014 likes per view, which age does not touch. Reach is left out until four launches have been recorded end to end; ranking it before then would be ranking by recency, not by reach.') +
+          ? 'Reach compares totals, not speeds: each post\u2019s own view count once its launch is over, and the projected first-48-hour total while one is still running. Ranked against ' + rank.n + ' of your posts.'
+          : 'Engagement rate only \u2014 likes per view, which age does not touch. Reach needs at least four comparable posts.') +
         '</p>' +
         '<div class="reportcard"><div class="grade-badge" style="background:' + col + '">' + grade + '</div>' +
         '<div class="grade-meta"><div class="big">Beats ' + beats + '% of your ' +
-        (rank ? rank.n + ' recorded launches' : 'posts on engagement') + '</div>' +
+        (rank ? rank.n + ' posts' : 'posts on engagement') + '</div>' +
         '<div class="grade-bars">' +
-        (rank ? '<div class="gbar"><span class="gl">First 48h</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(rank.pct)) + '%;background:' + col + '"></span></span><span class="gv">' + fmt.format(Math.round(mine)) + ' views</span></div>' : '') +
+        (rank ? '<div class="gbar"><span class="gl">Reach</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(rank.pct)) + '%;background:' + col + '"></span></span><span class="gv">' + fmt.format(Math.round(mine)) + ' views</span></div>' : '') +
         '<div class="gbar"><span class="gl">Engagement</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
         '</div></div></div></div>';
     }
@@ -1309,7 +1330,7 @@
       views: a.views + (v.view_count || 0), likes: a.likes + (v.like_count || 0),
       comments: a.comments + (v.comment_count || 0), shares: a.shares + (v.share_count || 0)
     }), { views: 0, likes: 0, comments: 0, shares: 0 });
-    const paces = videos.map(paceOf).sort((a, b) => a - b);
+    const paces = videos.map(scoreOf).filter(x => x != null).sort((a, b) => a - b);
     let html = '<div class="dsection"><h4>Totals</h4><p class="explain">Across the ' + n + ' posts the API returns.</p><div class="metric-grid m8">' +
       mcell('Posts', fmt.format(n)) +
       mcell('Followers', fmt.format(me.follower_count || 0)) +
@@ -1330,11 +1351,11 @@
       mcell('Comments /1k', (t.views ? t.comments / t.views * 1000 : 0).toFixed(1)) +
       mcell('Share rate', (t.views ? t.shares / t.views * 100 : 0).toFixed(2) + '%') +
       '</div></div>';
-    const top = videos.slice().sort((a, b) => paceOf(b) - paceOf(a));
-    html += section('Top 5 posts (by views/day)', 'A pace, not a fair ranking \u2014 a recent post scores high here simply for being recent. The Report card on any post compares first-48-hour totals instead.',
-      hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(paceOf(v)), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--up)' }));
+    const top = scored().sort((a, b) => scoreOf(b) - scoreOf(a));
+    html += section('Top 5 posts', 'By total views \u2014 or the projected first-48-hour total while a launch is still running, so a new post can appear here on merit rather than on being new.',
+      hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(scoreOf(v)), valText: fmt.format(Math.round(scoreOf(v))) + ' views' })), { color: 'var(--up)' }));
     if (top.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical post.',
-      hbarList(top.slice(-5).reverse().map(v => ({ label: capOf(v), val: Math.max(1, Math.round(paceOf(v))), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--down)' }));
+      hbarList(top.slice(-5).reverse().map(v => ({ label: capOf(v), val: Math.max(1, Math.round(scoreOf(v))), valText: fmt.format(Math.round(scoreOf(v))) + ' views' })), { color: 'var(--down)' }));
     el.innerHTML = html;
   }
 
@@ -1385,7 +1406,7 @@
   function renderCoaching() {
     const el = $('coachContent');
     if (videos.length < 4) { el.innerHTML = '<p class="dnote">Once a few posts are tracked, personalised coaching appears here.</p>'; return; }
-    const rows = videos.map(v => ({ d: new Date(v.create_time * 1000), pace: paceOf(v), tags: hashtagsOf(v) }));
+    const rows = scored().map(v => ({ d: new Date(v.create_time * 1000), pace: scoreOf(v), tags: hashtagsOf(v) }));
     const avgBy = (keyfn) => {
       const g = {};
       for (const r of rows) { const k = keyfn(r); (g[k] = g[k] || []).push(r.pace); }
@@ -1425,10 +1446,10 @@
     const caps = videos.map(capOf).filter(c => c !== '(no caption)');
     const L = [];
     if (caps.length) L.push('Recent captions: ' + caps.slice(0, 12).map(c => '"' + c + '"').join('; ') + '.');
-    const top = videos.slice().sort((a, b) => paceOf(b) - paceOf(a)).slice(0, 8).map(capOf);
+    const top = scored().sort((a, b) => scoreOf(b) - scoreOf(a)).slice(0, 8).map(capOf);
     if (top.length) L.push('Best-performing captions (mimic what works): ' + top.map(c => '"' + c + '"').join('; ') + '.');
     const tagMap = {};
-    for (const v of videos) for (const t of hashtagsOf(v)) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += paceOf(v); }
+    for (const v of scored()) for (const t of hashtagsOf(v)) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += scoreOf(v); }
     const tags = Object.entries(tagMap).map(([t, e]) => ({ t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 20);
     if (tags.length) L.push('Best hashtags by average views/day: ' + tags.map(x => x.t).join(', ') + '.');
     const avgLen = caps.length ? Math.round(caps.reduce((a, c) => a + c.length, 0) / caps.length) : 0;
@@ -1464,7 +1485,7 @@
   $('signInBtn').addEventListener('click', () => signIn(false));
   $('switchAcctBtn').addEventListener('click', () => signIn(true));
   $('signOutBtn').addEventListener('click', () => signOut());
-  $('refreshBtn').addEventListener('click', () => { if (session) { pullHistory().then(() => { renderTable(); showSlot(slotIdx); }); poll(true); } });
+  $('refreshBtn').addEventListener('click', () => { if (session) { pullHistory().then(() => { buildScores(); renderTable(); showSlot(slotIdx); }); poll(true); } });
   $('pauseBtn').addEventListener('click', () => {
     paused = !paused;
     $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';

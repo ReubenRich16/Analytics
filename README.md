@@ -151,15 +151,28 @@ A **127× swing on unchanged performance**. The YouTube page floored age at one 
 clamped what actually reached the screen to around **40×**; the TikTok page floored it at
 one hour and had no engagement component to dilute it, so its grade was worse.
 
-Both cards now rank on the **first-48-hour total** — recorded where the Worker has the
-curve, projected while the launch is still running, and *absent* where neither is possible,
-which is the honest answer for a video that was never recorded rather than a number that is
-really a timestamp. Percentiles count ties as half, so an account whose posts all sit at
-the same rate reads as typical rather than as bottom of its own catalogue.
+Every ranking on both dashboards now compares **totals over a comparable stretch of each
+video's life** instead. Past its launch window that is simply the video's own view count,
+which works because the launch *is* almost all of it — on the recorded curves the tail
+after hour 48 adds well under half a percent a day. While a launch is still running the
+count is not comparable yet, so the projected 48-hour total stands in; and where even that
+cannot be made, the answer is **null**, and the video abstains from the ranking rather than
+being scored zero for being new.
 
-Anything still labelled **views/day** — the table column, the sort, Top 5 — is a pace and
-now says so. It is useful for "what is moving right now" and useless for "which of these
-was better", and the copy no longer claims otherwise.
+One residual bias, stated rather than hidden: an older video carries more of that slow
+tail, so it scores a little high — roughly a quarter over two months. That runs *opposite*
+to the bias it replaces and is two orders of magnitude smaller, and the cold tail will make
+it measurable within a few weeks.
+
+That one metric feeds all of it: both Report Cards, best day and best time to post, Top 5,
+your hits vs the rest, the "typical upload" bar, the tag and hashtag rankings — and so the
+Idea Studio prompt, which was previously handing the AI a recency-sorted tag list.
+Percentiles count ties as half, so an account whose posts all sit at the same rate reads as
+typical rather than as the bottom of its own catalogue.
+
+**Views/day still exists** on the table column, its sort, and the per-post metric cell. It
+is a pace — the right answer to "what is moving right now" and the wrong answer to "which
+of these was better" — and nothing labels it as anything else any more.
 
 **Compare** (the third page)
 
