@@ -2625,7 +2625,12 @@
     const others = rows.filter(r => r.id !== latestVid);
     const pool = others.map(o => o.score).filter(v => v != null);
     const rk = pjRank(pool, me.score);
-    if (!rk) return null;
+    // Every other branch here returns {h,f,p}, and paintAnswer reads those OUTSIDE its
+    // try/catch — so returning null would throw uncaught and freeze the whole answer card,
+    // not just this chip.
+    if (!rk) return { h: 'Too early to compare.', f: fmt.format(perVideo[latestVid].views) + ' views',
+      p: '“' + title + '” is only ' + Math.round(ageD) + ' day' + (Math.round(ageD) === 1 ? '' : 's') +
+         ' old — too new to measure against the others, and not enough finished launches yet to project where it lands.' };
     const beats = Math.round(rk.pct);
     const verdict = beats >= 80 ? 'It landed well.' : beats >= 50 ? 'It’s doing fine.' : beats >= 25 ? 'It’s under your usual.' : 'It’s struggling.';
     return { h: verdict, f: 'Beats ' + beats + '%', p: '“' + title + '” is ahead of ' + beats + '% of your other ' + rk.n + ' videos on total views' + (me.score > (perVideo[me.id] || {}).views ? ' (projected, it is still climbing)' : '') + '.' };
