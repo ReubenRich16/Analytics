@@ -11,7 +11,7 @@ import fs from 'fs';
 const HERE = new URL('.', import.meta.url).pathname;
 const src = fs.readFileSync(HERE + 'worker.js', 'utf8')
   .replace(/export default\s*\{/, 'const HANDLER = {') +
-  '\nexport { HANDLER, tick, loadState, callGemini, KV_KEY, RUN_COOLDOWN };';
+  '\nexport { HANDLER, tick, ttTick, loadState, callGemini, KV_KEY, RUN_COOLDOWN };';
 const tmp = HERE + '.worker-resilience.mjs';
 fs.writeFileSync(tmp, src);
 const W = await import(tmp);
@@ -225,6 +225,63 @@ console.log('\n6. /run is rate limited');
       ENV(mockKV({ 'minute-v1': GOOD_STATE }), mockDB()));
     check('and it does not affect any other route', other.status !== 429, other.status);
   } finally { globalThis.fetch = realFetch; }
+}
+
+console.log('\n7. one TikTok account cannot take down the others');
+{
+  /* Both snapshot writes were unwrapped awaits inside `for (const openId of list)`, so a
+     single KV 429 on the first account threw out of ttTick and the second was never
+     sampled that minute. The account that loses the launch minute is the one that did
+     nothing wrong, and a launch minute cannot be taken again. */
+  const CT = Math.floor((NOW - 3600e3) / 1000);           // one hot post, an hour old
+  const listed = { data: { has_more: false, cursor: 0, videos: [{ id: 'p1', title: 't', create_time: CT,
+    view_count: 10, like_count: 1, comment_count: 0, share_count: 0, cover_image_url: '' }] } };
+
+  // KV that fails only for account A's snapshot — every other key behaves
+  function splitKV(badKey, mode) {
+    const m = new Map([['tt:accounts', JSON.stringify(['A', 'B'])],
+      ['tt:tok:A', JSON.stringify({ access_token: 'x', expires_at: NOW + 9e6, refresh_token: 'r' })],
+      ['tt:tok:B', JSON.stringify({ access_token: 'y', expires_at: NOW + 9e6, refresh_token: 'r' })]]);
+    let puts = 0;
+    return { m, puts: () => puts,
+      async get(k) { if (mode === 'get' && k === badKey) throw new Error('KV GET failed'); return m.get(k) ?? null; },
+      async put(k, v) { if (mode === 'put' && k === badKey) throw new Error('KV PUT failed: limit'); puts++; m.set(k, v); } };
+  }
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  globalThis.fetch = async (u) => {
+    const s = String(u);
+    if (/oauth\/token/.test(s)) return { ok: true, status: 200, json: async () => ({ access_token: 'x', expires_in: 8000 }) };
+    if (/user\/info/.test(s)) return { ok: true, status: 200, json: async () => ({ data: { user: { follower_count: 5, likes_count: 1, video_count: 1 } } }) };
+    return { ok: true, status: 200, json: async () => listed };
+  };
+  // a fresh snapshot has no hot roster, so the scan only runs on a SCAN_MIN boundary
+  const onScan = new Date(NOW); onScan.setUTCMinutes(5, 0, 0);
+  Date.now = () => onScan.getTime();
+  const TT = { TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' };
+  try {
+    const kv = splitKV('tt:snap:A', 'put');
+    const r = await W.ttTick({ ...TT, MINUTE: kv, DB: mockDB() });
+    check('ttTick does not throw when one account\'s write fails', !!r && r.accounts === 2, JSON.stringify(r).slice(0, 140));
+    check('the healthy account is still written', kv.m.has('tt:snap:B'), [...kv.m.keys()].join(','));
+    check('and the failure is reported', (r.errors || []).some(e => /kv put/.test(e)), JSON.stringify(r.errors));
+    check('both accounts were sampled', r.sampled === 2, r.sampled);
+
+    // and a failed READ must not let the write blank that account's mirror
+    const kv2 = splitKV('tt:snap:A', 'get');
+    kv2.m.set('tt:snap:A', JSON.stringify({ updated: 1, videos: { old: { create_time: CT, title: 'kept', s: [[1, 1, 0, 0, 0]] } } }));
+    const before = kv2.m.get('tt:snap:A');
+    const r2 = await W.ttTick({ ...TT, MINUTE: kv2, DB: mockDB() });
+    check('a failed read leaves that account\'s snapshot untouched', kv2.m.get('tt:snap:A') === before);
+    check('and says so', (r2.errors || []).some(e => /kv read failed/.test(e)), JSON.stringify(r2.errors));
+    check('while the other account is written normally', kv2.m.has('tt:snap:B'));
+    check('D1 still gets both accounts\' samples', r2.sampled === 2, r2.sampled);
+
+    // nothing wrong: no errors field at all
+    const clean = splitKV('nothing', 'put');
+    const r3 = await W.ttTick({ ...TT, MINUTE: clean, DB: mockDB() });
+    check('a healthy run reports no errors', r3.errors === undefined, JSON.stringify(r3.errors));
+    check('and writes both snapshots', clean.m.has('tt:snap:A') && clean.m.has('tt:snap:B'));
+  } finally { globalThis.fetch = realFetch; Date.now = realNow; }
 }
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');

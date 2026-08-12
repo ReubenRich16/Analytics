@@ -1295,11 +1295,25 @@ async function ttTick(env) {
   const now = Date.now(), slot = Math.floor(now / 60000) * 60000;
   const hotMs = HOT_HOURS * 3600e3, cutoff = now - KEEP_DAYS * 864e5;
   let sampled = 0, wrote = 0, d1 = { skipped: 'nothing new' };
+  /* One account per iteration, and each iteration is isolated.
+     It was not: the two snapshot writes below were unwrapped awaits inside this loop, so a
+     single KV 429 or 5xx on the first account threw out of ttTick and the second account
+     was never sampled at all that minute. A launch minute cannot be taken again, and the
+     account that loses it is the one that did nothing wrong. Faults are collected per
+     account and reported instead. */
+  const errors = [];
   for (const openId of list) {
+   try {
     const token = await ttAccessToken(env, openId);
     if (!token) continue;
-    let snap = { videos: {} };
-    try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || 'null') || snap; } catch (e) {}
+    let snap = { videos: {} }, snapFailed = false;
+    // A failed READ is not an empty account — see loadState on the YouTube side for the
+    // same bug. Writing back after one would replace this account's mirror with a single
+    // minute of data, and re-run its backfill.
+    try {
+      const raw = await env.MINUTE.get('tt:snap:' + openId);
+      snap = JSON.parse(raw || 'null') || snap;
+    } catch (e) { snapFailed = true; }
     snap.videos = snap.videos || {};
     const before = JSON.stringify(snap.videos);
     const rosterBefore = rosterOf(snap.videos);
@@ -1355,10 +1369,12 @@ async function ttTick(env) {
     const healthChanged = snap.ttHealth !== health;
     if (healthChanged) { snap.ttHealth = health; snap.ttHealthAt = now; }
     if (fetchErr) {
-      if (healthChanged) {
+      if (healthChanged && !snapFailed) {
         snap.updated = now;
-        await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
-        wrote++;
+        try {
+          await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
+          wrote++;
+        } catch (e) { errors.push('kv put (health): ' + String((e && e.message) || e).slice(0, 90)); }
       }
       continue;
     }
@@ -1419,13 +1435,20 @@ async function ttTick(env) {
     const changed = JSON.stringify(snap.videos) !== before;
     const rosterChanged = rosterOf(snap.videos) !== rosterBefore;
     const due = now - (snap.updated || 0) >= KV_WRITE_MIN * 60000;
-    if (healthChanged || rosterChanged || acct.backfill || (acct.error && changed) || (changed && due)) {
+    if (!snapFailed && (healthChanged || rosterChanged || acct.backfill || (acct.error && changed) || (changed && due))) {
       snap.updated = now;
-      await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
-      wrote++;
+      try {
+        await env.MINUTE.put('tt:snap:' + openId, JSON.stringify(snap));
+        wrote++;
+      } catch (e) { errors.push('kv put: ' + String((e && e.message) || e).slice(0, 90)); }
     }
+    if (snapFailed) errors.push('kv read failed — snapshot not written, D1 unaffected');
+   } catch (e) {
+     // whatever went wrong for this account, the next one still gets its minute
+     errors.push(String((e && e.message) || e).slice(0, 120));
+   }
   }
-  return { accounts: list.length, sampled, wrote, d1 };
+  return { accounts: list.length, sampled, wrote, d1, ...(errors.length ? { errors } : {}) };
 }
 
 export default {
