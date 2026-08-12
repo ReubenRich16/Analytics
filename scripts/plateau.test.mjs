@@ -30,7 +30,7 @@ const check = (n, c, x = '') => { if (c) { pass++; console.log('  ✓', n); } el
 
 // An S-shaped launch: slow while the platform decides, then steep, then flattening —
 // the shape that defeated curve fitting and forced the share-of-final approach.
-function scurve(final, k, stepMin = 60, lastH = 48) {
+function scurve(final, k, stepMin = 30, lastH = 48) {
   const f = h => 1 / (1 + Math.exp(-(h - k) / 3));
   const a = f(0), b = f(48);
   const out = [];
@@ -58,8 +58,24 @@ console.log('\nplateau projection');
   const holed = good.filter(p => p[0] <= 360 || p[0] >= 1440);
   check('a curve with a >2h hole is rejected', M.pjRef(holed) === null);
 
-  check('a curve that starts an hour late is rejected',
-    M.pjRef(good.filter(p => p[0] >= 60)) === null);
+  // starting late is not disqualifying — the curve simply abstains from the ages it
+  // never saw, which is what kept every TikTok curve on the account usable
+  const late = M.pjRef(good.filter(p => p[0] >= 4 * 60));
+  check('a curve that starts at four hours is still a reference', !!late);
+  check('and it abstains from the ages it never saw',
+    M.pjShares([late], 2 * 60).length === 0 && M.pjShares([late], 6 * 60).length === 1);
+  check('a late starter cannot be projected from at all on its own',
+    M.pjProject([late, M.pjRef(scurve(1400, 8.2))], 2 * 60, 50).state === 'early');
+
+  // the two real failure modes, measured off the recorded curves: a 21-hour hole ending
+  // at 27h is the Worker's old window and must go; a 2-hour hole ending at 39h is a
+  // missed cron in the flat tail and three of the four usable curves have one
+  const artefact = good.filter(p => p[0] <= 359 || p[0] >= 1609);
+  check('a 21h hole ending at 27h is rejected', M.pjRef(artefact) === null);
+  const hiccup = good.filter(p => p[0] <= 2229 || p[0] >= 2359);
+  check('a 2h hole ending at 39h is kept', !!M.pjRef(hiccup));
+  const earlyHole = good.filter(p => p[0] <= 210 || p[0] >= 300);
+  check('the same 90m hole in the fifth hour is rejected', M.pjRef(earlyHole) === null);
   check('a curve that stops at 24h is rejected',
     M.pjRef(good.filter(p => p[0] <= 1440)) === null);
   check('a curve too small for a ratio is rejected', M.pjRef(scurve(10, 8)) === null);
@@ -70,8 +86,8 @@ console.log('\nplateau projection');
 /* 3 — the states it refuses to project in */
 {
   const refs = [scurve(2000, 8), scurve(1400, 8.4), scurve(3100, 7.7)].map(M.pjRef);
-  check('silent under four hours', M.pjProject(refs, 3 * 60, 400).state === 'early');
-  check('speaks at four hours', M.pjProject(refs, 4 * 60, 400).state === 'ok');
+  check('silent under five hours', M.pjProject(refs, 4 * 60, 400).state === 'early');
+  check('speaks at five hours', M.pjProject(refs, 5 * 60, 400).state === 'ok');
   check('retires at the 48h horizon', M.pjProject(refs, 48 * 60, 4000).state === 'done');
   check('silent with only one reference', M.pjProject(refs.slice(0, 1), 6 * 60, 400).state === 'nomodel');
   check('silent with no views yet', M.pjProject(refs, 6 * 60, 0).state === 'early');

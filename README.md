@@ -111,18 +111,26 @@ predicted from the others, and the worst miss becomes the band — so an account
 behave alike gets a tight range and one whose posts vary gets a wide one, from its own
 data. Four rules keep it honest:
 
-- **Nothing under four hours.** The leave-one-out error reached −90% there. It says so
-  plainly rather than showing a range wide enough to be meaningless.
+- **Nothing under five hours.** At four, one of the three recorded curves still escapes
+  its own band. It says so plainly rather than showing a range wide enough to be useless.
 - **Nothing when the account is too varied** to call within about half. Same reasoning.
-- **Reference curves with holes are thrown away.** Two videos look flat from 6h to 24h and
-  then double; that is the sampling gap from before the Worker's window widened from 6
-  hours to 48, not behaviour, and treating it as real would under-call every launch after.
+- **Reference curves with a hole where the prediction gets made are thrown away.** A gap
+  is judged against the age it ends at: two missing hours at 39h are a missed cron in the
+  flat tail, while the same two hours at 5h remove exactly the share being asked for. On
+  the recorded curves that separates cleanly — the real artefacts are 21-hour holes ending
+  at 27h, left by the Worker's window widening from 6 hours to 48. **Starting late is not
+  disqualifying**; a curve first sampled at 4h simply abstains from earlier ages, which is
+  what keeps every TikTok curve usable, since the Worker only began recording those posts
+  on the day the account was connected.
 - **The low end never sits below the count already banked**, and the band is never
-  narrower than the resolution the validation itself had.
+  narrower than ±3%.
 
-Accuracy on the curves recorded so far: ±19% at six hours, ±11% at twelve, ±2% by
-eighteen. `node scripts/plateau.test.mjs` lifts the model straight out of the page and
-pins those properties.
+Measured by running the shipped model over the launches actually recorded, one held out at
+a time: worst miss 20% at five hours, 17% at six, 10% at twelve, 3% by eighteen, and every
+held-out curve lands inside its own band from five hours on. Past about a day the residual
+misses are YouTube revising a count downward after the fact, which nothing predicts.
+`node scripts/plateau.test.mjs` lifts the model straight out of the page — so the test
+cannot drift from what ships — and pins these properties.
 
 **Compare** (the third page)
 
