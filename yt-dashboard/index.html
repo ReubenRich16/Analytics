@@ -1152,6 +1152,12 @@
 
   const LINE_GEO = { w: 620, h: 178, L: 66, R: 18, T: 18, B: 30 };
 
+  // opts.at is the real time of each point. Without it the x axis is the array index,
+  // which is the same thing ONLY while samples arrive at a steady rate. The recorded
+  // history does not: the snapshot robot writes every ~5 minutes for a new upload's first
+  // two days and hourly after that, so index-spacing stretched those two days across most
+  // of the plot and squeezed the following weeks into the end. Any series whose spacing
+  // varies must pass `at`, and the tapering Worker cadence makes that every minute series.
   function lineChartHtml(pts, tips, color, opts) {
     opts = opts || {};
     const g = LINE_GEO;
@@ -1161,11 +1167,29 @@
     // (e.g. subscriber totals that barely change against a big absolute number)
     const sc = niceScale(opts.zoom ? Math.min(...pts) : 0, max, 4);
     const { frame, Y } = chartFrame(g, sc, opts);
-    const xs = pts.map((_, i) => g.L + i * (g.w - g.L - g.R) / Math.max(1, n - 1));
+    const at = Array.isArray(opts.at) && opts.at.length === n ? opts.at : null;
+    const t0 = at ? at[0] : 0, tN = at ? at[n - 1] : 1;
+    const xs = at
+      ? at.map(t => g.L + (g.w - g.L - g.R) * ((t - t0) / (tN - t0 || 1)))
+      : pts.map((_, i) => g.L + i * (g.w - g.L - g.R) / Math.max(1, n - 1));
     const ys = pts.map(Y);
     const ci = chartPush({ tips, xs, ys, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, color });
-    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
-    for (let i = 1; i < n; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    // A gap far longer than the usual spacing is a stretch where nothing was recorded, not
+    // a steady climb. Joining across it draws a straight line that reads as measured
+    // growth, so the path breaks instead and the gap reads as what it is: no data.
+    let maxGap = Infinity;
+    if (at && n > 2) {
+      const dts = []; for (let i = 1; i < n; i++) dts.push(at[i] - at[i - 1]);
+      dts.sort((a2, b2) => a2 - b2);
+      maxGap = Math.max(4 * dts[dts.length >> 1], 6e5);   // never break on a couple of missed samples
+    }
+    const segs = [[0]];
+    for (let i = 1; i < n; i++) {
+      if (at && at[i] - at[i - 1] > maxGap) segs.push([i]);
+      else segs[segs.length - 1].push(i);
+    }
+    const pt = i => xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    const d = segs.map(sg => 'M' + sg.map(pt).join(' L')).join(' ');
     const gid = 'lg' + ci;
     const drawCls = reducedMotion ? 'line' : 'line anim';
     // Label selectively: always the endpoint, and the peak only when it is far
@@ -1189,7 +1213,10 @@
         // and end-dot read as one gesture instead of three separate elements
         '<clipPath id="w' + gid + '"><rect class="wipe" x="0" y="0" width="' + g.w + '" height="' + g.h + '"/></clipPath></defs>' +
       frame +
-      (n > 1 ? '<path' + (reducedMotion ? '' : ' clip-path="url(#w' + gid + ')"') + ' d="' + d + ' L' + xs[n - 1].toFixed(1) + ',' + (g.h - g.B) + ' L' + xs[0].toFixed(1) + ',' + (g.h - g.B) + ' Z" fill="url(#' + gid + ')"/>' : '') +
+      (n > 1 ? '<path' + (reducedMotion ? '' : ' clip-path="url(#w' + gid + ')"') + ' d="' +
+        segs.filter(sg => sg.length > 1).map(sg => 'M' + xs[sg[0]].toFixed(1) + ',' + (g.h - g.B) +
+          ' L' + sg.map(pt).join(' L') + ' L' + xs[sg[sg.length - 1]].toFixed(1) + ',' + (g.h - g.B) + ' Z').join(' ') +
+        '" fill="url(#' + gid + ')"/>' : '') +
       '<line class="cline" y1="' + g.T + '" y2="' + (g.h - g.B) + '" style="display:none"/>' +
       (n > 1 ? '<path class="' + drawCls + '" pathLength="1" d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:2"/>' : '') +
       labels +
@@ -3349,15 +3376,23 @@
     // hour-by-hour history from the repo's snapshot robot
     if (hist && hist.videos && hist.videos[svid] && hist.videos[svid].length > 2) {
       const harr = hist.videos[svid].slice(-169);
-      const hPts = [], hTips2 = [];
+      // Views per HOUR, not the raw gap between samples. The robot writes every ~5 minutes
+      // for a new upload's first two days and hourly after that, so a raw delta is a
+      // 5-minute delta at the start and a 60-minute one later — twelve times larger for
+      // the same real rate, which drew a cliff at the changeover that was pure cadence.
+      // A rate divides that out, and opts.at puts each point at its real time.
+      const hPts = [], hTips2 = [], hAt = [];
       for (let i = 1; i < harr.length; i++) {
-        const dv = Math.max(0, harr[i][1] - harr[i - 1][1]);
-        hPts.push(dv);
-        hTips2.push('+' + fmt.format(dv) + ' views — ' + new Date(harr[i][0]).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric' }));
+        const hrs = Math.max(1 / 60, (harr[i][0] - harr[i - 1][0]) / 3600e3);
+        const rate = Math.max(0, harr[i][1] - harr[i - 1][1]) / hrs;
+        hPts.push(rate); hAt.push(harr[i][0]);
+        hTips2.push((rate >= 10 ? Math.round(rate) : rate.toFixed(1)) + ' views/hour — ' +
+          new Date(harr[i][0]).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric' }));
       }
-      if (hPts.length > 1) html += '<div class="dsection"><h4>Views over time — recorded history</h4>' +
-        '<p class="explain">From the snapshot robot, which records even when nobody has the dashboard open — hourly normally, and every ~5 min for the first 2 days of a new upload. The over-time view YouTube never provides. Hover for exact times.</p>' +
-        lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views over time' }) + '</div>';
+      if (hPts.length > 1) html += '<div class="dsection"><h4>Views per hour — recorded history</h4>' +
+        '<p class="explain">From the snapshot robot, which records even when nobody has the dashboard open. Shown as a rate rather than a raw count, because the robot samples faster during a launch than afterwards and a raw count would jump purely when the cadence changed. The over-time view YouTube never provides. Hover for exact times.</p>' +
+        lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views per hour', at: hAt,
+          x0: shortDate(new Date(hAt[0]).toISOString().slice(0, 10)), x1: 'now' }) + '</div>';
     }
 
     if (r.daily && r.daily.rows && r.daily.rows.length > 1) {

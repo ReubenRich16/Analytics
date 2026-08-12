@@ -258,6 +258,24 @@ day** and 5 GB, kept for 60 days. One row per post per minute instead of one rew
 everything — which is what let the launch window go from **6 hours to 48**, still sampled
 once a minute the whole way through.
 
+**And it no longer stops there.** Recording used to end at hour 48 while retention ran to
+60 days, so "kept for two months" was true of the storage and false of the recording — the
+dashboard knew everything about a video's first two days and nothing about its next two
+months. A tapering cadence now carries it the whole way:
+
+| age | cadence | why |
+|---|---|---|
+| 0–48h | every minute | a launch moves by the minute |
+| 2–14 days | every 15 min | it still moves, but not that fast |
+| 14–60 days | hourly | a month out, minute sampling would record that nothing happened |
+
+Measured against this account's real publish rate — 2.2 uploads a day on YouTube, ~2.5
+posts a day on TikTok — that is about **19,200 samples a day**, or 38,000 of the
+100,000/day row-write allowance. Flat minute sampling across the full 60 days would be
+**over 380,000 a day**, four times the entire allowance, which is why the cadence tapers
+rather than staying flat. TikTok costs nothing extra at all: the cron already fetched the
+post list every five minutes and was discarding every row outside the launch window.
+
 Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
 back only the minutes it hasn't seen, because re-shipping a 48-hour window every three
 minutes would exhaust D1's 5,000,000 daily row-reads before the day was out. And the KV

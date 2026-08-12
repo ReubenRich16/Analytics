@@ -44,6 +44,56 @@ const D1_BACKFILL_V = 3;
 // the whole window: a tiered cadence would save rows, but it also makes the gap between
 // consecutive samples vary, which silently breaks any chart that plots by array position.
 const HOT_HOURS   = 48;
+
+/* --- the cold tail ----------------------------------------------------------
+   The hot window records a launch minute by minute for 48 hours and then stops for that
+   video for good. D1 keeps rows for 60 days, but nothing was writing any after hour 48 —
+   so the dashboard could tell you everything about a video's first two days and nothing
+   whatsoever about its next two months. "Kept for 60 days" was true of the retention and
+   false of the recording, and that gap is what this closes.
+
+   The cadence tapers because the data does. A view count moves several times a minute
+   during a launch and a few times an hour a month later, so minute sampling out there
+   would spend the row budget recording that nothing happened. Measured against this
+   account's real publish times — 2.2 uploads a day on YouTube, about 2.5 posts a day on
+   TikTok:
+
+     YouTube  hot    0–48h   every minute    4.4 videos     6,336 samples/day
+              warm   2–14d   every 15 min     26 videos     2,534
+              cool  14–60d   every hour      101 videos     2,429
+     TikTok   hot    0–48h   every minute      5 posts      7,200
+              tail   2–60d   15 min / hour   ≤15 posts        720
+                                                           ─────────
+                                                            ~19,200 samples/day
+
+   Each insert costs two row-writes (the table plus the covering index), so about 38,000
+   of the 100,000/day allowance, against roughly 27,000 for the hot windows alone. Reading
+   the roster to decide who is due costs under 200 rows every 15 minutes. The extra
+   YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
+   nothing extra at all: the cron already fetches the post list and was throwing away
+   every row outside the launch window.
+
+   TikTok's tail is capped by its own API rather than by this cadence — the list call
+   returns 20 posts a page, so the hourly pass asks for 60 and the minute passes ask for
+   20. At her rate 60 posts is about three and a half weeks, so the far end of the cool
+   tier is thinner there than on YouTube.
+
+   A tapering cadence used to be rejected here on the grounds that it "makes the gap
+   between consecutive samples vary, which silently breaks any chart that plots by array
+   position". That was a real objection and it has been dealt with rather than ignored:
+   both dashboards' line charts now take the sample times and plot against real time. */
+const COLD_WARM_DAYS = 14;
+const COLD_WARM_MIN  = 15;
+const COLD_COOL_MIN  = 60;
+// Is a video of this age due a sample at this minute past the hour? Clock-derived, like
+// the scan cadence, so it needs no stored state and a missed tick simply waits for the
+// next boundary instead of drifting.
+const coldDue = (ageMs, minute) => {
+  if (ageMs <= HOT_HOURS * 3600e3) return false;      // the hot loop owns it
+  if (ageMs > D1_KEEP_DAYS * 864e5) return false;     // past retention; the row would be pruned
+  return minute % (ageMs < COLD_WARM_DAYS * 864e5 ? COLD_WARM_MIN : COLD_COOL_MIN) === 0;
+};
+
 const SCAN_MIN    = 5;      // re-scan the uploads playlist this often to notice new uploads
 const KEEP_DAYS   = 3;      // drop samples older than this from the served bundle
 // How long the KV mirror may lag. D1 is the record; KV is the read-fallback, and it only
@@ -442,6 +492,34 @@ async function d1Prune(env, now) {
   }
 }
 
+/* Sample the videos past their hot window, on the tapering cadence. Deliberately
+   separate from tick(): the roster comes from D1 (60 days) rather than the KV state
+   (3 days), it writes to D1 only, and a failure here must never touch the launch
+   recording — which is the part that cannot be redone later. */
+async function coldTick(env, key, slot) {
+  if (!env.DB) return { skipped: 'no D1' };
+  const now = Date.now(), minute = new Date(now).getUTCMinutes();
+  if (minute % COLD_WARM_MIN !== 0) return { due: 0 };
+  const r = await env.DB.prepare(
+    'SELECT video_id, published_at, title, channel FROM videos WHERE platform = ? AND published_at >= ? AND published_at < ?'
+  ).bind('yt', now - D1_KEEP_DAYS * 864e5, now - HOT_HOURS * 3600e3).all();
+  const due = (r.results || []).filter(v => coldDue(now - v.published_at, minute));
+  if (!due.length) return { due: 0 };
+  const rows = [];
+  for (const part of chunk(due.map(v => v.video_id), 50)) {
+    const d = await api('videos', { part: 'statistics', id: part.join(',') }, key);
+    for (const it of (d.items || [])) {
+      const st = it.statistics;
+      rows.push({ id: it.id, ts: slot, views: +(st.viewCount || 0), likes: +(st.likeCount || 0),
+                  comments: +(st.commentCount || 0), shares: 0 });
+    }
+  }
+  if (!rows.length) return { due: due.length, wrote: 0 };
+  // no metadata: every video here already has its row, which is how it was found
+  const w = await d1Write(env, 'yt', rows, []);
+  return { due: due.length, wrote: rows.length, error: w.error };
+}
+
 // Find fresh (< HOT_HOURS old) uploads across all tracked channels.
 async function scanFresh(channels, key) {
   const hotMs = HOT_HOURS * 3600e3;
@@ -616,7 +694,14 @@ async function tick(env) {
     s.updated = now;
     await env.MINUTE.put(KV_KEY, JSON.stringify(s));
   }
-  return { hot: hotIds.length, sampled, wrote, deferred: changed && !wrote, d1, d1pruned };
+  // The cold tail runs after the hot record is safely written, and its failures are
+  // caught here rather than thrown: a missed cold sample can be taken again in fifteen
+  // minutes, while a missed launch minute is gone for good.
+  let cold = { skipped: 'not run' };
+  try { cold = await coldTick(env, key, slot); }
+  catch (e) { cold = { error: String((e && e.message) || e).slice(0, 160) }; }
+
+  return { hot: hotIds.length, sampled, wrote, deferred: changed && !wrote, d1, d1pruned, cold };
 }
 
 /* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
@@ -1132,7 +1217,9 @@ async function ttTick(env) {
 
     let vids = [], fetchErr = null;
     try {
-      const r = await ttFetchVideos(token, 20);
+      // 60 on the hour so the cool tier reaches back about three and a half weeks; 20 the
+      // rest of the time, since only the launch window and the warm tier are due then
+      const r = await ttFetchVideos(token, new Date(now).getUTCMinutes() === 0 ? 60 : 20);
       vids = r.videos;
       if (r.error) fetchErr = r.error.slice(0, 160);
     } catch (e) { fetchErr = String((e && e.message) || e).slice(0, 160); }
@@ -1154,17 +1241,34 @@ async function ttTick(env) {
       continue;
     }
     const d1rows = [], d1metas = [], metaPending = [];
+    const minute = new Date(now).getUTCMinutes();
     for (const v of vids) {
       const ct = (v.create_time || 0) * 1000;
-      if (!ct || now - ct > hotMs) continue;             // only the launch window
-      const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title: v.title || v.video_description || '', cover: v.cover_image_url || '', s: [] });
-      const prev = rec.s[rec.s.length - 1];
-      if (!prev || prev[0] !== slot) rec.s.push([slot, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
+      if (!ct) continue;
+      const age = now - ct;
+      const hotNow = age <= hotMs;
+      // Past the launch window a post is still worth recording, just far less often —
+      // and it costs nothing extra here, because this list call has already fetched its
+      // view count and was throwing it away.
+      if (!hotNow && !coldDue(age, minute)) continue;
+      const title = v.title || v.video_description || '';
+      if (hotNow) {
+        const rec = snap.videos[v.id] || (snap.videos[v.id] = { create_time: v.create_time, title, cover: v.cover_image_url || '', s: [] });
+        const prev = rec.s[rec.s.length - 1];
+        if (!prev || prev[0] !== slot) rec.s.push([slot, v.view_count || 0, v.like_count || 0, v.comment_count || 0, v.share_count || 0]);
+        // only re-state the metadata when it isn't already what D1 holds (see metaFp).
+        // Like the YouTube side, the fingerprint commits only after the write succeeds.
+        const fp = metaFp(ct, rec.title);
+        if (rec.d1m !== fp) { d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' }); metaPending.push([rec, fp]); }
+      } else if (minute === 0) {
+        // A cold post may never have been hot — the account was connected after it went
+        // up — so it can have samples and no row in `videos`, which the launch-curve join
+        // needs. Restated once an hour rather than every cold tick: 24 upserts a day per
+        // post instead of 96, and the snapshot has no fingerprint to cache it against
+        // because snap.videos is deliberately hot-only.
+        d1metas.push({ id: v.id, pub: ct, title, cover: v.cover_image_url || '' });
+      }
       d1rows.push({ id: v.id, ts: slot, views: v.view_count || 0, likes: v.like_count || 0, comments: v.comment_count || 0, shares: v.share_count || 0 });
-      // only re-state the metadata when it isn't already what D1 holds (see metaFp).
-      // Like the YouTube side, the fingerprint commits only after the write succeeds.
-      const fp = metaFp(ct, rec.title);
-      if (rec.d1m !== fp) { d1metas.push({ id: v.id, pub: ct, title: rec.title || '', cover: rec.cover || '' }); metaPending.push([rec, fp]); }
       sampled++;
     }
     for (const id of Object.keys(snap.videos)) {
