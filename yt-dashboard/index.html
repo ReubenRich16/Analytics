@@ -1247,10 +1247,19 @@
       frame +
       (hasNeg ? '<line class="axis-line" x1="' + g.L + '" y1="' + zero.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + zero.toFixed(1) + '"/>' : '') +
       '<rect class="cband" y="' + g.T + '" height="' + (g.h - g.T - g.B) + '" style="display:none"/>';
+    /* A zero draws nothing; anything else draws at least a visible sliver.
+       The test used to be `Math.abs(y1 - zero) < 0.6`, which reads as "nothing to draw for
+       a zero day" and is not what it does — it drops any value too small to clear 0.6px on
+       the current scale. On a month where one upload did 20,000 views, every 40-view day
+       vanished and looked exactly like a day with none. That is the one distinction a
+       sparse daily chart exists to show, and the tooltip still reported the real number for
+       a bar that was not there. */
+    const MIN_BAR = 1.5;
     values.forEach((v, i) => {
+      if (!v) return;
       const x = g.L + i * slot + (slot - bw) / 2;
-      const y1 = Y(v);
-      if (Math.abs(y1 - zero) < 0.6) return; // nothing to draw for a zero day
+      const raw = Y(v);
+      const y1 = Math.abs(raw - zero) >= MIN_BAR ? raw : zero + (v > 0 ? -MIN_BAR : MIN_BAR);
       out += '<path d="' + barPath(x, zero, y1, bw, 4) + '" style="fill:' + (hasNeg ? (v >= 0 ? 'var(--up)' : 'var(--down)') : (opts.color || 'var(--accent)')) + '"/>';
     });
     return out + '</svg>';
@@ -1370,14 +1379,17 @@
     let dots = '', marks = '';
     const callout = (i, cls, fill, mul, text) => {
       const cx = sxs[i], cy = sys[i];
-      return '<circle class="pt ' + cls + '" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (r * mul).toFixed(1) +
+      return '<circle class="pt ' + cls + '" data-i="' + i + '" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (r * mul).toFixed(1) +
         '" style="fill:' + fill + ';stroke:var(--ink);stroke-width:2"/>' +
         '<text class="val" x="' + Math.min(g.w - g.R, cx + r * mul + 5).toFixed(1) + '" y="' + Math.max(g.T + 8, cy - 8).toFixed(1) + '"' +
         (cx > g.w - g.R - 96 ? ' text-anchor="end"' : '') + '>' + esc(text) + '</text>';
     };
     points.forEach((p, i) => {
       if (p.hot || p.best) return;
-      dots += '<circle class="pt" cx="' + sxs[i].toFixed(1) + '" cy="' + sys[i].toFixed(1) + '" r="' + r.toFixed(1) + '" style="fill:var(--muted);stroke:var(--ink);stroke-width:2;opacity:.7"/>';
+      // data-i, because DOM order is not data order here: the two callouts are skipped in
+      // this pass and appended afterwards, so every dot past the first callout sits at a
+      // different index than its point. See moveTip.
+      dots += '<circle class="pt" data-i="' + i + '" cx="' + sxs[i].toFixed(1) + '" cy="' + sys[i].toFixed(1) + '" r="' + r.toFixed(1) + '" style="fill:var(--muted);stroke:var(--ink);stroke-width:2;opacity:.7"/>';
     });
     // callouts draw last so nothing can cover them; best-loved under newest if they clash
     points.forEach((p, i) => { if (p.best && !p.hot) marks += callout(i, 'best', 'var(--text)', 1.3, p.rate.toFixed(1) + '% · ' + fmt.format(p.x) + ' views'); });
@@ -1422,7 +1434,12 @@
         const dd = (d.sxs[i] - xv) ** 2 + (d.sys[i] - yv) ** 2;
         if (dd < bd) { bd = dd; best = i; }
       }
-      svg.querySelectorAll('circle.pt').forEach((c, i) => c.classList.toggle('near', i === best));
+      /* Matched on data-i, not on DOM position. ratePlotHtml emits the plain dots first,
+         SKIPPING the newest and best-loved points, then appends those two as callouts — so
+         DOM index and data index diverge from the first callout onwards, and this used to
+         ring a dot several videos away from the one the tooltip was describing. Worse on
+         exactly the videos worth pointing at, since the callouts are what shift everything. */
+      svg.querySelectorAll('circle.pt').forEach(c => c.classList.toggle('near', +c.dataset.i === best));
       chartTip.textContent = d.tips[best];
       chartTip.style.removeProperty('--tip-key');
       chartTip.style.display = 'block';
@@ -1514,8 +1531,18 @@
     }, i * 110));
   }
 
+  /* A ranked list of labelled bars.
+     opts.total — the real denominator, when the caller is only SHOWING part of the list.
+     Without it the percentage is computed from the rows handed over, which is right for a
+     complete list and a lie for a truncated one: "YouTube search — 42%" read as 42% of the
+     video's traffic when it was 42% of the top five sources, and the top five are not all
+     of them. The bar widths are shares of the largest row either way — that is what a
+     ranked list is — but the number next to them claims to be a share of everything, so it
+     has to be one. Callers that slice pass the untruncated total. */
   function hbarList(rows, opts) {
-    const total = rows.reduce((a, r) => a + r.val, 0) || 1;
+    opts = opts || {};
+    const shown = rows.reduce((a, r) => a + r.val, 0);
+    const total = (opts.total > 0 ? opts.total : shown) || 1;
     const max = Math.max(1, ...rows.map(r => r.val));
     let html = '';
     for (const r of rows) {
@@ -2386,11 +2413,17 @@
         }
         if (traffic && traffic.rows && traffic.rows.length) {
           html += section('How viewers are finding it', 'Which parts of YouTube are sending people to this video.',
-            hbarList(traffic.rows.slice(0, 5).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
+            hbarList(traffic.rows.slice(0, 5).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] })),
+              { total: traffic.rows.reduce((a, x) => a + x[1], 0) }));
         }
         if (search && search.rows && search.rows.length) {
+          // denominator is ALL search traffic, not the handful of terms YouTube will name:
+          // the API caps this list and hides rare terms for privacy, so the rows here are
+          // always a subset and their own sum would overstate every one of them
+          const ytSearch = ((traffic && traffic.rows) || []).find(x => x[0] === 'YT_SEARCH');
           html += section('What people searched to find it', 'The exact words typed into YouTube search.',
-            hbarList(search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
+            hbarList(search.rows.map(x => ({ label: x[0], val: x[1] })),
+              { color: 'var(--gold)', total: ytSearch ? ytSearch[1] : 0 }));
         }
 
         // same-age comparison controls
@@ -3560,12 +3593,16 @@
 
     if (r.traffic && r.traffic.rows && r.traffic.rows.length) {
       html += section('How viewers found this video', 'Which parts of YouTube (and beyond) sent people here.',
-        hbarList(r.traffic.rows.slice(0, 8).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] }))));
+        hbarList(r.traffic.rows.slice(0, 8).map(x => ({ label: TRAFFIC_NAMES[x[0]] || pretty(x[0]), val: x[1] })),
+          { total: r.traffic.rows.reduce((a, x) => a + x[1], 0) }));
     }
 
     if (r.search && r.search.rows && r.search.rows.length) {
+      // as above: percentages are of all search traffic, not of the terms YouTube names
+      const ytSearch = ((r.traffic && r.traffic.rows) || []).find(x => x[0] === 'YT_SEARCH');
       html += section('What people searched', 'The exact words typed into YouTube search that led to this video — gold for titles and future video ideas. (Rare terms are hidden by YouTube for privacy.)',
-        hbarList(r.search.rows.map(x => ({ label: x[0], val: x[1] })), { color: 'var(--gold)' }));
+        hbarList(r.search.rows.map(x => ({ label: x[0], val: x[1] })),
+          { color: 'var(--gold)', total: ytSearch ? ytSearch[1] : 0 }));
     }
 
     if (r.suggested && r.suggested.rows && r.suggested.rows.length) {

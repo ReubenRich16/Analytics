@@ -78,5 +78,133 @@ console.log('\naxis labels');
     F.axisNum(1000500, '', 100) !== '1M', F.axisNum(1000500, '', 100));
 }
 
+// A bar too short to clear a pixel is still not a zero
+console.log('\nsmall bars');
+{
+  /* The guard was `Math.abs(y1 - zero) < 0.6`, whose comment said "nothing to draw for a
+     zero day". It did more than that: it dropped any value too small to clear 0.6px on the
+     current scale. One 20,000-view upload in a month and every 40-view day disappeared,
+     drawn exactly like a day with no views at all — while the tooltip still reported the
+     real number for a bar that was not on screen. Distinguishing "a little" from "none" is
+     most of the job of a sparse daily chart. */
+  const B = new Function('fmt',
+    'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
+    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('const LINE_GEO','  // several lines on one chart') +
+    '\nreturn {barChartHtml, CH};')(new Intl.NumberFormat('en-US'));
+  const bars = h => (h.match(/<path d="M/g) || []).length;
+
+  const spiky = [20000, 40, 0, 12, 0, 3, 18000];
+  const h = B.barChartHtml(spiky, spiky.map(String), 'daily views', {});
+  check('every non-zero day draws a bar, however small',
+    bars(h) === spiky.filter(v => v).length, bars(h) + ' bars for ' + spiky.filter(v => v).length + ' non-zero days');
+  check('and the zero days draw nothing', bars(h) === 5, bars(h));
+
+  /* Measure each bar from its own path rather than from the V target: barPath rounds the
+     data-end, so the V goes to y1 ± r and on a sliver r is clamped to the whole height.
+     Every y in the path, against the baseline it starts from, is the honest extent. */
+  /* Recover each bar's signed height from its path. The V target is not the data end —
+     barPath rounds the corner, so it stops at y1 ± r and then arcs the last r across. The
+     arc's own dy carries that r back with the right sign, so y1 = Vtarget + dy holds for
+     both directions, and a sliver (where r is clamped to the whole height) measures right
+     instead of measuring zero. Positive = above the baseline. */
+  const heights = html => [...html.matchAll(/<path d="M[\d.]+,([\d.]+)V([\d.-]+)a[\d.]+,[\d.]+ 0 0 \d ([\d.-]+),([\d.-]+)/g)]
+    .map(m => +m[1] - (+m[2] + +m[4]));
+  const hx = heights(h);
+  check('the measurement found every bar', hx.length === 5, hx.length);
+  check('every bar rises above the baseline', hx.every(v => v > 0), hx.map(v => +v.toFixed(1)).join(','));
+  check('the tiny ones are slivers, not full bars',
+    hx.filter(v => v <= 1.6).length === 3, hx.map(v => +v.toFixed(1)).join(','));
+  check('and the big ones are not', hx.filter(v => v > 20).length === 2, hx.map(v => +v.toFixed(1)).join(','));
+
+  // negatives keep their direction — the same guard sat on the diff chart too
+  const mixed = [5000, -3, 2, -4000];
+  const m = B.barChartHtml(mixed, mixed.map(String), 'change', {});
+  check('a tiny negative still draws', bars(m) === 4, bars(m));
+  const mx = heights(m);
+  check('the positives draw upwards', mx[0] > 0 && mx[2] > 0, mx.map(v => +v.toFixed(1)).join(','));
+  check('and the negatives downwards', mx[1] < 0 && mx[3] < 0, mx.map(v => +v.toFixed(1)).join(','));
+  check('the tiny negative is a sliver, on the correct side of zero',
+    mx[1] < 0 && Math.abs(mx[1]) <= 1.6, mx[1]);
+  check('the tiny positive is one too', mx[2] > 0 && mx[2] <= 1.6, mx[2]);
+
+  check('an all-zero series is still empty', bars(B.barChartHtml([0,0,0], ['a','b','c'], 'x', {})) === 0);
+}
+
+// percentages in a ranked list must be shares of the whole, not of the visible slice
+console.log('\nhbarList denominators');
+{
+  const H = new Function('fmt', 'esc',
+    cut('  function hbarList(rows, opts)', '  const section = (title') +
+    '\nreturn hbarList;')(new Intl.NumberFormat('en-US'), s => String(s));
+  // read the displayed value only — the same text is repeated in the row's title
+  // attribute, and the bar's own `width:NN%` is not a percentage of anything reported
+  const hvals = h => [...h.matchAll(/<div class="hval">([^<]*)<\/div>/g)].map(m => m[1]);
+  const pcts = h => hvals(h).map(v => +((v.match(/· (\d+)%/) || [])[1] || NaN));
+
+  const all = [50, 25, 15, 6, 3, 1].map((v, i) => ({ label: 's' + i, val: v }));
+  check('a complete list sums to 100%',
+    pcts(H(all)).reduce((a, b) => a + b, 0) === 100, pcts(H(all)).join('+'));
+
+  /* The bug: the caller shows the top 5 of a longer list, and the percentages were
+     computed from those 5. "YouTube search — 42%" read as 42% of the video's traffic when
+     it was 42% of the top five sources. */
+  const top = all.slice(0, 3);                       // 90 of 100
+  const naive = pcts(H(top));
+  const honest = pcts(H(top, { total: 100 }));
+  check('without a total, a truncated list still claims to sum to 100%',
+    Math.abs(naive.reduce((a, b) => a + b, 0) - 100) <= 1, naive.join('+'));
+  check('with the real total, the shares are the real shares',
+    honest.join(',') === '50,25,15', honest.join(','));
+  check('so a truncated list no longer overstates its biggest row',
+    honest[0] < naive[0], honest[0] + ' vs ' + naive[0]);
+
+  check('bar widths are still shares of the largest row, not of the total',
+    /width:100.0%/.test(H(top, { total: 100 })), 'top row should still be full width');
+  check('a zero or missing total falls back to the rows',
+    pcts(H(top, { total: 0 })).join(',') === pcts(H(top)).join(','));
+  check('and valText still wins over the computed percentage',
+    hvals(H([{ label: 'a', val: 5, valText: '5 things' }])).join('') === '5 things',
+    hvals(H([{ label: 'a', val: 5, valText: '5 things' }])).join(''));
+
+  // the two call sites that slice must hand over the untruncated total
+  check('the video traffic breakdown passes its full total',
+    /traffic\.rows\.slice\(0, 5\)[\s\S]{0,200}total: traffic\.rows\.reduce/.test(src));
+  check('and the report card one does too',
+    /r\.traffic\.rows\.slice\(0, 8\)[\s\S]{0,220}total: r\.traffic\.rows\.reduce/.test(src));
+  check('search terms are measured against all search traffic',
+    (src.match(/YT_SEARCH'\)/g) || []).length >= 2, 'both search lists need the YT_SEARCH total');
+}
+
+// the scatter's hover ring must find the point by data index, not DOM position
+console.log('\nscatter hover');
+{
+  /* ratePlotHtml emits the plain dots first, skipping the newest and best-loved points,
+     then appends those two as callouts. So DOM index and data index diverge from the first
+     callout onwards, and `forEach((c, i) => toggle('near', i === best))` rang a circle
+     several videos away from the one the tooltip named. */
+  check('every dot carries its data index', /dots \+= '<circle class="pt" data-i="/.test(src));
+  check('and so does every callout', /'<circle class="pt ' \+ cls \+ '" data-i="'/.test(src));
+  check('the hover ring matches on that index, not on DOM order',
+    /querySelectorAll\('circle\.pt'\)\.forEach\(c => c\.classList\.toggle\('near', \+c\.dataset\.i === best\)\)/.test(src),
+    'moveTip still rings by DOM position');
+
+  // and prove the two orders really do differ, so the fix is not academic
+  const R = new Function('fmt', 'esc', 'axisNum', 'niceScale',
+    'let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
+    cut('  function ratePlotHtml(points, tips, opts)', '  // 12-point trend line') +
+    '\nreturn {ratePlotHtml, CH};')(new Intl.NumberFormat('en-US'), s => String(s), F.axisNum, F.niceScale);
+  const pts3 = Array.from({ length: 10 }, (_, i) => ({ x: 100 + i * 50, rate: 1 + i * 0.2 }));
+  pts3[2].best = true; pts3[7].hot = true;           // callouts at data indices 2 and 7
+  const svg = R.ratePlotHtml(pts3, pts3.map((_, i) => 'v' + i), {});
+  const order = [...svg.matchAll(/circle class="pt[^"]*" data-i="(\d+)"/g)].map(m => +m[1]);
+  check('DOM order is not data order once callouts exist',
+    order.join(',') !== [...order].sort((a, b) => a - b).join(','), order.join(','));
+  check('but every point is present exactly once',
+    new Set(order).size === 10 && order.length === 10, order.join(','));
+  check('and data index 9 is not at DOM position 9',
+    order[9] !== 9, 'DOM 9 holds point ' + order[9]);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail?1:0);
