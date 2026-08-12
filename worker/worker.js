@@ -271,12 +271,21 @@ async function d1Launches(env, platform) {
   // MAX(views) per bucket keeps the downsampled curve as monotone as the raw one.
   // The seek is (platform, video_id), which is the samples primary key's prefix, so this
   // reads only these twelve videos' rows — about 34,000 — and not the whole partition.
+  // CAST(... AS INTEGER) is load-bearing, not decoration. SQLite does integer division
+  // between two INTEGERs, but a bound JavaScript number arrives as a REAL, so the divide
+  // silently became floating point and every sample landed in a bucket of its own: the
+  // first deploy served 3,232 points per video at ages like 2.5025166666666667 instead of
+  // 577 points on whole five-minute marks. Nothing failed — the model interpolates, so it
+  // simply shipped five times the payload it was designed to. The mock in
+  // worker/d1-launches.test.mjs could not catch it, because a mock only ever reproduces
+  // the SQL semantics its author believed in; the live peek is what caught it.
+  const bucketOf = '(CAST((s.ts - v.published_at) / ? AS INTEGER))';
   const sres = await env.DB.prepare(
-    'SELECT s.video_id AS id, (s.ts - v.published_at) / ? AS b, MAX(s.views) AS views' +
+    'SELECT s.video_id AS id, ' + bucketOf + ' AS b, MAX(s.views) AS views' +
     ' FROM samples s JOIN videos v ON v.platform = s.platform AND v.video_id = s.video_id' +
     ' WHERE s.platform = ? AND s.video_id IN (' + marks + ')' +
     ' AND s.ts >= v.published_at AND s.ts <= v.published_at + ?' +
-    ' GROUP BY s.video_id, (s.ts - v.published_at) / ?' +
+    ' GROUP BY s.video_id, ' + bucketOf +
     ' ORDER BY s.video_id, b'
   ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_WINDOW, bucket).all();
 

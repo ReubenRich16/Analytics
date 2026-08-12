@@ -36,13 +36,23 @@ const HOUR = 3600e3;
 
 /* A mock that actually interprets the two statements d1Launches issues, rather than
    pattern-matching them — a mock that returns whatever the test wants proves nothing
-   about the SQL. SQLite truncates integer division and both operands here are integers,
-   so Math.floor matches it for the non-negative ages this query can produce. */
+   about the SQL.
+
+   It models CAST(x / n AS INTEGER), which truncates, and for the non-negative ages this
+   query can produce that is Math.floor. The cast is not optional: a bound JavaScript
+   number reaches SQLite as a REAL, so without it the divide is floating point and every
+   sample lands in its own bucket. This mock cannot catch that on its own — it only ever
+   reproduces whatever semantics its author believed in, and the first version of it
+   happily agreed with a query that was doing no bucketing at all in production. Hence
+   the separate assertion on the SQL text below: it pins the one property the behavioural
+   tests are structurally unable to check. */
 function mockD1(vids, rows) {
   let rowsRead = 0;
   const db = {
+    lastSql: null,
     stats: () => ({ rowsRead }),
     _all(sql, args) {
+      db.lastSql = sql;
       if (/FROM videos WHERE platform/.test(sql)) {
         const [platform, lo, hi] = args;
         const lim = +(sql.match(/LIMIT (\d+)/) || [])[1] || 1e9;
@@ -125,8 +135,15 @@ console.log('\n2. downsampling keeps what the model needs');
   const pub = NOW - 100 * HOUR;
   const vids = [{ platform: 'yt', video_id: 'v', published_at: pub, title: 't', cover: '' }];
   const raw = launch('yt', 'v', pub, 2000, 8);
-  const out = await W.d1Launches({ DB: mockD1(vids, raw) }, 'yt');
+  const DB = mockD1(vids, raw);
+  const out = await W.d1Launches({ DB }, 'yt');
   const s = out.curves.v.s;
+  // See the note on the mock: this is the assertion the behavioural ones cannot make.
+  // Without the cast the divide is floating point in real SQLite, every sample becomes
+  // its own bucket, and the route ships five times the payload at fractional ages —
+  // which is exactly what the first deploy did while these tests were green.
+  const casts = (DB.lastSql.match(/CAST\(\(s\.ts - v\.published_at\) \/ \? AS INTEGER\)/g) || []).length;
+  check('the bucket is an explicit integer cast, in both SELECT and GROUP BY', casts === 2, casts);
   check('one point per step, not one per minute',
     s.length === Math.floor(48 * 60 / W.PJ_STEP) + 1, s.length + ' points');
   check('every age is a whole number of steps', s.every(p => p[0] % W.PJ_STEP === 0));
