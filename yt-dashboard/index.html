@@ -2055,6 +2055,46 @@
     };
   }
 
+  /* The age-fair reach figure: what a launch did, or is heading for, in its FIRST 48 HOURS.
+
+     The metric it replaces was views divided by age in days, described on screen as
+     "age-adjusted, so new and old compare fairly". It is neither. Views arrive on an
+     S-curve, heavily front-loaded, so dividing by age does not remove age from the number
+     — it inverts it. On this account's own recorded curves the SAME video reads 2,407
+     views/day six hours in and 19 views/day at sixty days. The day-one floor in the old
+     helper clamps what actually reached the screen to about a 40x swing, which is still
+     enough to rank a video top of the catalogue on its first morning and bottom of it two
+     months later on identical performance. Sixty per cent of the letter grade was that
+     number; on TikTok, where the floor is an hour rather than a day and there is no
+     engagement component to dilute it, all of it was.
+
+     A first-48-hours total has no such problem, because every video is measured over the
+     same stretch of its own life. Recorded where the curve reaches the horizon, projected
+     while the launch is still running, and null where neither is possible — null being the
+     honest answer for a video that was never recorded, rather than a number that is really
+     a clock. */
+  function pj48(curve, age, views, refs, cands) {
+    if (curve && pjClean(curve) >= PJ_COVER) return pjAt(curve, PJ_HORIZON);
+    if (age < PJ_HORIZON) {
+      const p = pjProject(refs, age, views, cands);
+      if (p.state === 'ok') return p.mid;
+    }
+    return null;
+  }
+  // Percentile within a pool, plus the pool size — the size is half the answer, because
+  // "beats 100%" of two things is not the same claim as "beats 100%" of eighty.
+  //
+  // Midrank, counting ties as half. Strictly-less-than puts every member of a tied group
+  // at the bottom of it, so an account whose posts all sit at the same rate scores 0% and
+  // grades F across the board — the metric reporting "worst possible" for "exactly
+  // typical". Half-credit for ties puts a tie where it belongs, in the middle.
+  const pjRank = (pool, v) => {
+    if (!pool.length || v == null) return null;
+    let below = 0, same = 0;
+    for (const x of pool) { if (x < v) below++; else if (x === v) same++; }
+    return { pct: (below + same / 2) / pool.length * 100, n: pool.length };
+  };
+
   // Option C — the launch as progress toward its own finish. The track's full length
   // is the optimistic end of the range, so the pale block always meets the right edge
   // and the eye reads "how much of the bar is filled" as "how far along this is".
@@ -2386,19 +2426,44 @@
     { label: 'Evening (7pm–11pm)', test: h => h >= 19 && h < 23 },
     { label: 'Late night (11pm–5am)', test: h => h >= 23 || h < 5 }
   ];
-  // per-video, age-fair metrics for the whole catalogue (live counts — no extra quota)
+  /* Per-video metrics for the whole catalogue, from live counts — no extra quota.
+
+     `eng` and `cmt` are ratios of views and are genuinely age-neutral. `vpd` is NOT, for
+     the reasons on pj48, and is kept only for the places that still label themselves as a
+     pace rather than as a fair comparison. `r48` is the honest reach figure and is null
+     for any video with no recorded launch — most of the back catalogue, until the cold
+     tail has been running long enough. */
   function catalogueMetrics() {
     const now = Date.now(), rows = [];
+    const refs = [], cands = [];
+    for (const [id, c] of Object.entries(snaps)) {
+      if (!meta[id]) continue;
+      cands.push({ curve: c, age: Math.max(0, Math.round(ageMinutes(id))) });
+      const r = pjRef(c); if (r) refs.push(r);
+    }
     for (const id of videoIds) {
       const m = meta[id], p = perVideo[id];
       if (!m || !p) continue;
       const d = new Date(m.publishedAt);
       const ageD = Math.max(1, (now - d.getTime()) / 864e5);
-      rows.push({ id, vpd: p.views / ageD, eng: p.views ? p.likes / p.views : 0, cmt: p.views ? p.comments / p.views : 0, dow: d.getDay(), hour: d.getHours(), pub: d.getTime(), tags: [...new Set((m.tags || []).map(t => t.toLowerCase()))] });
+      const ageM = Math.max(0, Math.round((now - d.getTime()) / 60000));
+      // a video never votes on its own reference set
+      const others = refs.filter(r => r.c !== snaps[id]);
+      rows.push({ id, vpd: p.views / ageD,
+        r48: pj48(snaps[id] || null, ageM, p.views, others, cands.filter(c => c.curve !== snaps[id])),
+        eng: p.views ? p.likes / p.views : 0, cmt: p.views ? p.comments / p.views : 0,
+        dow: d.getDay(), hour: d.getHours(), pub: d.getTime(), tags: [...new Set((m.tags || []).map(t => t.toLowerCase()))] });
     }
     return rows;
   }
-  const pctBelow = (arr, v) => { if (!arr.length) return 0; let b = 0; for (const x of arr) if (x < v) b++; return b / arr.length * 100; };
+  // ties count as half — see the note on pjRank. Strictly-less-than graded an account
+  // whose videos all sit at the same engagement rate as F, for being exactly typical.
+  const pctBelow = (arr, v) => {
+    if (!arr.length) return 0;
+    let b = 0, same = 0;
+    for (const x of arr) { if (x < v) b++; else if (x === v) same++; }
+    return (b + same / 2) / arr.length * 100;
+  };
   const letterFor = p => p >= 95 ? 'A+' : p >= 85 ? 'A' : p >= 72 ? 'A-' : p >= 58 ? 'B+' : p >= 45 ? 'B' : p >= 30 ? 'C' : p >= 15 ? 'D' : 'F';
   const gradeColor = g => g[0] === 'A' ? 'var(--up)' : g[0] === 'B' ? 'var(--accent)' : g[0] === 'C' ? 'var(--gold)' : 'var(--down)';
   function avgVpdBy(rows, keyfn, minN) {
@@ -2416,22 +2481,38 @@
     if (rows.length < 4) return null;
     const me = rows.find(r => r.id === vid);
     if (!me) return null;
-    const vpds = rows.map(r => r.vpd), engs = rows.map(r => r.eng), cmts = rows.map(r => r.cmt);
-    const pReach = pctBelow(vpds, me.vpd), pEng = pctBelow(engs, me.eng), pCmt = pctBelow(cmts, me.cmt);
-    const composite = pReach * 0.6 + pEng * 0.25 + pCmt * 0.15;
+    const engs = rows.map(r => r.eng), cmts = rows.map(r => r.cmt);
+    const pEng = pctBelow(engs, me.eng), pCmt = pctBelow(cmts, me.cmt);
+    // Reach only counts when it can be measured fairly. Below four recorded launches the
+    // pool is too small for a percentile to mean anything, so the grade drops the reach
+    // component entirely and says so, rather than quietly substituting a clock for it.
+    const pool = rows.map(r => r.r48).filter(v => v != null);
+    const reach = pool.length >= 4 ? pjRank(pool, me.r48) : null;
+    const composite = reach
+      ? reach.pct * 0.6 + pEng * 0.25 + pCmt * 0.15
+      : pEng * 0.62 + pCmt * 0.38;                 // the same 25:15 split, renormalised
     const grade = letterFor(composite);
     const tips = [];
-    const dowAvg = avgVpdBy(rows, r => r.dow);
-    const best = Object.entries(dowAvg).sort((a, b) => b[1] - a[1])[0];
-    if (best && dowAvg[me.dow] && +best[0] !== me.dow && best[1] >= dowAvg[me.dow] * 1.4)
-      tips.push('Posted on a ' + DAYFULL[me.dow] + '. Your ' + DAYFULL[+best[0]] + ' uploads average ' + (best[1] / dowAvg[me.dow]).toFixed(1) + '× the views/day — try that slot next time.');
+    // Best-day advice, but only from the fair figure. Ranked by views/day this told you
+    // to post on whichever weekday your most RECENT uploads happened to land on, which is
+    // the one piece of this that would actually change what you do.
+    const fair = rows.filter(r => r.r48 != null);
+    if (fair.length >= 6) {
+      const dowAvg = avgVpdBy(fair.map(r => ({ ...r, vpd: r.r48 })), r => r.dow, 2);
+      const best = Object.entries(dowAvg).sort((a, b) => b[1] - a[1])[0];
+      if (best && dowAvg[me.dow] && +best[0] !== me.dow && best[1] >= dowAvg[me.dow] * 1.4)
+        tips.push('Posted on a ' + DAYFULL[me.dow] + '. Your ' + DAYFULL[+best[0]] + ' uploads average ' +
+          (best[1] / dowAvg[me.dow]).toFixed(1) + '× the first-48-hour views — try that slot next time.');
+    }
     const myTags = new Set(me.tags);
     const missing = topTagsByVpd(rows).filter(t => !myTags.has(t.tag)).slice(0, 3);
     if (missing.length) tips.push('Add your winning tags it’s missing: ' + missing.map(t => t.tag).join(', ') + '.');
     if (pEng < 40 && pReach > 55) tips.push('Strong reach, but engagement runs low for you — a clear “like & comment” ask could lift it.');
     if (avgPct && avgPct < 30) tips.push('Only ~' + Math.round(avgPct) + '% of the video gets watched — tighten the first 10–15 seconds to hold viewers.');
     if (!tips.length && composite >= 72) tips.push('This one is firing on all cylinders — study what you did here and repeat it.');
-    return { grade, pct: composite, color: gradeColor(grade), parts: [{ label: 'Reach', pct: pReach }, { label: 'Engagement', pct: pEng }, { label: 'Comments', pct: pCmt }], tips };
+    return { grade, pct: composite, color: gradeColor(grade), reach,
+      parts: (reach ? [{ label: 'First 48h reach', pct: reach.pct }] : []).concat(
+        [{ label: 'Engagement', pct: pEng }, { label: 'Comments', pct: pCmt }]), tips };
   }
   function reportCardHtml(vid, avgPct) {
     const rc = gradeVideo(vid, avgPct);
@@ -2442,9 +2523,18 @@
       const lbl = r >= 50 ? 'top ' + Math.max(1, 100 - r) + '%' : 'beats ' + r + '%';
       return '<div class="gbar"><span class="gl">' + p.label + '</span><span class="gt"><span class="gf" style="width:' + Math.max(3, r) + '%;background:' + gradeColor(letterFor(p.pct)) + '"></span></span><span class="gv">' + lbl + '</span></div>';
     }).join('');
-    return '<div class="dsection"><h4>Report card</h4><p class="explain">How this video ranks against your own catalogue — age-adjusted, so new and old compare fairly.</p>' +
+    // Say what the comparison actually is, and how big the pool is. "Beats 100% of your
+    // posts" reads very differently when the pool turns out to be three.
+    const why = rc.reach
+      ? 'Reach is each video\u2019s first-48-hour total against the ' + rc.reach.n +
+        ' launches recorded so far, so a new upload and an old one are measured over the same stretch of their own lives. Engagement and comments are per-view rates, which age does not touch.'
+      : 'Engagement and comments only, as per-view rates \u2014 age does not touch those. Reach is left out until four launches have been recorded end to end; ranking it before then would be ranking by recency, not by reach.';
+    return '<div class="dsection"><h4>Report card</h4><p class="explain">' + why + '</p>' +
       '<div class="reportcard"><div class="grade-badge" style="background:' + rc.color + '">' + rc.grade + '</div>' +
-      '<div class="grade-meta"><div class="big">Beats ' + Math.round(rc.pct) + '% of your uploads</div><div class="grade-bars">' + bars + '</div></div></div>' +
+      '<div class="grade-meta"><div class="big">' +
+      (rc.reach ? 'Beats ' + Math.round(rc.reach.pct) + '% of your ' + rc.reach.n + ' recorded launches'
+                : 'Graded on engagement alone') +
+      '</div><div class="grade-bars">' + bars + '</div></div></div>' +
       (rc.tips.length ? '<ul class="tips">' + rc.tips.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul>' : '') + '</div>';
   }
   const noteSection = (title, body) => '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + body + '</p></div>';
@@ -2719,7 +2809,7 @@
     // best & worst performers
     const byV = rows.slice().sort((a, b) => b.vpd - a.vpd);
     const nameOf = id => videoTitle(id);
-    html += section('Top 5 videos (by views/day)', 'Age-adjusted, so recent uploads compare fairly with old ones.',
+    html += section('Top 5 videos (by views/day)', 'A pace, not a fair ranking \u2014 a recent upload scores high here simply for being recent. The Report card on any video compares first-48-hour totals instead.',
       hbarList(byV.slice(0, 5).map(r => ({ label: nameOf(r.id), val: Math.round(r.vpd), valText: fmt.format(Math.round(r.vpd)) + '/day' })), { color: 'var(--up)' }));
     if (byV.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical video. Consider refreshing titles, tags or thumbnails.',
       hbarList(byV.slice(-5).reverse().map(r => ({ label: nameOf(r.id), val: Math.max(1, Math.round(r.vpd)), valText: fmt.format(Math.round(r.vpd)) + '/day' })), { color: 'var(--down)' }));
@@ -3364,7 +3454,7 @@
     let ctrMap = {};
     try { ctrMap = (JSON.parse(localStorage.getItem('cc:ctr:v1') || '{}').map) || {}; } catch (e) {}
     html += reportCardHtml(svid, avgPct);
-    html += '<div class="dsection"><h4>Scorecard</h4><p class="explain">Computed live — age doesn’t distort these, so old and new videos compare fairly.</p><div class="metric-grid">' +
+    html += '<div class="dsection"><h4>Scorecard</h4><p class="explain">Computed live from the counts on this page. The rates are per-view and unaffected by age; anything per-DAY is a pace, and a recent upload scores high on it for being recent.</p><div class="metric-grid">' +
       mcell('Engagement', pv.views ? (pv.likes / pv.views * 100).toFixed(1) + '%' : '–', 'likes per view') +
       mcell('Comments /1k views', pv.views ? (pv.comments / pv.views * 1000).toFixed(1) : '–') +
       mcell('Views per day', fmt.format(Math.round(vpd)), 'since upload') +

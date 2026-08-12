@@ -52,8 +52,10 @@ data/             recorded history, committed by the robots
   A progress bar toward the launch's own likely finish, a plain-English sentence with
   the range, and a **Curve** toggle that carries the recorded line forward as a dashed
   projection inside a cone. See *How the projection works* below
-- **Report Card** — an age-adjusted A+…F grade versus your own back catalogue,
-  with "beats X% of your uploads" and tailored tips
+- **Report Card** — an A+…F grade versus your own back catalogue, graded on each launch's
+  **first-48-hour total** so a new upload and an old one are measured over the same stretch
+  of their own lives. Says how big the comparison pool is, and grades on engagement alone
+  until four launches have been recorded end to end. See *Why not views per day* below
 - **Account breakdown** — lifetime totals and per-post averages
 - **Coaching** — best day and time to post, posting rhythm, strongest tags, and a
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
@@ -133,6 +135,31 @@ held-out curve lands inside its own band from five hours on. Past about a day th
 misses are YouTube revising a count downward after the fact, which nothing predicts.
 `node scripts/plateau.test.mjs` lifts the model straight out of the page — so the test
 cannot drift from what ships — and pins these properties.
+
+**Why not views per day**
+
+Because it is a clock wearing a metric's clothes. Views arrive on an S-curve, heavily
+front-loaded, so dividing a total by age in days does not remove age from the number — it
+inverts it. Measured on this account's own recorded curves, the *same video* reads:
+
+| | at 6h | at 48h | at 60 days |
+|---|---|---|---|
+| a 914-view launch | 2,407/day | 457/day | 19/day |
+| a 2,027-view launch | 4,719/day | 1,014/day | 42/day |
+
+A **127× swing on unchanged performance**. The YouTube page floored age at one day, which
+clamped what actually reached the screen to around **40×**; the TikTok page floored it at
+one hour and had no engagement component to dilute it, so its grade was worse.
+
+Both cards now rank on the **first-48-hour total** — recorded where the Worker has the
+curve, projected while the launch is still running, and *absent* where neither is possible,
+which is the honest answer for a video that was never recorded rather than a number that is
+really a timestamp. Percentiles count ties as half, so an account whose posts all sit at
+the same rate reads as typical rather than as bottom of its own catalogue.
+
+Anything still labelled **views/day** — the table column, the sort, Top 5 — is a pace and
+now says so. It is useful for "what is moving right now" and useless for "which of these
+was better", and the copy no longer claims otherwise.
 
 **Compare** (the third page)
 

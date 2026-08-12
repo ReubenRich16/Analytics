@@ -27,7 +27,7 @@ const slice = (from, to) => {
 const model = slice('const PJ_HORIZON', '  function renderProjection()');
 const fmt = new Intl.NumberFormat('en-US');
 const M = new Function('fmt', 'const esc=String, niceScale=()=>({lo:0,hi:1,ticks:[0,1]}), axisNum=String;\n' + model +
-  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,pjAt,pjRef,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS};')(fmt);
+  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,pjAt,pjRef,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS,pj48,pjRank};')(fmt);
 
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => { if (c) { pass++; console.log('  ✓', n); } else { fail++; console.log('  ✗', n, x); } };
@@ -309,6 +309,58 @@ function loo(all, h) {
     check(name + ' still renders something', !!html && html.replace(/<[^>]*>/g, '').trim().length > 20,
       name + ' -> ' + JSON.stringify(html).slice(0, 60));
   }
+}
+
+/* 11 — the reach metric that replaces views-per-day */
+{
+  const full = scurve(2000, 8);                       // a finished launch
+  const part = scurve(2000, 8).filter(p => p[0] <= 6 * 60);   // one six hours in
+  const refs = [scurve(1900, 8.1), scurve(2100, 7.9), scurve(1500, 8)].map(M.pjRef);
+  const cands = [];
+
+  check('a finished launch reports its recorded 48h total',
+    M.pj48(full, 60 * 60, 9999, refs, cands) === M.pjAt(full, 48 * 60));
+  check('and ignores the lifetime count it is handed',
+    M.pj48(full, 60 * 60, 9999, refs, cands) < 3000);
+
+  const proj = M.pj48(part, 6 * 60, M.pjAt(part, 6 * 60), refs, cands);
+  check('a launch still running reports its projection', proj > 1500 && proj < 2600, proj);
+
+  check('a video with no curve and no projection reports nothing, not a guess',
+    M.pj48(null, 60 * 60, 5000, refs, cands) === null);
+  check('nor does one under way with too few references',
+    M.pj48(null, 6 * 60, 500, [], cands) === null);
+
+  // THE PROPERTY THE OLD METRIC FAILED: the same launch must score the same at any age
+  const at6 = M.pj48(part, 6 * 60, M.pjAt(part, 6 * 60), refs, cands);
+  const at48 = M.pj48(full, 48 * 60 + 1, M.pjAt(full, 48 * 60), refs, cands);
+  const at60d = M.pj48(full, 60 * 1440, 4000, refs, cands);
+  check('the same launch scores within a fifth of itself at 6h, 48h and 60 days',
+    Math.max(at6, at48, at60d) / Math.min(at6, at48, at60d) < 1.2,
+    [at6, at48, at60d].map(Math.round).join(' / '));
+  // For contrast, the metric this replaces, on the same three readings. The Math.max(1,…)
+  // is the day-one floor the YouTube page applies, which is what kept the visible swing to
+  // ~40x on the real curves rather than the ~127x the raw ratio produces. The assertion is
+  // relative rather than a picked threshold: what matters is that the old number moves
+  // many times more than the new one on identical performance.
+  const vpd = (v, ageD) => v / Math.max(1, ageD);
+  const oldSwing = vpd(M.pjAt(part, 6 * 60), 0.25) / vpd(4000, 60);
+  const newSwing = Math.max(at6, at48, at60d) / Math.min(at6, at48, at60d);
+  check('views-per-day swings many times more than the fair metric on the same launch',
+    oldSwing / newSwing > 5, oldSwing.toFixed(1) + 'x vs ' + newSwing.toFixed(2) + 'x');
+
+  const pool = [100, 200, 300, 400];
+  check('pjRank reports the percentile and the pool size',
+    M.pjRank(pool, 350).pct === 75 && M.pjRank(pool, 350).n === 4);
+  // a tie belongs in the middle of its group. Strictly-less-than graded an account whose
+  // posts all sit at the same rate as F, for being exactly typical.
+  check('an exact tie with the whole pool is the middle, not the bottom',
+    M.pjRank([5, 5, 5, 5], 5).pct === 50, M.pjRank([5, 5, 5, 5], 5).pct);
+  check('and a tie inside a spread splits its own group',
+    M.pjRank([1, 5, 5, 9], 5).pct === 50, M.pjRank([1, 5, 5, 9], 5).pct);
+  check('the best in the pool still tops it', M.pjRank([1, 2, 3, 9], 9).pct === 87.5);
+  check('and refuses a null value rather than ranking it as zero', M.pjRank(pool, null) === null);
+  check('and an empty pool', M.pjRank([], 5) === null);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

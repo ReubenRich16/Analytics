@@ -997,6 +997,46 @@
     };
   }
 
+  /* The age-fair reach figure: what a launch did, or is heading for, in its FIRST 48 HOURS.
+
+     The metric it replaces was views divided by age in days, described on screen as
+     "age-adjusted, so new and old compare fairly". It is neither. Views arrive on an
+     S-curve, heavily front-loaded, so dividing by age does not remove age from the number
+     — it inverts it. On this account's own recorded curves the SAME video reads 2,407
+     views/day six hours in and 19 views/day at sixty days. The day-one floor in the old
+     helper clamps what actually reached the screen to about a 40x swing, which is still
+     enough to rank a video top of the catalogue on its first morning and bottom of it two
+     months later on identical performance. Sixty per cent of the letter grade was that
+     number; on TikTok, where the floor is an hour rather than a day and there is no
+     engagement component to dilute it, all of it was.
+
+     A first-48-hours total has no such problem, because every video is measured over the
+     same stretch of its own life. Recorded where the curve reaches the horizon, projected
+     while the launch is still running, and null where neither is possible — null being the
+     honest answer for a video that was never recorded, rather than a number that is really
+     a clock. */
+  function pj48(curve, age, views, refs, cands) {
+    if (curve && pjClean(curve) >= PJ_COVER) return pjAt(curve, PJ_HORIZON);
+    if (age < PJ_HORIZON) {
+      const p = pjProject(refs, age, views, cands);
+      if (p.state === 'ok') return p.mid;
+    }
+    return null;
+  }
+  // Percentile within a pool, plus the pool size — the size is half the answer, because
+  // "beats 100%" of two things is not the same claim as "beats 100%" of eighty.
+  //
+  // Midrank, counting ties as half. Strictly-less-than puts every member of a tied group
+  // at the bottom of it, so an account whose posts all sit at the same rate scores 0% and
+  // grades F across the board — the metric reporting "worst possible" for "exactly
+  // typical". Half-credit for ties puts a tie where it belongs, in the middle.
+  const pjRank = (pool, v) => {
+    if (!pool.length || v == null) return null;
+    let below = 0, same = 0;
+    for (const x of pool) { if (x < v) below++; else if (x === v) same++; }
+    return { pct: (below + same / 2) / pool.length * 100, n: pool.length };
+  };
+
   // Option C — the launch as progress toward its own finish. The track's full length is
   // the optimistic end of the range, so the pale block always meets the right edge and
   // the eye reads "how much of the bar is filled" as "how far along this is".
@@ -1208,20 +1248,52 @@
       html += '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
         '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
     }
-    // how it compares to the account's own typical post
+    /* How it compares to the account's own posts.
+
+       This was the worst instance of the views-per-day problem on either dashboard: the
+       whole grade came from paceOf, with an age floor of one hour rather than a day and no
+       engagement component to dilute it, so the newest post won essentially by definition.
+       It is now the first-48-hour total — recorded where the Worker has the curve,
+       projected while the launch is still running — and the pool is only the posts that
+       have one. Where that pool is too small the card grades on the engagement rate, which
+       is a ratio of views and so is not affected by age at all. */
     const others = videos.filter(x => x.id !== v.id);
     if (others.length >= 3) {
-      const paces = others.map(paceOf).sort((a, b) => a - b);
-      const med = paces[paces.length >> 1] || 1;
-      const idx = Math.round(paceOf(v) / med * 100);
-      const beats = Math.round(others.filter(o => paceOf(o) < paceOf(v)).length / others.length * 100);
+      const vids2 = (hist && hist.videos) || {};
+      const refs = [], cands = [];
+      for (const [id, rec] of Object.entries(vids2)) {
+        if (!rec || !rec.create_time) continue;
+        const c = pjCurveOf(id, rec.create_time, rec);
+        cands.push({ curve: c, age: Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000)) });
+        const r = pjRef(c); if (r) refs.push(r);
+      }
+      const r48Of = x => {
+        const rec2 = vids2[x.id], c = rec2 ? pjCurveOf(x.id, rec2.create_time, rec2) : null;
+        const ageM = Math.max(0, Math.round((Date.now() - x.create_time * 1000) / 60000));
+        return pj48(c, ageM, x.view_count || 0, refs.filter(r => r.c !== c), cands.filter(cc => cc.curve !== c));
+      };
+      const mine = r48Of(v);
+      const pool = videos.map(r48Of).filter(x => x != null);
+      const rank = pool.length >= 4 ? pjRank(pool, mine) : null;
+      const engs = others.map(engOf).sort((a, b) => a - b);
+      const engRank = pjRank(videos.map(engOf), engOf(v));
+      const engBeats = Math.round(engRank ? engRank.pct : 0);
+      const beats = rank ? Math.round(rank.pct) : engBeats;
       const grade = beats >= 95 ? 'A+' : beats >= 85 ? 'A' : beats >= 72 ? 'A-' : beats >= 58 ? 'B+' : beats >= 45 ? 'B' : beats >= 30 ? 'C' : beats >= 15 ? 'D' : 'F';
       const col = grade[0] === 'A' ? 'var(--up)' : grade[0] === 'B' ? 'var(--accent)' : grade[0] === 'C' ? 'var(--gold)' : 'var(--down)';
-      html += '<div class="dsection"><h4>Report card</h4><p class="explain">How this post ranks against your own account — age-adjusted, so new and old compare fairly.</p>' +
+      const medEng = engs[engs.length >> 1] || 1;
+      const idx = Math.round(engOf(v) / medEng * 100);
+      html += '<div class="dsection"><h4>Report card</h4><p class="explain">' +
+        (rank
+          ? 'Each post\u2019s first-48-hour total against the ' + rank.n + ' launches recorded so far, so a new post and an old one are measured over the same stretch of their own lives.'
+          : 'Engagement rate only \u2014 likes per view, which age does not touch. Reach is left out until four launches have been recorded end to end; ranking it before then would be ranking by recency, not by reach.') +
+        '</p>' +
         '<div class="reportcard"><div class="grade-badge" style="background:' + col + '">' + grade + '</div>' +
-        '<div class="grade-meta"><div class="big">Beats ' + beats + '% of your posts</div>' +
+        '<div class="grade-meta"><div class="big">Beats ' + beats + '% of your ' +
+        (rank ? rank.n + ' recorded launches' : 'posts on engagement') + '</div>' +
         '<div class="grade-bars">' +
-        '<div class="gbar"><span class="gl">Pace</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
+        (rank ? '<div class="gbar"><span class="gl">First 48h</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(rank.pct)) + '%;background:' + col + '"></span></span><span class="gv">' + fmt.format(Math.round(mine)) + ' views</span></div>' : '') +
+        '<div class="gbar"><span class="gl">Engagement</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
         '</div></div></div></div>';
     }
     $('latestContent').innerHTML = html;
@@ -1259,7 +1331,7 @@
       mcell('Share rate', (t.views ? t.shares / t.views * 100 : 0).toFixed(2) + '%') +
       '</div></div>';
     const top = videos.slice().sort((a, b) => paceOf(b) - paceOf(a));
-    html += section('Top 5 posts (by views/day)', 'Age-adjusted so recent posts compare fairly with old ones.',
+    html += section('Top 5 posts (by views/day)', 'A pace, not a fair ranking \u2014 a recent post scores high here simply for being recent. The Report card on any post compares first-48-hour totals instead.',
       hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(paceOf(v)), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--up)' }));
     if (top.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical post.',
       hbarList(top.slice(-5).reverse().map(v => ({ label: capOf(v), val: Math.max(1, Math.round(paceOf(v))), valText: fmt.format(Math.round(paceOf(v))) + '/day' })), { color: 'var(--down)' }));
