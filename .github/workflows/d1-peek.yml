@@ -72,6 +72,35 @@ jobs:
             "  newest 14 samples of \($id):",
             ( $tail[] | "    ts=\(.[0])  \((.[0]/1000)|floor|todate)  +\(.[0] % 60000)ms  views=\(.[1])" )' /tmp/bundle.json
 
+      # Why the plateau projection is or isn't speaking. It needs REFERENCE CURVES: the
+      # first 48 hours of launches that already finished. The bundle above cannot carry
+      # those — it cuts on an absolute timestamp — so they come from /launches instead,
+      # and if this step reports fewer than two usable curves the card is correctly
+      # staying quiet rather than being broken.
+      #
+      # The pass/fail rules mirror the model in the page: a curve must reach at least 44h
+      # of age, and no gap may exceed a quarter of the age at which it ends (floor 60m),
+      # which is what separates a missed cron in the flat tail from the 21-hour holes the
+      # 6h→48h window change left behind.
+      - name: Reference curves for the projection
+        if: always()
+        run: |
+          curl -sS "https://yt.reubenrichardson37.workers.dev/launches" -o /tmp/launches.json
+          jq -r 'if .error then "ERROR: \(.error)"
+                 else "served \(.curves | length) finished launches  (cached at \((.at/1000)|floor|todate), one point per \(.step) min)" end' /tmp/launches.json
+          jq -r '(.curves // {}) | to_entries[] |
+            .key as $id | [.value.s[][0]] as $a |
+            ([range(1; $a|length) | select(($a[.] - $a[.-1]) > ([60, ($a[.] / 4)] | max))] | length) as $holes |
+            "  \($id)  points=\($a|length)  first=\($a[0])m  last=\($a[-1])m  final=\(.value.s[-1][1]) views  " +
+            (if ($a[-1] >= 2640 and $holes == 0) then "USABLE" else "rejected: " +
+              (if $a[-1] < 2640 then "stops at \(($a[-1]/60)|floor)h" else "\($holes) hole(s) where it matters" end) end)' /tmp/launches.json
+          jq -r '[(.curves // {}) | to_entries[] | select((([.value.s[][0]]) as $a |
+                   $a[-1] >= 2640 and ([range(1; $a|length) | select(($a[.] - $a[.-1]) > ([60, ($a[.] / 4)] | max))] | length) == 0))] | length as $n |
+                 "usable references: \($n) — " +
+                 (if $n >= 3 then "enough to measure the margin from your own curves"
+                  elif $n == 2 then "enough to project, margin falls back to the recorded defaults"
+                  else "NOT ENOUGH; the card will say so" end)' /tmp/launches.json
+
       # Where the TikTok pipeline stops. An account is connected but D1 holds no TikTok
       # rows at all, and the difference between "no token", "token expired", "no posts in
       # the window" and "written but not mirrored" is four different fixes. Every value
