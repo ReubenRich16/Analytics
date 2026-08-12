@@ -286,6 +286,44 @@ console.log('\n6. the answer is cached on the roster, not on a timer');
   check('a broken KV still serves fresh curves', !!out.curves.v);
 }
 
+/* 6b — the empty roster, which is the state every new account starts in */
+console.log('\n6b. an account with nothing to serve still gets to use the cache');
+{
+  /* The freshness test was `hit.ids && ...`. An account with no finished launches has an
+     empty roster, and an empty roster joins to '' — falsy — so the cache never hit, and
+     the one account with nothing worth caching was the one that went to D1 on every single
+     request. Invisible in the output: the answer is correct either way, it is just paid
+     for over and over. This is also the state her account was in for the first two days,
+     and the state any new platform starts in. */
+  const vids = [], rows = [];
+  const DB = mockD1(vids, rows);
+  const MINUTE = mockKV();
+  const env = { DB, MINUTE };
+  W.pjMemo.clear();
+
+  const first = await W.launchBody(env, 'yt');
+  check('an empty roster still produces an answer', !!first && !!first.curves, JSON.stringify(first));
+  check('with no curves in it', Object.keys(first.curves).length === 0);
+  check('and its empty roster recorded as a string, not as nothing', first.ids === '', JSON.stringify(first.ids));
+  check('it is written to the cache like any other answer', MINUTE.puts() === 1, MINUTE.puts());
+
+  W.pjMemo.clear();
+  const before = DB.stats().rowsRead;
+  const second = await W.launchBody(env, 'yt');
+  check('the second call hits that cache', DB.stats().rowsRead - before < 50, DB.stats().rowsRead - before + ' rows');
+  check('and does not rewrite it', MINUTE.puts() === 1, MINUTE.puts());
+  check('serving the same empty answer', second.ids === '' && Object.keys(second.curves).length === 0);
+
+  // and the first real launch still breaks the cache, empty-to-nonempty like any other change
+  const pub = NOW - 100 * HOUR;
+  vids.push({ platform: 'yt', video_id: 'first', published_at: pub, title: '', cover: '' });
+  rows.push(...launch('yt', 'first', pub, 900, 8));
+  W.pjMemo.clear();
+  const grown = await W.launchBody(env, 'yt');
+  check('the first finished launch rebuilds immediately', grown.ids === 'first', grown.ids);
+  check('and is there to project from', !!grown.curves.first);
+}
+
 /* 7 — what the route emits is what the model can use */
 console.log('\n7. end to end: emitted curves drive a real projection');
 {

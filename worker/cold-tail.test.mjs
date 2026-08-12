@@ -65,17 +65,48 @@ console.log('\n2. the arithmetic the comment promises');
   const hot = perDay * (W.HOT_HOURS / 24) * mins;
   const warm = perDay * (W.COLD_WARM_DAYS - W.HOT_HOURS / 24) * (mins / W.COLD_WARM_MIN);
   const cool = perDay * (W.D1_KEEP_DAYS - W.COLD_WARM_DAYS) * (mins / W.COLD_COOL_MIN);
-  const rowWrites = (hot + warm + cool) * 2;              // table + covering index
+  /* A sample insert costs ONE row-write per index on the table, plus one for the row
+     itself — the comment in worker.js said a flat two for a while, which was true only
+     while samples carried one index, and undercounted everything by a third once it
+     carried two. So count them out of schema.sql rather than writing a number down here
+     and letting it rot: this is exactly the figure that already rotted once. */
+  const schema = fs.readFileSync(HERE + 'schema.sql', 'utf8');
+  const idx = (schema.match(/CREATE INDEX[^;]*\bON samples\b/gi) || []).length;
+  const W_PER = 1 + idx;
+  // TikTok's side of the table, which this file cannot derive: its cadence is set by the
+  // list API's 20-a-page cap rather than by coldDue, and by her posting rate
+  const ttHot = 7200, ttTail = 720;
+  const samples = hot + warm + cool + ttHot + ttTail;
+  const rowWrites = samples * W_PER;
   check('YouTube hot is about 6,300 samples a day', Math.abs(hot - 6336) < 300, Math.round(hot));
   check('the tail adds a few thousand, not tens of thousands', warm + cool < 8000, Math.round(warm + cool));
+  check('both platforms come to the ~19,200 samples/day the table claims',
+    Math.abs(samples - 19200) < 700, Math.round(samples));
+  check('the schema keeps exactly one index on samples', idx === 1, idx + ' found');
+  check('the redundant prune index is dropped rather than created',
+    /DROP INDEX IF EXISTS idx_samples_prune/.test(schema) &&
+    !/CREATE INDEX[^;]*idx_samples_prune/i.test(schema));
+  check('so the sampler costs the ~38,000 row-writes/day the comment claims',
+    Math.abs(rowWrites - 38000) < 2000, Math.round(rowWrites));
+  check('the hot windows alone are about 27,000 of it',
+    Math.abs((hot + ttHot) * W_PER - 27000) < 2000, Math.round((hot + ttHot) * W_PER));
   check('the total fits the 100,000/day row-write allowance with room to spare',
-    rowWrites < 60000, Math.round(rowWrites) + ' row-writes/day');
-  // and the thing that would NOT fit, which is why the cadence tapers at all
-  const flat = perDay * W.D1_KEEP_DAYS * mins * 2;
+    rowWrites < 70000, Math.round(rowWrites) + ' row-writes/day');
+  /* The live database still carries the extra index — the deploy's schema step has been
+     failing since the API token lost its D1 permission, so the DROP above is queued rather
+     than applied. Until it lands the real bill is a third higher, which is the number that
+     has to fit, not the one the schema wants. */
+  check('and would still fit even while the extra index is still live',
+    samples * (W_PER + 1) < 70000, Math.round(samples * (W_PER + 1)) + ' row-writes/day');
+  // and the thing that would NOT fit, which is why the cadence tapers at all.
+  // YouTube against YouTube — the flat figure here has no TikTok in it, so the tapered
+  // side must not either, or the ratio quietly compares two different channels.
+  const flat = perDay * W.D1_KEEP_DAYS * mins * W_PER;
+  const ytTapered = (hot + warm + cool) * W_PER;
   check('minute-by-minute for the whole retention would not fit', flat > 100000,
     Math.round(flat) + ' row-writes/day');
-  check('the taper is at least ten times cheaper than that', flat / rowWrites > 10,
-    (flat / rowWrites).toFixed(1) + 'x');
+  check('the taper is at least ten times cheaper than that', flat / ytTapered > 10,
+    (flat / ytTapered).toFixed(1) + 'x');
 }
 
 /* 3 — coldTick itself */
@@ -156,6 +187,37 @@ function stubApi(calls) {
 {
   check('with no D1 binding it declines rather than throwing',
     (await W.coldTick({}, 'KEY', NOW)).skipped === 'no D1');
+}
+
+{
+  /* The due-check reads its minute from `slot`, not from a fresh clock.
+     Rows are filed under slot — that is the whole point of passing it — so a tick that
+     starts at 14:59.9 and reads the clock again a few hundred milliseconds later decides
+     it is minute 15, samples the entire cold roster, and files it all under minute 14.
+     The next tick then does minute 15 properly, and the fifteen-minute series has two
+     points a minute apart. Cheap to get wrong, invisible afterwards: the rows look fine
+     individually, and only the spacing gives it away.
+     These two cases pull slot and clock apart in both directions. */
+  const roster = [{ platform: 'yt', video_id: 'v', published_at: NOW - 5 * D, title: '', channel: 'UC1' }];
+  const at = m => { const d = new Date(NOW); d.setUTCMinutes(m, 0, 0); return d.getTime(); };
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  globalThis.fetch = async u => ({ ok: true, status: 200, json: async () => ({
+    items: new URL(String(u)).searchParams.get('id').split(',')
+      .map(id => ({ id, statistics: { viewCount: '100', likeCount: '10', commentCount: '1' } })) }) });
+  try {
+    // clock has ticked over to a due minute; the slot being worked has not
+    Date.now = () => at(15);
+    const early = mockD1(roster);
+    const r1 = await W.coldTick({ DB: early }, 'KEY', at(14));
+    check('a slot at minute 14 does nothing even when the clock says 15',
+      r1.due === 0 && early.stats().rowsRead === 0, JSON.stringify(r1));
+
+    // and the other way: the slot is due, the clock has already moved past it
+    Date.now = () => at(16);
+    const late = mockD1(roster);
+    const r2 = await W.coldTick({ DB: late }, 'KEY', at(15));
+    check('a slot at minute 15 runs even when the clock says 16', r2.due === 1, JSON.stringify(r2));
+  } finally { globalThis.fetch = realFetch; Date.now = realNow; }
 }
 
 {

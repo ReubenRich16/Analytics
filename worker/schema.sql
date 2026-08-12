@@ -34,9 +34,22 @@ CREATE TABLE IF NOT EXISTS videos (
   PRIMARY KEY (platform, video_id)
 ) WITHOUT ROWID;
 
--- The primary key already covers per-video reads. This one is for the nightly prune,
--- which deletes by age across every platform at once.
-CREATE INDEX IF NOT EXISTS idx_samples_prune ON samples (ts);
+-- Dropped, not created. This was an index on (ts) alone, added for a nightly prune that
+-- deleted by age across every platform at once: `DELETE FROM samples WHERE ts < ?`, which
+-- has no platform to seek on and so needed its own index.
+--
+-- That prune no longer exists. It loops one platform at a time now — see the comment above
+-- the loop in d1Prune — precisely so that idx_samples_window can serve the DELETE and this
+-- index is not needed. The loop landed; the index did not get removed with it.
+--
+-- Leaving it costs a row-write on every single sample insert, forever, to serve one DELETE
+-- a night that no longer wants it. D1 bills a row-write per index, so at ~19,200 samples a
+-- day this index alone is ~19,200 of the 100,000/day allowance — it takes the sampler from
+-- ~38,000 to ~58,000. Nothing reads it: every SELECT against samples is
+-- `WHERE platform = ? AND ts …`, which idx_samples_window covers outright.
+--
+-- IF EXISTS, so this is a no-op on a database that never had it.
+DROP INDEX IF EXISTS idx_samples_prune;
 
 -- The one the served bundle actually needs.
 --

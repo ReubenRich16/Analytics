@@ -310,11 +310,18 @@ months. A tapering cadence now carries it the whole way:
 | 14–60 days | hourly | a month out, minute sampling would record that nothing happened |
 
 Measured against this account's real publish rate — 2.2 uploads a day on YouTube, ~2.5
-posts a day on TikTok — that is about **19,200 samples a day**, or 38,000 of the
-100,000/day row-write allowance. Flat minute sampling across the full 60 days would be
-**over 380,000 a day**, four times the entire allowance, which is why the cadence tapers
-rather than staying flat. TikTok costs nothing extra at all: the cron already fetched the
-post list every five minutes and was discarding every row outside the launch window.
+posts a day on TikTok — that is about **19,200 samples a day**. D1 bills a row-write for
+the table row *and* one for every index on it, and `samples` keeps one, so that is
+**~38,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
+would be **over 400,000 samples a day** — more than 800,000 row-writes, eight times the
+entire allowance — which is why the cadence tapers rather than staying flat. TikTok costs
+nothing extra at all: the cron already fetched the post list every five minutes and was
+discarding every row outside the launch window.
+
+One caveat on that figure: the live database still carries a second, redundant index on
+`samples`, which makes the real bill ~58,000 until it goes. `schema.sql` drops it, but the
+deploy's schema step has been failing since the API token lost its **Account → D1 → Edit**
+permission, so the drop is queued rather than applied. Both numbers fit the allowance.
 
 Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
 back only the minutes it hasn't seen, because re-shipping a 48-hour window every three

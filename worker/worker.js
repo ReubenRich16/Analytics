@@ -39,8 +39,8 @@ const D1_BACKFILL_V = 3;
 // samples lived in a KV blob rewritten once a minute; D1 stores one row per sample
 // instead, so the cost of a wider window is rows (of 100,000 a day) rather than KV
 // writes (of 1,000 a day). At 3 posts/day/platform this window keeps ~12 videos hot at
-// once = ~17,280 samples/day, and each insert costs 2 row-writes (the table plus the
-// covering index), so ~35% of the daily budget. Sampling stays flat at one a minute for
+// once = ~17,280 samples/day, and each insert costs 2 row-writes (the table plus its one
+// index — see the budget note below), so ~35% of the daily budget. Sampling stays flat for
 // the whole window: a tiered cadence would save rows, but it also makes the gap between
 // consecutive samples vary, which silently breaks any chart that plots by array position.
 const HOT_HOURS   = 48;
@@ -66,10 +66,20 @@ const HOT_HOURS   = 48;
                                                            ─────────
                                                             ~19,200 samples/day
 
-   Each insert costs two row-writes (the table plus the covering index), so about 38,000
-   of the 100,000/day allowance, against roughly 27,000 for the hot windows alone. Reading
-   the roster to decide who is due costs under 200 rows every 15 minutes. The extra
-   YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
+   D1 bills a row-write for the table row AND one for every index on it, so the cost per
+   sample is 1 + (indexes on samples). schema.sql keeps exactly one, which puts this at
+   about 38,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
+   alone.
+
+   Two caveats worth knowing. This comment said a flat "two row-writes" while samples
+   carried a second index, and undercounted the whole thing by a third — the arithmetic is
+   checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And the
+   live database still has that second index: schema.sql drops it, but the deploy's schema
+   step has been failing since the API token lost its D1 permission, so until that is fixed
+   the real bill is ~58,000. Both numbers fit; only one of them is the plan.
+
+   Reading the roster to decide who is due costs under 200 rows every 15 minutes. The
+   extra YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
    nothing extra at all: the cron already fetches the post list and was throwing away
    every row outside the launch window.
 
@@ -401,7 +411,10 @@ async function launchBody(env, platform) {
   try { hit = await env.MINUTE.get(key, 'json'); } catch (e) {}
 
   let vids = null, ids = null;
-  if (hit && hit.curves && hit.ids && now - (hit.at || 0) < PJ_STALE) {
+  // `hit.ids != null`, not truthiness: an account with no finished launches has an empty
+  // roster, which serialises to '' and made the cache miss — so the one case with nothing
+  // to serve was the one that hit D1 on every single request.
+  if (hit && hit.curves && hit.ids != null && now - (hit.at || 0) < PJ_STALE) {
     vids = await d1Finished(env, platform);
     ids = vids.map(v => v.video_id).join(',');
     if (ids === hit.ids) { pjMemo.set(key, { at: now, body: hit }); return hit; }
@@ -482,14 +495,19 @@ async function d1Prune(env, now) {
       const r = await env.DB.prepare('DELETE FROM samples WHERE platform = ? AND ts < ?').bind(p.platform, cutoff).run();
       pruned += (r && r.meta && r.meta.changes) || 0;
     }
-    // Videos age out too, or the table grows forever and every bundle read pays for it
-    // (the videos SELECT has no time bound — it can't, the bundle needs each curve's
-    // metadata). The extra hotMs of margin matters: a video keeps producing samples until
-    // HOT_HOURS after it was published, so pruning strictly at `published_at < cutoff`
-    // would delete the row while its last samples were still inside the retention window,
-    // orphaning them — present in the table but invisible in the bundle, which walks
-    // videos. Outliving the last possible sample is what keeps that from happening.
-    const vcut = cutoff - HOT_HOURS * 3600e3;
+    /* Videos age out too, or the table grows forever and every bundle read pays for it
+       (the videos SELECT has no time bound — it can't, the bundle needs each curve's
+       metadata). The margin matters: deleting the row while its samples are still inside
+       the retention window orphans them, present in the table but invisible to every read,
+       all of which walk videos.
+
+       That margin used to be HOT_HOURS, which was right when a video stopped producing
+       samples two days after publication. The cold tail changed it: a video now keeps
+       being sampled until it is D1_KEEP_DAYS old, and each of those samples then survives
+       another D1_KEEP_DAYS. So the last sample belonging to a video published at P is
+       pruned at P + 2 * D1_KEEP_DAYS, and the row has to outlive that. At this account's
+       rate the videos table holds a few hundred rows either way. */
+    const vcut = cutoff - D1_KEEP_DAYS * 864e5;
     const vr = await env.DB.prepare('DELETE FROM videos WHERE published_at < ?').bind(vcut).run();
     return { pruned, videos: (vr && vr.meta && vr.meta.changes) || 0, platforms: (parts.results || []).length };
   } catch (e) {
@@ -503,7 +521,11 @@ async function d1Prune(env, now) {
    recording — which is the part that cannot be redone later. */
 async function coldTick(env, key, slot) {
   if (!env.DB) return { skipped: 'no D1' };
-  const now = Date.now(), minute = new Date(now).getUTCMinutes();
+  // The minute comes from `slot`, not a fresh clock. Rows are filed under slot, so reading
+  // the clock again here lets a tick that started at 14:59.9 decide it is minute 15 and
+  // file a "minute 15" sample under minute 14 — and then do it again a moment later under
+  // the real minute 15, putting two cold samples a minute apart in a fifteen-minute series.
+  const now = Date.now(), minute = new Date(slot).getUTCMinutes();
   if (minute % COLD_WARM_MIN !== 0) return { due: 0 };
   const r = await env.DB.prepare(
     'SELECT video_id, published_at, title, channel FROM videos WHERE platform = ? AND published_at >= ? AND published_at < ?'
@@ -862,6 +884,28 @@ const TT_VIDEO_FIELDS = 'id,title,video_description,duration,cover_image_url,sha
 const TT_USER_FIELDS = 'open_id,avatar_url,display_name,username,profile_deep_link,follower_count,following_count,likes_count,video_count';
 
 const rand = n => { const a = new Uint8Array(n || 24); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, '0')).join(''); };
+/* Where the sign-in flow is allowed to send the browser back to.
+
+   The callback puts the session id in the redirect fragment, so whatever passes this test
+   can read the session. That makes it worth being boring about: an exact host list, parsed
+   rather than pattern-matched.
+
+   It used to be /^https:\/\/[a-z0-9.-]*github\.io\//i, which does not say what it looks
+   like it says — [a-z0-9.-]* happily matches "evil", so https://evilgithub.io/ passed, and
+   a domain anyone could register was one regex away from the session. Requiring the dot
+   closes that, but not the wider version of it: *.github.io is a namespace anyone can join
+   by making a repo, so `endsWith('.github.io')` hands the session to any GitHub user who
+   asks. Only the one host that actually serves these dashboards belongs here.
+
+   localhost and 127.0.0.1 are allowed over http for local testing; everything else is
+   https or nothing. */
+const RETURN_HOSTS = ['reubenrich16.github.io', 'localhost', '127.0.0.1'];
+function returnOk(ret) {
+  let u;
+  try { u = new URL(String(ret)); } catch (e) { return false; }
+  if (!RETURN_HOSTS.includes(u.hostname)) return false;
+  return u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+}
 const ttRedirect = url => new URL(url).origin + '/tiktok/callback';
 
 // A readable page instead of a bare Cloudflare error, with the usual culprit spelled out.
@@ -1067,7 +1111,7 @@ async function ttHandler(request, env, url) {
     // kept "in case": the /tiktok/me copy fired on every 60-second dashboard poll, about
     // 480 writes a day per open tab, which on its own would have consumed the 1,000/day
     // KV budget that the tracker's write gate exists to stay inside.
-    const dest = /^https:\/\/[a-z0-9.-]*github\.io\//i.test(ret) ? ret : 'https://reubenrich16.github.io/Analytics/tiktok.html';
+    const dest = returnOk(ret) ? ret : 'https://reubenrich16.github.io/Analytics/tiktok.html';
     return Response.redirect(dest + (dest.includes('#') ? '' : '#') + 'tt=' + sid, 302);
   }
 

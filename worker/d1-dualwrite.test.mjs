@@ -153,13 +153,21 @@ console.log('\n6. Prune: daily slot only, per platform, and never orphans a samp
     DB.rows.videos.set(platform+'|'+id, [platform, id, pub, '', '', '', pub]);
     for (const ts of sampleTs) DB.rows.samples.set([platform,id,ts].join('|'), [platform, id, ts, 1, 0, 0, 0]);
   };
-  put('yt',        'old',   at - 90*DAY, [at - 90*DAY, at - 61*DAY]);   // entirely past retention
-  put('yt',        'keep',  at - 10*DAY, [at - 10*DAY, at - 1*DAY]);    // well inside
-  put('tt:acct-a', 'ttOld', at - 80*DAY, [at - 80*DAY]);
-  // the orphan case: published just past the cutoff, but still sampling when it crossed,
-  // so it owns samples that are INSIDE retention. Deleting its videos row would leave
-  // those samples in the table and invisible in the bundle, which walks videos.
+  // A video published at P is still cold-sampled until it is KEEP old, and each of those
+  // samples then survives another KEEP. So its last sample is pruned at P + 2 * KEEP, and
+  // its metadata row has to outlive that — anything shorter deletes the row out from under
+  // live samples, which then sit in the table invisible to every read, all of which walk
+  // videos. These four rows walk that boundary.
+  put('yt',        'old',   at - 130*DAY, [at - 130*DAY, at - 61*DAY]);  // past P + 2*KEEP
+  put('yt',        'keep',  at - 10*DAY,  [at - 10*DAY, at - 1*DAY]);    // well inside
+  put('tt:acct-a', 'ttOld', at - 121*DAY, [at - 80*DAY]);                // one day past, no live samples
+  // the orphan case: published long past the sample cutoff, but the cold tail was still
+  // recording it when that cutoff went by, so it owns samples INSIDE retention.
   put('tt:acct-a', 'edge',  at - KEEP - 3600e3, [at - KEEP + 3600e3]);
+  // the case the old HOT_HOURS margin got wrong: published 90 days ago, so its videos row
+  // was deleted, but the cold tail sampled it until day 60 and that sample is only 30 days
+  // old — comfortably inside retention, and orphaned the moment the row went.
+  put('yt',        'tail',  at - 90*DAY, [at - 30*DAY]);
 
   const b = await W.d1Prune({DB}, off.getTime());
   check('skips every other minute', !!b.skipped, JSON.stringify(b));
@@ -172,7 +180,12 @@ console.log('\n6. Prune: daily slot only, per platform, and never orphans a samp
     DB.rows.samples.has(['tt:acct-a','edge',at - KEEP + 3600e3].join('|')));
   check('and keeps its metadata row, so that sample stays visible',
     DB.rows.videos.has('tt:acct-a|edge'), [...DB.rows.videos.keys()].join(','));
+  check('a cold-tail sample keeps its video alive past the old HOT_HOURS margin',
+    DB.rows.videos.has('yt|tail'), [...DB.rows.videos.keys()].join(','));
+  check('its sample is still there to be read',
+    DB.rows.samples.has(['yt','tail',at - 30*DAY].join('|')));
   check('genuinely ancient videos are dropped', !DB.rows.videos.has('yt|old'), [...DB.rows.videos.keys()].join(','));
+  check('including one only just over the line', !DB.rows.videos.has('tt:acct-a|ttOld'), [...DB.rows.videos.keys()].join(','));
   check('recent videos are untouched', DB.rows.videos.has('yt|keep'));
 }
 console.log('\n7. Timestamps survive the write (regression: `| 0` truncated epoch ms to 1969)');
