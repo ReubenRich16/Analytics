@@ -235,27 +235,30 @@ console.log('\n6. the answer is cached');
   const DB = mockD1(vids, launch('yt', 'v', pub, 2000, 8));
   const MINUTE = mockKV();
   const env = { DB, MINUTE };
-  const first = await W.launchBody(env, 'yt', 'launch:yt');
+  const first = await W.launchBody(env, 'yt');
+  // the key carries a format version, so a shape change cannot serve stale bytes for six
+  // hours after the deploy that fixed it
+  check('the cache key is versioned', [...MINUTE.m.keys()][0] === 'launch:2:yt', [...MINUTE.m.keys()][0]);
   const after1 = DB.stats().rowsRead;
   check('the first call reads D1', after1 > 1000, after1);
   check('and writes the cache once', MINUTE.puts() === 1, MINUTE.puts());
 
-  const second = await W.launchBody(env, 'yt', 'launch:yt');
+  const second = await W.launchBody(env, 'yt');
   check('a second call reads no further rows', DB.stats().rowsRead === after1, DB.stats().rowsRead);
   check('and writes nothing more', MINUTE.puts() === 1, MINUTE.puts());
   check('and serves the same curves', JSON.stringify(second.curves) === JSON.stringify(first.curves));
 
   // age the cached entry past its TTL
-  const stale = JSON.parse(MINUTE.m.get('launch:yt'));
+  const stale = JSON.parse(MINUTE.m.get([...MINUTE.m.keys()][0]));
   stale.at = Date.now() - W.PJ_TTL - 1;
-  MINUTE.m.set('launch:yt', JSON.stringify(stale));
-  await W.launchBody(env, 'yt', 'launch:yt');
+  MINUTE.m.set([...MINUTE.m.keys()][0], JSON.stringify(stale));
+  await W.launchBody(env, 'yt');
   check('an expired cache is rebuilt', DB.stats().rowsRead > after1);
   check('and rewritten', MINUTE.puts() === 2, MINUTE.puts());
 
   // KV falling over must not take the route with it
   const dead = { async get() { throw new Error('kv down'); }, async put() { throw new Error('kv down'); } };
-  const out = await W.launchBody({ DB, MINUTE: dead }, 'yt', 'launch:yt');
+  const out = await W.launchBody({ DB, MINUTE: dead }, 'yt');
   check('a broken KV still serves fresh curves', !!out.curves.v);
 }
 

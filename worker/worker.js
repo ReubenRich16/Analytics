@@ -254,6 +254,10 @@ const PJ_WINDOW = 48 * 3600e3;   // the launch window the projection models
 const PJ_STEP   = 5;             // minutes between emitted points
 const PJ_MAX    = 12;            // how many finished launches to ship
 const PJ_TTL    = 6 * 3600e3;    // how long a cached answer stands
+// Bumped whenever the emitted shape changes. Without it a fix to the query keeps serving
+// six hours of the old answer from cache after the deploy — which is exactly what the
+// floating-point bucket bug would have done, silently, on the way out.
+const PJ_CACHE  = 2;
 
 async function d1Launches(env, platform) {
   const now = Date.now();
@@ -305,7 +309,8 @@ async function d1Launches(env, platform) {
 // The cache is also the abuse guard: however often this is asked for, D1 sees it at most
 // once per PJ_TTL. Four KV writes a day for YouTube and four per connected TikTok account,
 // against a 1,000/day cap currently running at about 220.
-async function launchBody(env, platform, key) {
+async function launchBody(env, platform) {
+  const key = 'launch:' + PJ_CACHE + ':' + platform;
   const now = Date.now();
   let hit = null;
   try { hit = await env.MINUTE.get(key, 'json'); } catch (e) {}
@@ -998,7 +1003,7 @@ async function ttHandler(request, env, url) {
   if (p === '/tiktok/launches') {
     if (!env.DB) return json({ curves: {} });
     const part = ttKey(openId);
-    try { return json(await launchBody(env, part, 'launch:' + part)); }
+    try { return json(await launchBody(env, part)); }
     catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
   }
   if (p === '/tiktok/sync') {
@@ -1197,7 +1202,7 @@ async function route(request, env) {
     // bundle at / is: everything in it is already-public video ids, titles and view counts.
     if (url.pathname === '/launches') {
       if (!env.DB) return json({ error: 'no D1 binding' }, 501);
-      try { return json(await launchBody(env, 'yt', 'launch:yt')); }
+      try { return json(await launchBody(env, 'yt')); }
       catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
     }
     // manual trigger for testing: /run does one tick immediately
