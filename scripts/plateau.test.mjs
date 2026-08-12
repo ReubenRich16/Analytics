@@ -24,11 +24,10 @@ const slice = (from, to) => {
   if (j < 0) throw new Error('end marker not found: ' + to);
   return src.slice(i, j);
 };
-const model = slice('const PJ_HORIZON', '  // Option C');
-const bar = slice('function pjBarHtml', '\n  }\n') + '\n  }\n';
+const model = slice('const PJ_HORIZON', '  function renderProjection()');
 const fmt = new Intl.NumberFormat('en-US');
-const M = new Function('fmt', model + '\n' + bar +
-  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,pjAt,pjRef,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml};')(fmt);
+const M = new Function('fmt', 'const esc=String, niceScale=()=>({lo:0,hi:1,ticks:[0,1]}), axisNum=String;\n' + model +
+  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,pjAt,pjRef,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS};')(fmt);
 
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => { if (c) { pass++; console.log('  ✓', n); } else { fail++; console.log('  ✗', n, x); } };
@@ -62,7 +61,7 @@ console.log('\nplateau projection');
   check('both dashboards run the identical model', strip(a) === strip(b),
     strip(a) === strip(b) ? '' : 'index and tiktok have drifted');
   // and the renderers, which is where a copy-paste fix usually gets applied to only one
-  for (const fn of ['function pjBarHtml', 'function pjSentenceHtml', 'function pjCurveHtml']) {
+  for (const fn of ['function pjBarHtml', 'function pjSentenceHtml', 'function pjCurveHtml', 'function pjWaitHtml']) {
     const x = grab(src, fn, '\n  }\n'), y = grab(ttSrc, fn, '\n  }\n');
     check(fn.replace('function ', '') + ' is the same in both', !!y && strip(x) === strip(y));
   }
@@ -251,6 +250,65 @@ function loo(all, h) {
   check('an hour is "hour"', M.pjDur(50) === 'hour', M.pjDur(50));
   check('two hours is "2 hours"', M.pjDur(100) === '2 hours', M.pjDur(100));
   check('eleven hours rounds cleanly', M.pjDur(11 * 60) === '11 hours', M.pjDur(11 * 60));
+}
+
+/* 9 — the waiting state, which is what the user actually saw */
+{
+  const from = (startMin, toMin) => scurve(1000, 8).filter(p => p[0] >= startMin && p[0] <= toMin);
+  const cand = (startMin, age) => ({ curve: from(startMin, age), age });
+  const holed = { curve: scurve(1000, 8).filter(p => p[0] <= 359 || p[0] >= 1609), age: 40 * 60 };
+
+  // nothing finished, one launch still recording: not enough to promise a pair
+  const one = M.pjProject([], 6 * 60, 400, [cand(0, 20 * 60)]);
+  check('with nothing finished it waits', one.state === 'nomodel');
+  check('and counts what it has', one.have === 0, one.have);
+  check('one on the way is not a pair, so no time is promised', one.when === null, one.when);
+  check('but it says something IS coming', one.onTrack === 1, one.onTrack);
+
+  // two recording: the countdown is the SECOND one, not the first
+  const two = M.pjProject([], 6 * 60, 400, [cand(0, 30 * 60), cand(0, 10 * 60), holed]);
+  check('two on the way gives a time', two.when !== null);
+  check('and it is when the second lands', two.when === 44 * 60 - 10 * 60, two.when);
+  check('a holed curve is never counted as on the way', two.onTrack === 2, two.onTrack);
+
+  // THE ONE THAT MATTERS: a finished reference the target has not yet aged into.
+  // Recording started 29h in, the target is 19h old — the wait is the target growing,
+  // not the reference finishing, and a countdown that ignores that is a false promise.
+  const late = [cand(29 * 60, 50 * 60), cand(29 * 60, 50 * 60)].map(c => ({ ...c, curve: from(29 * 60, 48 * 60) }));
+  check('a late-recorded reference is complete', !!M.pjRef(late[0].curve));
+  const gap = M.pjProject([], 19 * 60, 400, late);
+  check('and the wait is the target reaching its start age, not zero',
+    gap.when === 29 * 60 - 19 * 60, gap.when + ' vs ' + (29 * 60 - 19 * 60));
+
+  // whereas an older target is served immediately by the same curves
+  const older = M.pjWhen(late, 2, 30 * 60);
+  check('the same references are ready now for an older target', older.when === 0, older.when);
+
+  // a curve whose window closed short is never promised
+  check('a curve past 48h that never covered enough is not promised',
+    M.pjProject([], 6 * 60, 400, [{ curve: from(0, 1440), age: 60 * 60 }]).when === null);
+
+  // pjClean separates "still going" from "broken"
+  check('pjClean reports how far a curve is cleanly recorded', M.pjClean(from(0, 1200)) === 1200);
+  check('and -1 for one with a hole where it matters', M.pjClean(holed.curve) === -1);
+}
+
+/* 10 — the block can never render nothing */
+{
+  const refs = [scurve(2000, 8), scurve(1400, 8.4), scurve(3100, 7.7)].map(M.pjRef);
+  const own = scurve(2400, 8.1);
+  const states = [
+    ['projecting', M.pjProject(refs, 6 * 60, 600, [])],
+    ['too early', M.pjProject(refs, 2 * 60, 40, [])],
+    ['no references', M.pjProject([], 6 * 60, 600, [])],
+    ['past the window', M.pjProject(refs, 60 * 60, 2400, [])],
+    ['too varied', M.pjProject([scurve(2000, 2), scurve(1400, 20), scurve(900, 6)].map(M.pjRef), 6 * 60, 300, [])],
+  ];
+  for (const [name, p] of states) {
+    const html = M.pjBodyHtml(p, 600, own, p.refs || refs, 6 * 60);
+    check(name + ' still renders something', !!html && html.replace(/<[^>]*>/g, '').trim().length > 20,
+      name + ' -> ' + JSON.stringify(html).slice(0, 60));
+  }
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

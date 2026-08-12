@@ -1896,17 +1896,50 @@
   // pjShares handles by dropping it. Rejecting those outright threw away every TikTok
   // curve on the account, because the Worker only began recording those posts on the day
   // the account was connected.
-  function pjRef(c) {
-    if (!c || c.length < 8) return null;
+  //
+  // Split in two so the card can tell "not yet" from "never". pjClean answers how far a
+  // curve is recorded without a disqualifying hole; pjRef adds the coverage and size
+  // rules on top. A curve that is merely still recording is ON TRACK to become a
+  // reference and deserves a time; one with a hole in it never will be, and saying "soon"
+  // about that would be a lie.
+  function pjClean(c) {
+    if (!c || c.length < 8) return -1;
     let last = c[0][0];
     for (const p of c) {
       if (p[0] > PJ_HORIZON) break;
-      if (p[0] - last > Math.max(PJ_GAP, p[0] / 4)) return null;
+      if (p[0] - last > Math.max(PJ_GAP, p[0] / 4)) return -1;
       last = p[0];
     }
-    if (last < PJ_COVER) return null;
+    return last;
+  }
+  function pjRef(c) {
+    if (pjClean(c) < PJ_COVER) return null;
     const final = pjAt(c, PJ_HORIZON);
     return final >= 25 ? { c, final } : null;
+  }
+  // When `need` curves will be usable FOR THIS TARGET, in minutes. "Not enough data" with
+  // no date attached is the least helpful thing software says, and here the date is
+  // knowable — but only if it accounts for both halves of the wait.
+  //
+  // A curve has to finish its own 48 hours, AND the target has to reach the age at which
+  // that curve started recording: a reference first sampled 29 hours in says nothing
+  // about a 19-hour-old post until that post is 29 hours old too. Counting only the first
+  // half is how a countdown ends up promising a projection that does not arrive — on this
+  // account it would have said "about an hour" for something nine hours away.
+  function pjWhen(cands, need, targetAge) {
+    const eta = [];
+    for (const c of cands) {
+      if (!c || !c.curve || !c.curve.length) continue;
+      const clean = pjClean(c.curve);
+      if (clean < 0) continue;                                   // holed — it never qualifies
+      const done = clean >= PJ_COVER ? 0
+        : c.age >= PJ_HORIZON ? -1                               // its window closed short
+        : PJ_COVER - c.age;
+      if (done < 0) continue;
+      eta.push(Math.max(done, c.curve[0][0] - targetAge));
+    }
+    eta.sort((a, b) => a - b);
+    return { onTrack: eta.length, when: eta.length >= need ? eta[need - 1] : null };
   }
   const pjMed = a => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
   // ONE admission test, used everywhere. A reference votes at an age only if it recorded
@@ -1963,8 +1996,12 @@
     }
     return worst * PJ_SAFETY;
   }
-  function pjProject(refs, age, views) {
-    if (!refs || refs.length < PJ_MIN_REFS) return { state: 'nomodel' };
+  function pjProject(refs, age, views, cands) {
+    // `cands` is every curve on the account with its current age, so a "nomodel" answer
+    // can say how many are usable and when the next one lands rather than just "not yet"
+    const wait = () => ({ state: 'nomodel', have: (refs || []).length,
+                          ...pjWhen(cands || [], PJ_MIN_REFS, age) });
+    if (!refs || refs.length < PJ_MIN_REFS) return wait();
     if (age >= PJ_HORIZON) return { state: 'done' };
     if (age < PJ_MIN_AGE) return { state: 'early' };
     if (!(views > 0)) return { state: 'early' };
@@ -1973,7 +2010,7 @@
     // share jump partway along the projected line.
     const use = pjUsable(refs, age);
     const sh = pjShares(use, age);
-    if (sh.length < PJ_MIN_REFS) return { state: 'nomodel' };
+    if (sh.length < PJ_MIN_REFS) return { ...wait(), have: use.length };
     const med = pjMed(sh), mid = views / med;
     const err = pjError(use, age);
     // a range this wide is not a prediction, it is a shrug with a number attached
@@ -2008,6 +2045,24 @@
       // "100% of the way there · most of the rest lands in the next 3 hours" is nonsense
       '<div class="pjnote">about ' + (views >= p.mid ? 100 : Math.min(99, Math.round(p.pct * 100))) + '% of the way there' +
       (p.rest > 0 ? ' · most of the rest lands in the next ' + pjDur(p.rest) : ' · past the point where a typical launch has settled') +
+      '</div></div>';
+  }
+
+  // The waiting state. It used to be a paragraph of grey prose, which is why the whole
+  // feature read as a footnote rather than as itself — in the empty state the explainer
+  // WAS the block, and someone looking for a projection quite reasonably did not find
+  // one. Now it says the same thing as a status with a number and a time in it.
+  function pjWaitHtml(p) {
+    const have = p.have || 0, need = Math.max(0, PJ_MIN_REFS - have);
+    const when = p.when;
+    return '<div class="pjwait">' +
+      '<div class="pjwaitn">' + have + ' of ' + PJ_MIN_REFS + '</div>' +
+      '<div><b>Not enough finished launches to compare this one against yet.</b><br>' +
+      (when != null
+        ? 'Ready in about <b>' + pjDur(when) + '</b> — it turns itself on, nothing to press.'
+        : p.onTrack
+          ? 'One is still recording. Two are needed, so the next thing you publish starts the other.'
+          : 'Nothing is on track yet — the next thing you publish starts one, and it counts 48 hours later.') +
       '</div></div>';
   }
 
@@ -2074,7 +2129,7 @@
   function pjBodyHtml(p, views, curve, refs, age) {
     if (p.state === 'early') return '<p class="dnote">Too early to call where this one lands — this early the estimate misses badly when tested against your own finished launches. Check back once it is a few hours old.</p>';
     if (p.state === 'loose') return '<p class="dnote">Not callable yet — your videos vary enough that at this age the estimate could still be out by more than half. It sharpens over the next few hours.</p>';
-    if (p.state === 'nomodel') return '<p class="dnote">Not enough complete launches recorded yet to say where this one lands. Your Worker keeps the first 48 hours of every upload — once two of them are complete and gap-free, the projection appears here.</p>';
+    if (p.state === 'nomodel') return pjWaitHtml(p);
     if (p.state === 'done') {
       const f = curve ? pjAt(curve, PJ_HORIZON) : null;
       if (f == null) return '<p class="dnote">Past its first 48 hours, so the launch projection has retired — the official-stats race below takes over.</p>';
@@ -2098,13 +2153,20 @@
     const vid = slotVid;
     if (!vid || !meta[vid] || !perVideo[vid]) { el.innerHTML = ''; return; }
     const age = Math.max(0, Math.round(ageMinutes(vid)));
-    const refs = [];
+    const refs = [], cands = [];
     // the video being projected never votes on its own share curve
-    for (const [id, c] of Object.entries(snaps)) { if (id === vid) continue; const r = pjRef(c); if (r) refs.push(r); }
-    const p = pjProject(refs, age, perVideo[vid].views);
-    if (p.state === 'done' && !snaps[vid]) { el.innerHTML = ''; return; } // nothing useful to say
-    el.innerHTML = '<div class="dsection"><h4>Where this one is heading</h4>' +
-      '<p class="explain">No guessing: your finished launches already say what share of a video’s first-48-hour total has usually arrived by this age. Today’s count divided by that share is the estimate, and the spread between your own videos is the margin.</p>' +
+    for (const [id, c] of Object.entries(snaps)) {
+      if (id === vid || !meta[id]) continue;
+      cands.push({ curve: c, age: Math.max(0, Math.round(ageMinutes(id))) });
+      const r = pjRef(c); if (r) refs.push(r);
+    }
+    const p = pjProject(refs, age, perVideo[vid].views, cands);
+    // Never blank. A block that renders nothing is indistinguishable from a broken one,
+    // and that is exactly how this read the first time it shipped.
+    const why = p.state === 'ok'
+      ? '<p class="explain">No guessing: your finished launches already say what share of a video’s first-48-hour total has usually arrived by this age. Today’s count divided by that share is the estimate, and the spread between your own videos is the margin.</p>'
+      : '';
+    el.innerHTML = '<div class="dsection"><h4>Where this one is heading</h4>' + why +
       pjBodyHtml(p, perVideo[vid].views, snaps[vid] || null, refs, age) + '</div>';
   }
   // delegated, because the block redraws itself on every poll

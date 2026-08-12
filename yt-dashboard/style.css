@@ -417,6 +417,15 @@
   .pjfill { position:absolute; top:0; bottom:0; left:0; background:var(--live); border-radius:0 6px 6px 0; min-width:3px; }
   .pjtick { position:absolute; top:0; bottom:0; width:2px; background:var(--text); opacity:.85; }
   .pjnote { font-size:11px; color:var(--muted); line-height:1.5; }
+  /* The waiting state has to look like the feature, not like an apology for it. The first
+     version was two paragraphs of grey prose, so in the empty state the explainer WAS the
+     block — and someone looking for a projection found what read as a footnote. */
+  .pjwait { display:flex; align-items:center; gap:14px; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:10px; padding:13px 15px; font-size:13px; line-height:1.55; color:var(--muted); }
+  .pjwait b { color:var(--text); font-weight:600; }
+  .pjwaitn { flex:none; font-family:var(--f-num); font-size:15px; font-weight:700; color:var(--accent);
+    font-variant-numeric:tabular-nums; padding:7px 11px; border:1px solid var(--line);
+    border-radius:8px; background:var(--ink); white-space:nowrap; }
   .pjline { font-size:13.5px; line-height:1.6; color:var(--muted); margin-top:10px; }
   .pjline b { color:var(--text); font-family:var(--f-num); font-variant-numeric:tabular-nums; }
   .pjtabs { margin-bottom:12px; }
