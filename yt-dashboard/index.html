@@ -331,6 +331,8 @@
   const looksLikeClientId = v => /\.apps\.googleusercontent\.com$/.test((v || '').trim());
 
   let tokenClient = null, accessToken = null;
+  // which Client ID tokenClient was built for — see ensureTokenClient
+  let tokenClientId = '';
   let timer = null, paused = false, hiddenPaused = false;
   let intervalMs = 60000;
   let uploadsPlaylist = '', videoIds = [], meta = {}, perVideo = {};
@@ -460,7 +462,8 @@
   function saveToken(resp) {
     accessToken = resp.access_token;
     tokenExp = Date.now() + ((+resp.expires_in || 3600) * 1000);
-    try { localStorage.setItem('cc_tok', JSON.stringify({ t: accessToken, e: tokenExp })); } catch (e) {}
+    // stamped with the client that issued it, so a resume can tell whose token this is
+    try { localStorage.setItem('cc_tok', JSON.stringify({ t: accessToken, e: tokenExp, c: tokenClientId })); } catch (e) {}
     scheduleRefresh();
   }
   function renewToken() {
@@ -471,8 +474,29 @@
     const ms = Math.max(30000, tokenExp - Date.now() - 5 * 60 * 1000);
     refreshTimer = setTimeout(renewToken, ms);
   }
+  /* Build the Google token client, rebuilding it if the Client ID has changed.
+
+     The guard used to be `if (tokenClient || ...) return`, and boot builds a client from
+     whatever is prefilled in the field within ~400ms of the page loading. So on a first
+     visit the client was permanently bound to DEFAULT_CLIENT_ID before the user could
+     type: pasting their own ID and signing in saved it to localStorage, called this, hit
+     the early return, and then requested a token on the DEFAULT client — producing the
+     wrong consent screen or a redirect-URI mismatch for an app they do not own. Only a
+     reload made a typed ID take effect. "Switch account" was broken the same way, since it
+     routes through initAuth too.
+
+     Rebinding also has to drop the old credential. Otherwise api() keeps sending the
+     previous client's bearer token in the gap before the new one arrives, against a
+     different app's scopes. */
   function ensureTokenClient(cid) {
-    if (tokenClient || !window.google || !google.accounts) return;
+    if (!window.google || !google.accounts) return;
+    if (tokenClient && tokenClientId === cid) return;
+    if (tokenClient) {
+      accessToken = null; tokenExp = 0;
+      try { localStorage.removeItem('cc_tok'); } catch (e) {}
+      if (refreshTimer) clearTimeout(refreshTimer);
+    }
+    tokenClientId = cid;
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: cid,
       scope: SCOPES,
@@ -952,8 +976,15 @@
 
   // one cheap analytics call powers the table's Avg % / Subs / Shares columns (spec: channel-level rollup)
   let rollupMap = {}, dislikesOk = null, savesOk = null; // null = unknown yet, false = YouTube refused the metric
+  /* One name for the key, because there used to be two and they disagreed. The Refresh
+     button cleared 'cc:rollup:v2:28' while the loader wrote 'cc:rollup:v3:28', so Refresh
+     deleted a key nothing had written and the official-stats columns — Avg %, Subs, Shares,
+     Likes+, Dislikes, Saves — came straight back out of a cache up to twelve hours old,
+     footnote date and all. The breakdown key on the same line DID match its writer, so half
+     the tap worked, which is what made it hard to notice. */
+  const ROLLUP_KEY = 'cc:rollup:v3:28'; // v3 = adds saves (videosAddedToPlaylists)
   async function loadRollup() {
-    const key = 'cc:rollup:v3:28'; // v3 = adds saves (videosAddedToPlaylists)
+    const key = ROLLUP_KEY;
     // A cached result that had to drop an optional metric is only trusted briefly, so one bad
     // response can't hide a column for a whole day — it retries on the next visit instead.
     let c = cacheGet(key, 12 * 3600 * 1000);
@@ -1711,7 +1742,10 @@
         if (!arr.length) continue;
         const last = arr[arr.length - 1], prevR = arr.length > 1 ? arr[arr.length - 2] : null;
         const delta = prevR && prevR.rank && last.rank ? prevR.rank - last.rank : 0;
-        rr += '<p class="dnote" style="margin-bottom:6px">“' + esc(kw) + '” — ' + (last.rank ? ('<b style="color:var(--text)">#' + last.rank + '</b>' + (delta ? ' <b style="color:' + (delta > 0 ? 'var(--up)' : 'var(--down)') + '">' + (delta > 0 ? '▲' : '▼') + Math.abs(delta) + '</b>' : '')) : 'not in top ' + (last.checkedDepth || 50)) + (last.title ? ' · ' + esc(last.title) : '') + '</p>';
+        rr += '<p class="dnote" style="margin-bottom:6px">“' + esc(kw) + '” — ' + (last.rank ? ('<b style="color:var(--text)">#' + last.rank + '</b>' + (delta ? ' <b style="color:' + (delta > 0 ? 'var(--up)' : 'var(--down)') + '">' + (delta > 0 ? '▲' : '▼') + Math.abs(delta) + '</b>' : '')) : /* `|| 50` was a fallback for a depth that should never be missing, and it turned an
+   unmeasured keyword into a confident "not in top 50". rank.mjs no longer writes those
+   rows, but older files still hold them, so say what is true instead of guessing. */
+(last.checkedDepth ? 'not in top ' + last.checkedDepth : 'not checked this week')) + (last.title ? ' · ' + esc(last.title) : '') + '</p>';
       }
       if (rr) html += section('Search rank tracker — weekly', 'Where your videos rank in YouTube search for your target keywords. Edit data/keywords.json in the repo to choose them (max 10).', rr);
     }
@@ -3869,7 +3903,7 @@
     if (!accessToken) return;
     // an explicit Refresh should also re-pull the cached official stats (dislikes, % watched,
     // subs, shares and the lifetime totals) rather than only the live counters
-    try { localStorage.removeItem('cc:rollup:v2:28'); localStorage.removeItem('cc:chanbreak:v1'); } catch (e) {}
+    try { localStorage.removeItem(ROLLUP_KEY); localStorage.removeItem('cc:chanbreak:v1'); } catch (e) {}
     loadComments();
     poll(true);
     loadRollup();
@@ -4090,7 +4124,14 @@
   // Resume a still-valid saved token instantly (no network round-trip) within its ~1h life
   let savedTok = null;
   try { savedTok = JSON.parse(localStorage.getItem('cc_tok') || 'null'); } catch (e) {}
-  const haveValidTok = savedTok && savedTok.e - Date.now() > 60000 && looksLikeClientId($('clientId').value);
+  /* Resume only a token this Client ID actually issued. Checking the SHAPE of the field
+     was not enough: after switching Client IDs, the previous client's token was resumed
+     against the new one and every call 401'd until it expired. A token saved before tokens
+     carried `c` has no issuer to check, so it is not resumed — that costs one silent
+     sign-in, once, which autoSilentSignIn below already handles. */
+  const fieldCid = $('clientId').value.trim();
+  const haveValidTok = savedTok && savedTok.e - Date.now() > 60000 &&
+    looksLikeClientId(fieldCid) && savedTok.c === fieldCid;
   if (haveValidTok) {
     accessToken = savedTok.t; tokenExp = savedTok.e;
     setStatus('resuming session…');

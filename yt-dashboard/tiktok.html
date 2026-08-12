@@ -625,18 +625,41 @@
      timestamp cannot do that: a response can only ever add.
      Keeping the union in localStorage also means a reload starts from what was already
      recorded rather than re-fetching two days of samples. */
-  const TT_HIST_KEY = 'tt_hist';
+  /* The recorded sample store, keyed by TikTok account.
+
+     It used to be one flat 'tt_hist' for the device, loaded at module scope before any
+     sign-in and never cleared on sign-out. Connect a second account on the same browser
+     and the first account's curves were still in `hist` — so buildScores built its
+     reference curves out of them, and the new account's posts were projected and graded
+     against someone else's launches while the card said "the spread between your own posts
+     is the margin". The stale `histSince` watermark made it worse: the ?since= poll asked
+     the Worker for everything after the OLD account's newest sample, so the new account's
+     own recent history came back nearly empty and never backfilled.
+
+     Milestones were already keyed by open_id ('tt:' + u.open_id, above), which is what this
+     should have matched all along. */
+  const histKey = openId => 'tt_hist:' + openId;
+  let histOwner = '';                 // open_id whose store is currently in `hist`
   let histSince = 0;
   const newestTs = h => {
     let m = 0;
     for (const r of Object.values((h && h.videos) || {})) for (const s of (r.s || [])) if (s[0] > m) m = s[0];
     return m;
   };
-  function loadHist() {
+  // Called once the account is known, and again if it changes. Switching accounts resets
+  // the in-memory store rather than merging into it.
+  function loadHist(openId) {
+    if (!openId || histOwner === openId) return;
+    histOwner = openId;
+    hist = { videos: {} };
+    histSince = 0;
     try {
-      const h = JSON.parse(localStorage.getItem(TT_HIST_KEY) || 'null');
+      const h = JSON.parse(localStorage.getItem(histKey(openId)) || 'null');
       if (h && h.videos) { hist = h; histSince = newestTs(h); }
     } catch (e) { /* corrupt or unavailable — start from the server */ }
+    // the old device-wide key cannot be attributed to an account, so it goes rather than
+    // being adopted by whoever happens to sign in first. The Worker re-serves this window.
+    try { localStorage.removeItem('tt_hist'); } catch (e) {}
   }
   function mergeHist(b) {
     if (!b) return;
@@ -658,7 +681,11 @@
     const ids = Object.keys(hist.videos).sort((a, b2) => (hist.videos[b2].create_time || 0) - (hist.videos[a].create_time || 0));
     for (const id of ids.slice(20)) delete hist.videos[id];
     histSince = newestTs(hist);
-    try { localStorage.setItem(TT_HIST_KEY, JSON.stringify(hist)); } catch (e) { /* quota — memory copy still fine */ }
+    // no owner yet means no account to file this under; the memory copy still serves the
+    // render, and the next poll after boot writes it properly
+    if (histOwner) {
+      try { localStorage.setItem(histKey(histOwner), JSON.stringify(hist)); } catch (e) { /* quota — memory copy still fine */ }
+    }
   }
   // ?since= keeps a poll to just the new minutes instead of the whole retention window
   async function pullHistory() {
@@ -702,7 +729,6 @@
     }
     if (Object.keys(conv.videos).length) mergeHist(conv);
   }
-  loadHist();
 
   /* ---------- auth ---------- */
   // reauth=true asks TikTok for the consent screen rather than letting it silently
@@ -742,6 +768,8 @@
   async function boot() {
     setStatus('loading…');
     me = await api('/tiktok/me');
+    // before any history is pulled: this is what decides whose store we are adding to
+    loadHist(me && me.open_id);
     $('ttAvatar').src = me.avatar_url || '';
     $('ttName').textContent = me.display_name || me.username || 'TikTok';
     $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +

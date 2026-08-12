@@ -41,11 +41,25 @@ if (!h.channels) h.channels = {};
 if (!h.channelMeta) h.channelMeta = {};
 
 // own channel(s) + uploads — chunked so >50 channels still work.
-// Runs every 5 min, but to keep quota + commits low it records ALL videos only on the
-// top-of-hour run and, in between, only FRESH uploads (<2 days old) — so a new video's
-// launch is captured minute-ish even when nobody has the dashboard open, while quiet
-// periods produce just one commit/hour.
-const topOfHour = new Date(now).getUTCMinutes() < 5;
+// Runs every 5 min, but to keep quota + commits low it records ALL videos only once an
+// hour and, in between, only FRESH uploads (<2 days old) — so a new video's launch is
+// captured minute-ish even when nobody has the dashboard open, while quiet periods
+// produce just one commit/hour.
+/* "Hourly" has to mean "an hour since the last one", not "the clock says minutes 0-4".
+
+   This was `new Date(now).getUTCMinutes() < 5`, which assumes the five-minute cron is
+   delivered on time. GitHub explicitly does not promise that, and it is not: across
+   2026-08-05..12 the job produced 94 sample timestamps and only 16 of them landed in the
+   0-4 window. The other 78 runs recorded 2-5 fresh videos instead of the full 79-84, so the
+   promised hourly record of the back catalogue degraded into gaps of 58, 37, 37, 24 and 17
+   hours — and the subscriber series with it, since it sits behind the same gate.
+
+   Gating on elapsed time instead makes a late delivery still count as that hour's record.
+   55 minutes rather than 60 so a run arriving slightly early is not pushed into the next
+   hour, which would halve the rate. */
+const HOUR_MS = 55 * 60e3;
+const dueFull = now - (+h.lastFull || 0) >= HOUR_MS;
+if (dueFull) h.lastFull = now;
 const FRESH_MS = 2 * 864e5;
 const ownItems = await channelsById(CHANNELS);
 if (!ownItems.length) throw new Error('No CHANNEL_ID channels found');
@@ -59,10 +73,17 @@ for (const c of ownItems) {
     pageToken = d.nextPageToken;
     if (!pageToken) break;
   }
-  const targets = (topOfHour ? vids : vids.filter(v => v.pub && (now - new Date(v.pub).getTime()) < FRESH_MS)).map(v => v.id);
+  const targets = (dueFull ? vids : vids.filter(v => v.pub && (now - new Date(v.pub).getTime()) < FRESH_MS)).map(v => v.id);
+  /* The subscriber sample is taken whenever the hour is due, even if no video needs one —
+     it used to sit after the `continue` below, so a channel with nothing fresh to record
+     lost its follower history for that hour too. Still gated rather than unconditional:
+     writing it on every delivered run would dirty history.json every five minutes and
+     defeat the `git diff --cached --quiet` check that keeps this to one commit an hour. */
+  if (dueFull || targets.length) {
+    h.channelMeta[c.id] = c.snippet.title;
+    (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
+  }
   if (!targets.length) continue; // nothing worth recording for this channel this run
-  h.channelMeta[c.id] = c.snippet.title;
-  (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
   for (let i = 0; i < targets.length; i += 50) {
     const d = await api('videos', { part: 'statistics', id: targets.slice(i, i + 50).join(',') });
     for (const it of d.items) {
@@ -75,7 +96,7 @@ for (const c of ownItems) {
 
 // benchmark channels (optional) — hourly only (channel-level growth needs no finer cadence),
 // which also keeps quiet-period runs from committing every 5 min
-if (BENCH.length && topOfHour) {
+if (BENCH.length && dueFull) {
   for (const it of await channelsById(BENCH)) {
     (h.bench[it.id] = h.bench[it.id] || []).push([now, +it.statistics.subscriberCount || 0, +it.statistics.viewCount || 0]);
     h.benchMeta[it.id] = it.snippet.title;

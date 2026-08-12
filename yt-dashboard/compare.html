@@ -385,13 +385,31 @@
   }
 
   /* ---------- percentile within a platform's own catalogue ---------- */
+  /* Two different numbers, which is the point.
+
+     `beat` is the share of the other posts this one outruns — the right thing to fill a
+     progress bar with, since more beaten really is more bar.
+
+     `top` is where it places, and it is NOT 100 − beat. Beating everything gives beat=100,
+     and 100 − 100 printed "Top 0%" — the best post on the channel labelled as the top zero
+     percent of it. Rounding made it worse than a single edge case: beat hits 100 for any
+     ratio at or above 0.995, so on a catalogue of 84 the second-best post said "Top 0%"
+     too. A rank out of the whole catalogue can't do that — best of 84 is 1/84, so "Top 1%",
+     and the floor keeps it there.
+
+     (The bottom of the range needs no fix. The worst post gets beat=0 → "Top 100%", which
+     is vacuously true rather than wrong.) */
   const perDay = v => v.views / Math.max(1, (Date.now() - v.pub) / 864e5);
   function percentile(list, one) {
     const others = list.filter(x => x.id !== one.id);
     if (others.length < 3) return null;
     const me = perDay(one);
     const beats = others.filter(o => perDay(o) < me).length;
-    return Math.round(beats / others.length * 100);
+    const rank = others.filter(o => perDay(o) >= me).length + 1;   // 1 = best on the channel
+    return {
+      beat: Math.round(beats / others.length * 100),
+      top: Math.max(1, Math.round(rank / (others.length + 1) * 100))
+    };
   }
 
   /* ---------- render: suggestions + linked ---------- */
@@ -522,8 +540,8 @@
         .map(([k, val]) => '<div class="mrow"><span class="k">' + k + '</span><span class="v">' + val + '</span></div>').join('') +
       (pct == null ? '<div class="pctbox"><div class="pl">Not enough posts on this platform to rank it yet</div></div>'
         : '<div class="pctbox"><div class="pl">' + pctLabel + '</div>' +
-          '<div class="track"><div class="fill" style="width:' + pct + '%;background:' + colour + '"></div></div>' +
-          '<div class="big">Top ' + (100 - pct) + '%</div></div>') + '</div>';
+          '<div class="track"><div class="fill" style="width:' + pct.beat + '%;background:' + colour + '"></div></div>' +
+          '<div class="big">Top ' + pct.top + '%</div></div>') + '</div>';
 
     const ytExtra = [['Like rate', rate(y.likes, y.views).toFixed(1) + '%'],
                      ['Comment rate', rate(y.comments, y.views).toFixed(2) + '%']];
@@ -533,14 +551,14 @@
 
     let verdict = '';
     if (yp != null && tp != null) {
-      const d = tp - yp;
+      const d = tp.beat - yp.beat;
       const head = Math.abs(d) < 8 ? 'It did about as well on both.'
         : d > 0 ? 'This one belongs on TikTok.' : 'This one belongs on YouTube.';
       const body = Math.abs(d) < 8
-        ? 'It sits in your top ' + (100 - yp) + '% on YouTube and your top ' + (100 - tp) + '% on TikTok — close enough that neither platform is obviously the better home for it.'
+        ? 'It sits in your top ' + yp.top + '% on YouTube and your top ' + tp.top + '% on TikTok — close enough that neither platform is obviously the better home for it.'
         : d > 0
-          ? 'Top ' + (100 - yp) + '% of your YouTube catalogue, but top ' + (100 - tp) + '% of your TikTok posts. Relative to your own back catalogue it did better on TikTok.'
-          : 'Top ' + (100 - tp) + '% of your TikTok posts, but top ' + (100 - yp) + '% of your YouTube catalogue. Relative to your own back catalogue it did better on YouTube.';
+          ? 'Top ' + yp.top + '% of your YouTube catalogue, but top ' + tp.top + '% of your TikTok posts. Relative to your own back catalogue it did better on TikTok.'
+          : 'Top ' + tp.top + '% of your TikTok posts, but top ' + yp.top + '% of your YouTube catalogue. Relative to your own back catalogue it did better on YouTube.';
       verdict = '<div class="verdict"><div class="vh">' + head + '</div><div class="vp">' + body + '</div></div>';
     }
 
@@ -618,8 +636,18 @@
         'has no curve, and can’t get one retrospectively. The next thing you post to both will appear here.</p>';
       return;
     }
-    // only compare over the window both sides actually cover
-    const span = Math.max(1, Math.min(ys.length > 1 ? ys[ys.length - 1][0] : 0, ts.length > 1 ? ts[ts.length - 1][0] : 0) || 6);
+    /* Only compare over the window both sides actually cover — and when only one side has
+       a curve, show that side in full rather than inventing an overlap.
+
+       This was `Math.max(1, Math.min(yEnd, tEnd) || 6)`, where a missing side contributes
+       0. Math.min(48, 0) is 0, and `0 || 6` is 6 — so a YouTube video whose TikTok partner
+       predates the Worker got a 6-hour span: the chart plotted the first six hours of a
+       recorded 48-hour curve, silently dropping seven eighths of it, under a sentence
+       reading "This pair overlaps for 6 hours." The overlap was zero. */
+    const yEnd = ys.length > 1 ? ys[ys.length - 1][0] : 0;
+    const tEnd = ts.length > 1 ? ts[ts.length - 1][0] : 0;
+    const bothSides = yEnd > 0 && tEnd > 0;
+    const span = Math.max(1, bothSides ? Math.min(yEnd, tEnd) : (yEnd || tEnd));
     const ytTyp = typicalCurve(ytVideos.filter(v => v.id !== y.id).map(v => ytSeries(v.id, v.pub)), span);
     const ttTyp = typicalCurve(ttVideos.filter(v => v.id !== t.id).map(v => ttSeries(v.id, v.pub)), span);
     const step = span / 40;
@@ -646,10 +674,16 @@
         'platform to work out what “typical” looks like. Switch to <b>Raw views</b> in the meantime.</p>';
       return;
     }
-    const covered = ts.length > 1 ? ts[ts.length - 1][0] : 0;
+    const covered = tEnd;
+    const dur = span < 2 ? Math.round(span * 60) + ' minutes' : Math.round(span) + ' hours';
+    // an "overlap" needs two curves; with one, say which side is missing instead of
+    // claiming a shared window that does not exist
     $('raceExplain').innerHTML = 'Recorded by the snapshot robot on YouTube and by your Worker on TikTok. ' +
-      'This pair overlaps for <b>' + (span < 2 ? Math.round(span * 60) + ' minutes' : Math.round(span) + ' hours') + '</b>' +
-      (covered && covered < 47 ? ' — the Worker records TikTok’s first 48 hours, and this post hasn’t run that long yet.' : '.');
+      (bothSides
+        ? 'This pair overlaps for <b>' + dur + '</b>' +
+          (covered && covered < 47 ? ' — the Worker records TikTok’s first 48 hours, and this post hasn’t run that long yet.' : '.')
+        : 'Only the ' + (yEnd ? 'YouTube' : 'TikTok') + ' side was being recorded when this went up, so there is nothing ' +
+          'to race it against — this is its own first <b>' + dur + '</b> on its own.');
     $('raceContent').innerHTML = raceChart(pts, series, span) +
       '<div class="legend">' + series.map(s => '<span class="lg-item"><span class="lg-key" style="background:' + s.colour + '"></span>' + s.name + '</span>').join('') +
       (raceMode === 'idx' ? '<span class="lg-item"><span class="lg-key" style="background:var(--muted)"></span>your typical launch (=100)</span>' : '') +
@@ -728,7 +762,30 @@
   });
 
   /* ---------- time to a thousand ---------- */
+  /* How long the video took to reach `target` — or null when nobody was watching it happen.
+
+     The null case is the whole point. This used to return the first recorded sample at or
+     above the target, which for a back-catalogue video is not a duration at all: the robot
+     started on 2026-07-08, so a video published in January has its first sample at age
+     ~4,344 hours, already well past a thousand views, and "time to a thousand" came back
+     as 4,344 hours. 29 of the 85 videos in data/history.json are already above 1,000 in
+     their very first sample.
+
+     That fed everything on this card. The median across the catalogue became thousands of
+     hours, so "Your usual" read 181d 0h; `max` was then set by that number, squashing the
+     real 2-hour and 9-hour bars to the 2% floor; and when the paired video was itself an
+     old one, the comparison printed "TikTok got there about 2172× faster".
+
+     A series that is ALREADY at or above the target on its first sample cannot answer the
+     question, so it says so — the card already renders "not recorded" and explains it. The
+     same guard covers TikTok, whose posts hit the same case from the other direction.
+
+     The cost is a genuinely fast new upload that passes a thousand before its first
+     capture: sampling in the committed history averages ~19.5 hours between the first two
+     samples, so that does happen, and it now reports "not recorded" instead of a number.
+     That is the honest answer to what was actually observed. */
   function firstAt(series, target) {
+    if (!series.length || series[0][1] >= target) return null;
     for (const s of series) if (s[1] >= target) return s[0];
     return null;
   }

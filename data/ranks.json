@@ -1,10 +1,6 @@
 {
  "tapping asmr": [
   {
-   "ts": 1783489264564,
-   "rank": null
-  },
-  {
    "ts": 1783489760008,
    "checkedDepth": 500,
    "rank": null
@@ -36,10 +32,6 @@
   }
  ],
  "asmr tapping": [
-  {
-   "ts": 1783489264927,
-   "rank": null
-  },
   {
    "ts": 1783489765383,
    "checkedDepth": 500,
@@ -73,10 +65,6 @@
  ],
  "fast tapping asmr": [
   {
-   "ts": 1783489265346,
-   "rank": null
-  },
-  {
    "ts": 1783489771235,
    "checkedDepth": 498,
    "rank": null
@@ -108,10 +96,6 @@
   }
  ],
  "asmr tapping and scratching": [
-  {
-   "ts": 1783489265867,
-   "rank": null
-  },
   {
    "ts": 1783489776505,
    "checkedDepth": 500,
@@ -145,10 +129,6 @@
  ],
  "asmr tapping for sleep": [
   {
-   "ts": 1783489266396,
-   "rank": null
-  },
-  {
    "ts": 1783489781720,
    "checkedDepth": 450,
    "rank": null
@@ -181,10 +161,6 @@
  ],
  "brain tickles asmr": [
   {
-   "ts": 1783489266789,
-   "rank": null
-  },
-  {
    "ts": 1783489786873,
    "checkedDepth": 450,
    "rank": null
@@ -193,63 +169,19 @@
    "ts": 1783928068077,
    "checkedDepth": 500,
    "rank": null
-  },
-  {
-   "ts": 1784532642486,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1785137878800,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1785742625228,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1786344750982,
-   "checkedDepth": 0,
-   "rank": null
   }
  ],
  "brain tickles": [
-  {
-   "ts": 1783489267135,
-   "rank": null
-  },
   {
    "ts": 1783489787203,
    "checkedDepth": 50,
    "rank": 31,
    "videoId": "OLpKdlQJz_U",
-   "title": "CAMERA SCRATCHING FOR SLEEP     𑣲⋆｡˚ LOFI ASMR"
+   "title": "CAMERA SCRATCHING FOR SLEEP     \ud806\udcf2\u22c6\uff61\u02da LOFI ASMR"
   },
   {
    "ts": 1783928072461,
    "checkedDepth": 500,
-   "rank": null
-  },
-  {
-   "ts": 1784532642486,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1785137878800,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1785742625228,
-   "checkedDepth": 0,
-   "rank": null
-  },
-  {
-   "ts": 1786344750982,
-   "checkedDepth": 0,
    "rank": null
   }
  ]
