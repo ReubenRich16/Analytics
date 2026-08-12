@@ -229,6 +229,83 @@ async function d1TtBundle(env, openId, days, since) {
   return { videos };
 }
 
+/* --- completed launch curves -----------------------------------------------
+   The two bundles above cut samples on an ABSOLUTE timestamp (KEEP_DAYS), because their
+   job is "what has happened lately". The plateau projection needs the opposite slice:
+   the FIRST 48 HOURS of launches that have already finished. For anything published more
+   than KEEP_DAYS ago that sits entirely outside the bundle's window even though D1 still
+   holds it for D1_KEEP_DAYS — so the projection could only ever see launches from the
+   last three days, and on a channel that posts every few days it saw none and said so.
+   That is the bug this route exists to fix; the data was always there, it had no door.
+
+   Three things make it cheap. It is age-indexed, which is the only form the model uses.
+   It is downsampled to one point per PJ_STEP minutes: the model interpolates, and 577
+   points across 48 hours instead of 2,880 is the difference between a ~90 KB answer and
+   a ~450 KB one. And a finished launch never changes again, so the answer is cached and
+   the only thing that can invalidate it is another launch finishing — a once-a-day event.
+
+   The ages are emitted per point rather than as a dense array on purpose. A hole in the
+   recording has to SURVIVE the downsampling, because the projection discards reference
+   curves with a hole where the prediction gets made — the 21-hour gaps left by the hot
+   window widening from 6 hours to 48. A dense array would paper over exactly the defect
+   the model needs to see.
+--------------------------------------------------------------------------- */
+const PJ_WINDOW = 48 * 3600e3;   // the launch window the projection models
+const PJ_STEP   = 5;             // minutes between emitted points
+const PJ_MAX    = 12;            // how many finished launches to ship
+const PJ_TTL    = 6 * 3600e3;    // how long a cached answer stands
+
+async function d1Launches(env, platform) {
+  const now = Date.now();
+  // finished launches only: old enough to have a complete window, recent enough that D1
+  // still holds the samples
+  const vres = await env.DB.prepare(
+    'SELECT video_id, published_at, title, cover FROM videos WHERE platform = ? AND published_at >= ? AND published_at <= ?' +
+    ' ORDER BY published_at DESC LIMIT ' + PJ_MAX
+  ).bind(platform, now - D1_KEEP_DAYS * 864e5, now - PJ_WINDOW).all();
+  const vids = vres.results || [];
+  if (!vids.length) return { curves: {} };
+
+  const bucket = PJ_STEP * 60000;
+  const marks = vids.map(() => '?').join(',');
+  // MAX(views) per bucket keeps the downsampled curve as monotone as the raw one.
+  // The seek is (platform, video_id), which is the samples primary key's prefix, so this
+  // reads only these twelve videos' rows — about 34,000 — and not the whole partition.
+  const sres = await env.DB.prepare(
+    'SELECT s.video_id AS id, (s.ts - v.published_at) / ? AS b, MAX(s.views) AS views' +
+    ' FROM samples s JOIN videos v ON v.platform = s.platform AND v.video_id = s.video_id' +
+    ' WHERE s.platform = ? AND s.video_id IN (' + marks + ')' +
+    ' AND s.ts >= v.published_at AND s.ts <= v.published_at + ?' +
+    ' GROUP BY s.video_id, (s.ts - v.published_at) / ?' +
+    ' ORDER BY s.video_id, b'
+  ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_WINDOW, bucket).all();
+
+  const byId = {};
+  for (const r of (sres.results || [])) (byId[r.id] = byId[r.id] || []).push([r.b * PJ_STEP, r.views]);
+  const curves = {};
+  for (const v of vids) {
+    const s = byId[v.video_id];
+    if (!s || s.length < 8) continue;   // too thin to be a reference under any rule
+    curves[v.video_id] = isTt(platform)
+      ? { create_time: Math.round(v.published_at / 1000), title: v.title || '', cover: v.cover || '', s }
+      : { pub: isoOf(v.published_at), title: v.title || '', s };
+  }
+  return { curves };
+}
+
+// The cache is also the abuse guard: however often this is asked for, D1 sees it at most
+// once per PJ_TTL. Four KV writes a day for YouTube and four per connected TikTok account,
+// against a 1,000/day cap currently running at about 220.
+async function launchBody(env, platform, key) {
+  const now = Date.now();
+  let hit = null;
+  try { hit = await env.MINUTE.get(key, 'json'); } catch (e) {}
+  if (hit && hit.curves && now - (hit.at || 0) < PJ_TTL) return hit;
+  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, ...(await d1Launches(env, platform)) };
+  try { await env.MINUTE.put(key, JSON.stringify(body)); } catch (e) {}
+  return body;
+}
+
 /* --- phase 3: which store answers a read ----------------------------------
    D1 is now the default; KV is the automatic fallback. Both are still written every
    tick, so falling back costs nothing but a shorter history.
@@ -908,6 +985,13 @@ async function ttHandler(request, env, url) {
     }
     return json({ ...snap, followers }, 200, { 'X-CC-Source': 'kv' });
   }
+  // same slice as /launches, scoped to this account's partition
+  if (p === '/tiktok/launches') {
+    if (!env.DB) return json({ curves: {} });
+    const part = ttKey(openId);
+    try { return json(await launchBody(env, part, 'launch:' + part)); }
+    catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
+  }
   if (p === '/tiktok/sync') {
     const key = 'tt:sync:' + openId;
     if (request.method === 'POST') {
@@ -1099,6 +1183,13 @@ async function route(request, env) {
     if (url.pathname === '/pairs') {
       if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
       return pairsHandler(request, env);
+    }
+    // the projection's reference curves — see d1Launches. Public for the same reason the
+    // bundle at / is: everything in it is already-public video ids, titles and view counts.
+    if (url.pathname === '/launches') {
+      if (!env.DB) return json({ error: 'no D1 binding' }, 501);
+      try { return json(await launchBody(env, 'yt', 'launch:yt')); }
+      catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
     }
     // manual trigger for testing: /run does one tick immediately
     if (url.pathname === '/run') {

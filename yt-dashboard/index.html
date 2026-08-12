@@ -98,17 +98,17 @@
   <!-- ROOMS — the same cards, sorted into four. The one-page switch turns this off. -->
   <div class="roombar" id="roomBar" style="display:none">
     <div class="tabs" role="tablist" id="roomTabs">
-      <button role="tab" data-room="now" aria-selected="true">Now</button>
-      <button role="tab" data-room="videos" aria-selected="false">Videos</button>
-      <button role="tab" data-room="audience" aria-selected="false">Audience</button>
-      <button role="tab" data-room="ideas" aria-selected="false">Ideas</button>
+      <button role="tab" id="tab-now" aria-controls="pane-now" aria-selected="true" tabindex="0" data-room="now">Now</button>
+      <button role="tab" id="tab-videos" aria-controls="pane-videos" aria-selected="false" tabindex="-1" data-room="videos">Videos</button>
+      <button role="tab" id="tab-audience" aria-controls="pane-audience" aria-selected="false" tabindex="-1" data-room="audience">Audience</button>
+      <button role="tab" id="tab-ideas" aria-controls="pane-ideas" aria-selected="false" tabindex="-1" data-room="ideas">Ideas</button>
     </div>
     <label class="onepage" title="Turn the rooms off and stack every card, exactly as it was before">
       <input type="checkbox" id="onePage"> One page
     </label>
   </div>
 
-  <div class="room-pane on" data-pane="now">
+  <div class="room-pane on" data-pane="now" id="pane-now" role="tabpanel" aria-labelledby="tab-now" tabindex="0">
   <div class="room-divider"><span>Now</span><hr></div>
 
   <!-- LIVE TOTALS -->
@@ -152,7 +152,7 @@
 
   </div><!-- /room: now -->
 
-  <div class="room-pane" data-pane="audience">
+  <div class="room-pane" data-pane="audience" id="pane-audience" role="tabpanel" aria-labelledby="tab-audience" tabindex="0">
   <div class="room-divider"><span>Audience</span><hr></div>
 
   <!-- AUDIENCE — the who/when half of Channel trends -->
@@ -173,7 +173,7 @@
 
   </div><!-- /room: audience -->
 
-  <div class="room-pane" data-pane="ideas">
+  <div class="room-pane" data-pane="ideas" id="pane-ideas" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0">
   <div class="room-divider"><span>Ideas</span><hr></div>
 
   <!-- HASHTAGS & KEYWORDS -->
@@ -217,7 +217,7 @@
 
   </div><!-- /room: ideas -->
 
-  <div class="room-pane" data-pane="videos">
+  <div class="room-pane" data-pane="videos" id="pane-videos" role="tabpanel" aria-labelledby="tab-videos" tabindex="0">
   <div class="room-divider"><span>Videos</span><hr></div>
 
   <!-- ACCOUNT-WIDE BREAKDOWN -->
@@ -604,6 +604,7 @@
     $('setupPanel').style.display = 'none';
     $('channelBanner').style.display = 'flex';
     $('roomBar').style.display = 'flex';
+    document.body.classList.add('signed-in');
     $('audienceCard').style.display = 'block';
     $('statsGrid').style.display = 'grid';
     $('velocityPanel').style.display = 'block';
@@ -613,6 +614,8 @@
     $('keywordsCard').style.display = 'block';
     $('ideasCard').style.display = 'block';
     $('breakdownCard').style.display = 'block';
+    // the room restore ran before any of this existed, so its stagger was a no-op
+    if (!reducedMotion) staggerCards(document.querySelector('.room-pane.on') || document);
     $('coachCard').style.display = 'block';
     setGeminiState(); // now that we're signed in, reflect Worker-provided AI if configured
 
@@ -927,6 +930,7 @@
       renderChannelBreakdown();
       pollCount++;
       if (workerUrl && (!workerPulled || pollCount % 3 === 0)) pullWorkerMinutes();
+      pullLaunchCurves();   // self-throttled to once every LAUNCH_EVERY
       if (pollCount % 5 === 1) loadComments();
       if (pollCount % 30 === 0) checkNewUploads();
       prevTotals = totals;
@@ -1666,13 +1670,7 @@
       const last = arr[arr.length - 1];
       if (!last || a - last[0] >= SNAP_GAP) { arr.push([Math.round(a), perVideo[vid].views]); changed = true; }
     }
-    if (changed) {
-      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
-      const keep = new Set(ids.slice(0, 15));
-      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
-      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
-      syncPush();
-    }
+    if (changed) { saveSnaps(); syncPush(); }
   }
   // Reconstruct launch curves for PAST videos from the robot's history.json: convert each
   // recorded [ts, views] to [ageMinutes, views] and seed the race. Resolution is the robot's
@@ -1697,14 +1695,26 @@
       }
       if (vidChanged) { snaps[vid] = [...byAge.values()].sort((a, b) => a[0] - b[0]); any = true; }
     }
-    if (any) {
-      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
-      const keep = new Set(ids.slice(0, 15));
-      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
-      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
-      if (latestVid) renderLiveRace();
-      renderProjection();
-    }
+    if (any) saveSnaps();
+  }
+  // Trim to the newest few and write the lot back. FOUR merge paths land here — the
+  // on-device recorder, the history.json seed, the Worker's recent-minutes bundle and the
+  // completed launch curves — and each used to carry its own copy of this rule. They had
+  // already drifted: three kept fifteen and one kept twenty, and since the recorder runs
+  // on every poll its fifteen silently won, throwing away a quarter of the curves the
+  // projection had just fetched.
+  //
+  // Twenty, because /launches ships up to twelve completed curves and the recent-minutes
+  // bundle adds one per video published in the last few days. Twenty curves is around
+  // 700 KB against a ~5 MB localStorage quota.
+  const SNAP_KEEP = 20;
+  function saveSnaps() {
+    const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
+    const keep = new Set(ids.slice(0, SNAP_KEEP));
+    for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
+    try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) { /* quota — the memory copy still works */ }
+    if (latestVid) renderLiveRace();
+    renderProjection();
   }
   function viewsAtAge(vid, t) {
     const arr = snaps[vid];
@@ -1758,20 +1768,49 @@
       }
       if (changed) snaps[vid] = [...byAge.values()].sort((a, b) => a[0] - b[0]);
     }
-    if (changed) {
-      const ids = Object.keys(snaps).filter(id => meta[id]).sort((x, y) => new Date(meta[y].publishedAt) - new Date(meta[x].publishedAt));
-      const keep = new Set(ids.slice(0, 15));
-      for (const id of Object.keys(snaps)) if (!keep.has(id)) delete snaps[id];
-      try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
-      if (latestVid) renderLiveRace();
-      renderProjection();
-    }
+    if (changed) saveSnaps();
     // only advance the watermark once the samples behind it are safely stored
     if (newest > workerSince) {
       workerSince = newest;
       try { localStorage.setItem(WSINCE_KEY, String(newest)); } catch (e) {}
     }
     workerPulled = true;
+  }
+  // The bundle above only carries the last few days of samples, because its job is "what
+  // has happened lately". A reference curve for the projection is the opposite slice —
+  // the first 48 hours of a launch that already finished — and for anything published
+  // more than three days ago that falls entirely outside the bundle's window even though
+  // the Worker's database still holds it. /launches serves exactly that slice, age-indexed
+  // and downsampled, and only needs asking once in a while: a finished launch is finished.
+  const LAUNCH_EVERY = 2 * 3600e3;
+  let launchPulled = 0;
+  async function pullLaunchCurves() {
+    // workerUrl may already carry a query string, so the path is appended to its stem
+    if (!workerUrl || Date.now() - launchPulled < LAUNCH_EVERY) return;
+    let b = null;
+    try {
+      const r = await fetch(workerUrl.split('?')[0].replace(/\/+$/, '') + '/launches', { cache: 'no-store' });
+      b = r.ok ? await r.json() : null;
+    } catch (e) { return; }
+    if (!b || !b.curves) return;
+    launchPulled = Date.now();
+    let changed = false;
+    for (const [vid, rec] of Object.entries(b.curves)) {
+      if (!rec || !rec.pub || !Array.isArray(rec.s) || rec.s.length < 8) continue;
+      // a video the signed-in account never fetched still gets a minimal entry, so its
+      // curve can serve as a reference and race even without its own row in the table
+      if (!meta[vid]) meta[vid] = { title: rec.title || vid, publishedAt: rec.pub, thumb: '' };
+      const byAge = new Map((snaps[vid] || []).map(p => [p[0], p]));
+      for (const smp of rec.s) {
+        const age = smp[0];
+        if (!(age >= 0)) continue;
+        const ex = byAge.get(age);
+        if (!ex) { byAge.set(age, [age, smp[1]]); changed = true; }
+        else if (smp[1] > ex[1]) { ex[1] = smp[1]; changed = true; }  // trust the higher count
+      }
+      snaps[vid] = [...byAge.values()].sort((a, b2) => a[0] - b2[0]);
+    }
+    if (changed) saveSnaps();
   }
   function renderLiveRace() {
     const el = $('liveRaceContent');
@@ -1865,13 +1904,22 @@
     return final >= 25 ? { c, final } : null;
   }
   const pjMed = a => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  // ONE admission test, used everywhere. A reference votes at an age only if it recorded
+  // that age and its share there is large enough to divide by. This was briefly two tests
+  // — pjUsable at > 0 and pjShares at > .02 — which let a curve into the usable set and
+  // then straight back out of the median, so the card read "not enough references" with
+  // nothing on screen to explain why.
+  //
   // The upper bound is 1.25, not 1.0: YouTube revises counts down after the fact (spam
   // filtering), so a real curve can peak above the total it settles at — one of the
   // recorded launches tops out at 2,033 and finishes on 2,027. A guard at 1.0 made that
   // curve silently abstain for the six hours around its own peak.
-  const pjShares = (refs, t) => refs.map(r => pjAt(r.c, t) / r.final).filter(s => s > .02 && s <= 1.25);
-  // the references that actually reach back to this age and can therefore vote on it
-  const pjUsable = (refs, t) => refs.filter(r => pjAt(r.c, t) > 0);
+  const pjShareAt = (r, t) => {
+    const v = pjAt(r.c, t), s = v == null ? 0 : v / r.final;
+    return s > .02 && s <= 1.25 ? s : 0;
+  };
+  const pjShares = (refs, t) => refs.map(r => pjShareAt(r, t)).filter(s => s > 0);
+  const pjUsable = (refs, t) => refs.filter(r => pjShareAt(r, t) > 0);
   function pjFloorAt(t) {
     let prev = PJ_FLOOR[0];
     for (const p of PJ_FLOOR) {
@@ -3599,7 +3647,14 @@
   }
   function showRoom(k, remember) {
     if (ROOM_ORDER.indexOf(k) < 0) k = 'now';
-    document.querySelectorAll('[data-room]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.room === k)));
+    // roving tabindex: only the selected tab is in the tab order, so Tab moves past the
+    // whole bar in one press and the arrow keys move within it — the tabs pattern the
+    // role="tablist" on this element has been promising all along
+    document.querySelectorAll('[data-room]').forEach(b => {
+      const on = b.dataset.room === k;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
     let pane = null;
     document.querySelectorAll('.room-pane').forEach(p => {
       const on = p.dataset.pane === k;
@@ -3612,6 +3667,16 @@
   $('roomTabs').addEventListener('click', e => {
     const b = e.target.closest('[data-room]'); if (!b) return;
     showRoom(b.dataset.room);
+  });
+  $('roomTabs').addEventListener('keydown', e => {
+    const step = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' }[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    const cur = ROOM_ORDER.indexOf(document.querySelector('[data-room][aria-selected="true"]')?.dataset.room);
+    const n = ROOM_ORDER.length;
+    const next = step === 'first' ? 0 : step === 'last' ? n - 1 : (cur + step + n) % n;
+    showRoom(ROOM_ORDER[next]);
+    document.querySelector('[data-room="' + ROOM_ORDER[next] + '"]').focus();
   });
   $('onePage').addEventListener('change', e => {
     const on = e.target.checked;

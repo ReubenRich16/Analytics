@@ -105,6 +105,24 @@
     </div>
   </div>
 
+  <!-- ROOMS — the same cards, sorted into three, and the same mechanism as the YouTube
+       page (the CSS already lives in the shared stylesheet). Three rather than four:
+       TikTok's API exposes no audience data of any kind, so an Audience tab here could
+       only ever be an empty room. The one-page switch turns the rooms off entirely. -->
+  <div class="roombar" id="roomBar" style="display:none">
+    <div class="tabs" role="tablist" id="roomTabs">
+      <button role="tab" id="tab-now" aria-controls="pane-now" aria-selected="true" tabindex="0" data-room="now">Now</button>
+      <button role="tab" id="tab-posts" aria-controls="pane-posts" aria-selected="false" tabindex="-1" data-room="posts">Posts</button>
+      <button role="tab" id="tab-ideas" aria-controls="pane-ideas" aria-selected="false" tabindex="-1" data-room="ideas">Ideas</button>
+    </div>
+    <label class="onepage" title="Turn the rooms off and stack every card, exactly as it was before">
+      <input type="checkbox" id="onePage"> One page
+    </label>
+  </div>
+
+  <div class="room-pane on" data-pane="now" id="pane-now" role="tabpanel" aria-labelledby="tab-now" tabindex="0">
+  <div class="room-divider"><span>Now</span><hr></div>
+
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid" style="display:none">
     <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
@@ -131,6 +149,17 @@
       </div>
     </div>
     <div id="latestContent"></div>
+  </div>
+  </div>
+
+  <div class="room-pane" data-pane="posts" id="pane-posts" role="tabpanel" aria-labelledby="tab-posts" tabindex="0">
+  <div class="room-divider"><span>Posts</span><hr></div>
+
+  <!-- ACCOUNT BREAKDOWN -->
+  <div class="card" id="breakdownCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
+    <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
+    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
   <!-- VIDEO TABLE -->
@@ -166,20 +195,10 @@
     </div>
     <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to any third-party app.</p>
   </div>
-
-  <!-- ACCOUNT BREAKDOWN -->
-  <div class="card" id="breakdownCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
-    <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
-    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
-  <!-- COACHING -->
-  <div class="card" id="coachCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
-    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
-    <div id="coachContent"><p class="dnote">crunching…</p></div>
-  </div>
+  <div class="room-pane" data-pane="ideas" id="pane-ideas" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0">
+  <div class="room-divider"><span>Ideas</span><hr></div>
 
   <!-- IDEA STUDIO -->
   <div class="card" id="ideasCard" style="display:none">
@@ -191,6 +210,14 @@
       <button class="primary" id="ideaBtn">💡 Generate ideas</button>
     </div>
     <div id="ideaOut" style="margin-top:12px"></div>
+  </div>
+
+  <!-- COACHING -->
+  <div class="card" id="coachCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
+    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
+    <div id="coachContent"><p class="dnote">crunching…</p></div>
+  </div>
   </div>
 
 </div>
@@ -251,6 +278,15 @@
     if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
     if (s < 86400) return Math.round(s / 3600) + 'h ago';
     return Math.round(s / 86400) + 'd ago';
+  };
+  // an age in minutes rather than an instant — same helper the YouTube page has, and
+  // having it here is what lets the projection block be character-identical across the
+  // two files, which scripts/plateau.test.mjs pins so a fix can't land on only one
+  const fmtAge = m => {
+    m = Math.round(m);
+    if (m < 60) return m + ' min';
+    if (m < 2880) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    return Math.floor(m / 1440) + 'd ' + Math.floor((m % 1440) / 60) + 'h';
   };
   function animateNum(el, from, to) {
     if (from == null || from === to) { el.textContent = fmt.format(to); return; }
@@ -599,6 +635,38 @@
     try { mergeHist(await api('/tiktok/history' + (histSince ? '?since=' + histSince : ''))); }
     catch (e) { /* keep whatever is already drawn */ }
   }
+  // /tiktok/history only carries the last few days of samples, because its job is "what
+  // has happened lately". The projection needs the opposite slice — the first 48 hours of
+  // posts that already finished — and for anything older than a few days that falls
+  // entirely outside that window even though the Worker's database still holds it.
+  // /tiktok/launches serves it age-indexed; converting back to absolute timestamps lets
+  // mergeHist do the union, so this can only ever ADD to what is already drawn.
+  const LAUNCH_EVERY = 2 * 3600e3;
+  let launchPulled = 0;
+  async function pullLaunches() {
+    if (Date.now() - launchPulled < LAUNCH_EVERY) return;
+    let b = null;
+    try { b = await api('/tiktok/launches'); } catch (e) { return; }
+    if (!b || !b.curves) return;
+    launchPulled = Date.now();
+    const conv = { videos: {} };
+    for (const [id, rec] of Object.entries(b.curves)) {
+      if (!rec || !rec.create_time || !Array.isArray(rec.s) || rec.s.length < 8) continue;
+      const t0 = rec.create_time * 1000;
+      conv.videos[id] = {
+        create_time: rec.create_time, title: rec.title || '', cover: rec.cover || '',
+        // Exactly t0 + age, with no rounding to the minute grid. Flooring these onto whole
+        // minutes looks tidier and is wrong: create_time is a whole SECOND, not a whole
+        // minute, so flooring drags every point up to 59s earlier than the age it was
+        // recorded at — which pushed age 0 to −1 and got the first point of every curve
+        // dropped, then shifted the rest down by one. The offset from the live sampler's
+        // grid is real but harmless: mergeHist unions by timestamp, and a finished launch
+        // has no live samples left inside its window to collide with anyway.
+        s: rec.s.map(p => [t0 + p[0] * 60000, p[1]])
+      };
+    }
+    if (Object.keys(conv.videos).length) mergeHist(conv);
+  }
   loadHist();
 
   /* ---------- auth ---------- */
@@ -644,10 +712,17 @@
     $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
       fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
     $('setupPanel').style.display = 'none';
+    // the cards and the panes hide independently: these reveals say "there is an account
+    // now", the room panes say "this is the part you are looking at"
     ['profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
+    $('roomBar').style.display = 'flex';
+    document.body.classList.add('signed-in');
+    // the room restore ran before any of this existed, so its stagger was a no-op
+    if (!reducedMotion) staggerCards(document.querySelector('.room-pane.on') || document);
     await pullHistory();
+    await pullLaunches();
     intervalMs = +$('interval').value;
     await poll();
     if (timer) clearInterval(timer);
@@ -685,6 +760,7 @@
       // while a launch is live, not only when Refresh is pressed
       pollCount++;
       if (pollCount % 3 === 0) await pullHistory();
+      pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
       clearError();
       $('liveDot').classList.add('on');
@@ -797,13 +873,22 @@
     return final >= 25 ? { c, final } : null;
   }
   const pjMed = a => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  // ONE admission test, used everywhere. A reference votes at an age only if it recorded
+  // that age and its share there is large enough to divide by. This was briefly two tests
+  // — pjUsable at > 0 and pjShares at > .02 — which let a curve into the usable set and
+  // then straight back out of the median, so the card read "not enough references" with
+  // nothing on screen to explain why.
+  //
   // The upper bound is 1.25, not 1.0: YouTube revises counts down after the fact (spam
   // filtering), so a real curve can peak above the total it settles at — one of the
   // recorded launches tops out at 2,033 and finishes on 2,027. A guard at 1.0 made that
   // curve silently abstain for the six hours around its own peak.
-  const pjShares = (refs, t) => refs.map(r => pjAt(r.c, t) / r.final).filter(s => s > .02 && s <= 1.25);
-  // the references that actually reach back to this age and can therefore vote on it
-  const pjUsable = (refs, t) => refs.filter(r => pjAt(r.c, t) > 0);
+  const pjShareAt = (r, t) => {
+    const v = pjAt(r.c, t), s = v == null ? 0 : v / r.final;
+    return s > .02 && s <= 1.25 ? s : 0;
+  };
+  const pjShares = (refs, t) => refs.map(r => pjShareAt(r, t)).filter(s => s > 0);
+  const pjUsable = (refs, t) => refs.filter(r => pjShareAt(r, t) > 0);
   function pjFloorAt(t) {
     let prev = PJ_FLOOR[0];
     for (const p of PJ_FLOOR) {
@@ -933,7 +1018,7 @@
     const cone = seg(p.hi) + steps.slice().reverse().map(t => ' L' + X(t).toFixed(1) + ',' + Y(views + (p.lo - views) * u(t)).toFixed(1)).join('') + ' Z';
     const nx = X(age).toFixed(1);
     return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' +
-      esc('Views recorded to ' + Math.round(age / 60) + ' hours old, then projected toward about ' + fmt.format(p.mid) + ' by 48 hours') + '">' +
+      esc('Views recorded to ' + fmtAge(age) + ', then projected toward about ' + fmt.format(p.mid) + ' by 48 hours') + '">' +
       frame +
       // stroked as well as filled: at twelve hours the range is only a few percent of the
       // plot's height, and a fill that faint at that size is not a mark, it is a smudge
@@ -1292,6 +1377,74 @@
   let savedTheme = 'midnight';
   try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
   applyTheme(savedTheme);
+
+  /* ---------- rooms ----------
+     The same mechanism as the YouTube page, against the same shared CSS: the cards never
+     move, only which pane is visible changes, and the one-page switch turns the rooms off
+     and stacks everything exactly as this page was before.
+
+     The panes are authored here in tab order, so this needs none of index.html's runtime
+     pane reordering — that exists there only because its four panes sit in the markup in
+     a different order from the tabs.
+
+     The chosen room is stored under its own key. The two pages do not have the same rooms,
+     so sharing cc_room would mean landing on TikTok's "Posts", switching to YouTube, and
+     silently being dropped back to Now every time. The One page switch IS shared, on the
+     same reasoning as the sound preference: it is a choice about the person, not the page. */
+  const ROOM_ORDER = ['now', 'posts', 'ideas'];
+  function staggerCards(scope) {
+    const cards = (scope || document).querySelectorAll('.card, .grid');
+    cards.forEach((c, i) => {
+      if (c.offsetParent === null && !document.body.classList.contains('onepage-on')) return;
+      c.style.setProperty('--i', Math.min(i, 8));
+      c.style.animation = 'none'; void c.offsetWidth; c.style.animation = '';
+    });
+  }
+  function showRoom(k, remember) {
+    if (ROOM_ORDER.indexOf(k) < 0) k = 'now';
+    // roving tabindex: only the selected tab is in the tab order, so Tab moves past the
+    // whole bar in one press and the arrow keys move within it — the tabs pattern the
+    // role="tablist" on this element has been promising all along
+    document.querySelectorAll('[data-room]').forEach(b => {
+      const on = b.dataset.room === k;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
+    let pane = null;
+    document.querySelectorAll('.room-pane').forEach(p => {
+      const on = p.dataset.pane === k;
+      p.classList.toggle('on', on);
+      if (on) pane = p;
+    });
+    if (remember !== false) { try { localStorage.setItem('cc_room_tt', k); } catch (e) {} }
+    if (pane && !reducedMotion) staggerCards(pane);
+  }
+  $('roomTabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-room]'); if (!b) return;
+    showRoom(b.dataset.room);
+  });
+  $('roomTabs').addEventListener('keydown', e => {
+    const step = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' }[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    const cur = ROOM_ORDER.indexOf(document.querySelector('[data-room][aria-selected="true"]')?.dataset.room);
+    const n = ROOM_ORDER.length;
+    const next = step === 'first' ? 0 : step === 'last' ? n - 1 : (cur + step + n) % n;
+    showRoom(ROOM_ORDER[next]);
+    document.querySelector('[data-room="' + ROOM_ORDER[next] + '"]').focus();
+  });
+  $('onePage').addEventListener('change', e => {
+    const on = e.target.checked;
+    document.body.classList.toggle('onepage-on', on);
+    try { localStorage.setItem('cc_onepage', on ? '1' : '0'); } catch (e2) {}
+    if (on && !reducedMotion) staggerCards(document);
+  });
+  (function restoreRoom() {
+    let savedRoom = 'now', savedOne = false;
+    try { savedRoom = localStorage.getItem('cc_room_tt') || 'now'; savedOne = localStorage.getItem('cc_onepage') === '1'; } catch (e) {}
+    if (savedOne) { $('onePage').checked = true; document.body.classList.add('onepage-on'); }
+    showRoom(savedRoom, false);
+  })();
 
   /* ---------- start ---------- */
   try { workerUrl = localStorage.getItem('tt_worker') || ''; } catch (e) {}

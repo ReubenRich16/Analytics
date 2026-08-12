@@ -9,9 +9,14 @@
 // and then double are the Worker's old 6-hour window, not behaviour, and taking them as
 // real would under-call every launch after them.
 //
+// The model exists twice — once in each dashboard, because the two are standalone single
+// files by design. Section 0 pins them character-for-character, so the copy that is not
+// under test cannot drift away from the copy that is.
+//
 // Run: node scripts/plateau.test.mjs
 import fs from 'fs';
 const src = fs.readFileSync(new URL('../yt-dashboard/index.html', import.meta.url), 'utf8');
+const ttSrc = fs.readFileSync(new URL('../yt-dashboard/tiktok.html', import.meta.url), 'utf8');
 const slice = (from, to) => {
   const i = src.indexOf(from);
   if (i < 0) throw new Error('not found in index.html: ' + from);
@@ -39,6 +44,52 @@ function scurve(final, k, stepMin = 30, lastH = 48) {
 }
 
 console.log('\nplateau projection');
+
+/* 0 — the two copies of the model must be the same model */
+{
+  const grab = (text, from, to) => {
+    const i = text.indexOf(from);
+    if (i < 0) return null;
+    const j = text.indexOf(to, i);
+    return j < 0 ? null : text.slice(i, j);
+  };
+  const a = grab(src, 'const PJ_HORIZON', '  // Option C');
+  const b = grab(ttSrc, 'const PJ_HORIZON', '  // Option C');
+  check('the TikTok page carries the model too', !!b);
+  // the wording of the surrounding prose differs (videos vs posts); the code must not
+  const strip = t => (t || '').split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n').replace(/\s+/g, ' ').trim();
+  check('both dashboards run the identical model', strip(a) === strip(b),
+    strip(a) === strip(b) ? '' : 'index and tiktok have drifted');
+  // and the renderers, which is where a copy-paste fix usually gets applied to only one
+  for (const fn of ['function pjBarHtml', 'function pjSentenceHtml', 'function pjCurveHtml']) {
+    const x = grab(src, fn, '\n  }\n'), y = grab(ttSrc, fn, '\n  }\n');
+    check(fn.replace('function ', '') + ' is the same in both', !!y && strip(x) === strip(y));
+  }
+}
+
+/* 0b — TikTok's own conversion step, which index.html does not have: the Worker stores
+   absolute milliseconds and create_time is in SECONDS, so this is the one place a units
+   error could quietly halve or thousand-fold every age in the model. */
+{
+  const cv = new Function(
+    (ttSrc.slice(ttSrc.indexOf('function pjCurveOf'), ttSrc.indexOf('\n  }\n', ttSrc.indexOf('function pjCurveOf'))) + '\n  }\n') +
+    '\nreturn pjCurveOf;')();
+  const createSec = 1786000000;           // seconds, as TikTok reports it
+  const t0 = createSec * 1000;
+  const rec = { s: [[t0, 10], [t0 + 60000, 20], [t0 + 3600000, 300]] };
+  const c = cv('id', createSec, rec);
+  check('minute zero is age zero', c[0][0] === 0, JSON.stringify(c[0]));
+  check('one minute later is age 1', c[1][0] === 1, JSON.stringify(c[1]));
+  check('one hour later is age 60', c[2][0] === 60, JSON.stringify(c[2]));
+  check('views come through untouched', c.map(p => p[1]).join() === '10,20,300');
+  check('samples from before the post existed are dropped',
+    cv('id', createSec, { s: [[t0 - 600000, 5], [t0, 10], [t0 + 60000, 20]] }).length === 2);
+  check('no create_time means no curve', cv('id', 0, rec) === null);
+  check('no samples means no curve', cv('id', createSec, { s: [] }) === null);
+  check('out-of-order samples are sorted',
+    cv('id', createSec, { s: [[t0 + 60000, 20], [t0, 10]] }).map(p => p[0]).join() === '0,1');
+}
 
 /* 1 — interpolation between recorded minutes */
 {

@@ -59,8 +59,10 @@ data/             recorded history, committed by the robots
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
-- **Four rooms** — Now, Videos, Audience, Ideas — with a **One page** switch that turns
-  them off and stacks every card exactly as it was before, so nothing is ever out of reach
+- **Rooms** — four on YouTube (Now · Videos · Audience · Ideas), three on TikTok
+  (Now · Posts · Ideas — its API exposes no audience data at all, so a fourth room there
+  could only ever be empty). Both carry the same **One page** switch that turns the rooms
+  off and stacks every card exactly as it was before, so nothing is ever out of reach
 - An **answer card** at the top: four chips that say in a sentence how today went, how the
   newest upload landed, who's watching and when you're next due. Computed from numbers
   already on the page, so it costs no extra quota
@@ -240,6 +242,7 @@ of TikTok. Free, no card.
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
+| `/launches`, `/tiktok/launches` | the first 48 hours of finished launches, age-indexed — the projection's reference curves |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
 
 **Where the minute samples live**
@@ -260,6 +263,21 @@ back only the minutes it hasn't seen, because re-shipping a 48-hour window every
 minutes would exhaust D1's 5,000,000 daily row-reads before the day was out. And the KV
 mirror is written at most every 15 minutes rather than every minute — a roster change or a
 failed D1 write still persists immediately, but ordinary sample growth waits.
+
+**Two different slices, two different routes.** That incremental bundle cuts on an
+*absolute* timestamp — the last three days — because its job is "what has happened lately".
+The plateau projection needs the opposite slice: the **first 48 hours** of launches that
+already finished, which for anything published more than three days ago sits entirely
+outside that window even though D1 still holds every minute of it. That mismatch is why the
+projection first shipped saying it had no reference curves while the data sat in the
+database. `/launches` and `/tiktok/launches` serve that slice, age-indexed and downsampled
+to one point per five minutes, capped at the twelve newest finished launches and cached for
+six hours — so however often it is asked for, D1 sees it four times a day, about 48,000
+rows read per call against a 5,000,000/day allowance.
+
+The ages are emitted per point rather than as a dense array, deliberately: a hole in the
+recording has to survive the downsampling, because the model throws away reference curves
+with a hole where the prediction gets made.
 
 Both stores are still written every tick. D1 answers reads; if it fails *or comes back
 empty while KV has data*, KV answers instead and the page never notices — the JSON is

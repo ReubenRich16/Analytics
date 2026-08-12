@@ -219,6 +219,11 @@
   body.onepage-on .tabs { display:none; }
   .room-divider { display:none; align-items:center; gap:11px; margin:20px 0 12px; }
   body.onepage-on .room-divider { display:flex; }
+  /* Until an account is connected there is nothing in any room, and with One page saved
+     from a previous visit the page would otherwise print three or four section headings
+     with nothing under them, directly beneath the sign-in card. Same specificity as the
+     onepage-on rules above, so it has to sit after them to win. */
+  body:not(.signed-in) .room-pane, body:not(.signed-in) .room-divider { display:none; }
   .room-divider span { font-family:var(--f-num); font-size:11px; font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--muted); }
   .room-divider hr { flex:1; border:0; border-top:1px solid var(--line); }
