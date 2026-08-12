@@ -89,7 +89,12 @@ const COLD_COOL_MIN  = 60;
 // the scan cadence, so it needs no stored state and a missed tick simply waits for the
 // next boundary instead of drifting.
 const coldDue = (ageMs, minute) => {
-  if (ageMs <= HOT_HOURS * 3600e3) return false;      // the hot loop owns it
+  // `!(x > y)` rather than `x <= y` on purpose: every comparison against NaN is false, so
+  // `<=` waved a missing published_at straight through, the age then failed the warm test
+  // as well, and the video was declared due on the hour, every hour, forever. This repo
+  // has already had published_at truncated to 1969 once by an `| 0`, so a nonsense age is
+  // not hypothetical.
+  if (!(ageMs > HOT_HOURS * 3600e3)) return false;    // the hot loop owns it; NaN lands here
   if (ageMs > D1_KEEP_DAYS * 864e5) return false;     // past retention; the row would be pruned
   return minute % (ageMs < COLD_WARM_DAYS * 864e5 ? COLD_WARM_MIN : COLD_COOL_MIN) === 0;
 };
@@ -503,7 +508,10 @@ async function coldTick(env, key, slot) {
   const r = await env.DB.prepare(
     'SELECT video_id, published_at, title, channel FROM videos WHERE platform = ? AND published_at >= ? AND published_at < ?'
   ).bind('yt', now - D1_KEEP_DAYS * 864e5, now - HOT_HOURS * 3600e3).all();
-  const due = (r.results || []).filter(v => coldDue(now - v.published_at, minute));
+  // and belt and braces at the source: a row with no usable publish time is not a video
+  // whose age is unknown, it is a row that should never have been written
+  const due = (r.results || []).filter(v => v && v.video_id &&
+    Number.isFinite(v.published_at) && coldDue(now - v.published_at, minute));
   if (!due.length) return { due: 0 };
   const rows = [];
   for (const part of chunk(due.map(v => v.video_id), 50)) {

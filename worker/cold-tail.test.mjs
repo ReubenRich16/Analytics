@@ -45,6 +45,16 @@ console.log('\n1. the cadence');
   check('nothing past retention is sampled — the row would only be pruned',
     [0, 15].every(m => !W.coldDue((W.D1_KEEP_DAYS + 1) * D, m)));
   check('right up to retention it still is', W.coldDue((W.D1_KEEP_DAYS - 0.5) * D, 0));
+
+  /* A nonsense age must not be due. Every comparison against NaN is false, so an
+     `ageMs <= HOT` test waved it through, the warm test failed too, and the video came out
+     due on the hour, every hour, forever. Found by the dual-write suite, whose mock returns
+     rows without a published_at — and this repo has already had published_at truncated to
+     1969 once, so it is not a hypothetical shape. */
+  for (const junk of [NaN, undefined, null, 'soon', Infinity, -1]) {
+    check('a ' + String(junk) + ' age is never due',
+      [0, 15, 30, 45].every(m => W.coldDue(junk, m) === false), String(junk));
+  }
 }
 
 /* 2 — the budget claimed in the header comment */
@@ -146,6 +156,29 @@ function stubApi(calls) {
 {
   check('with no D1 binding it declines rather than throwing',
     (await W.coldTick({}, 'KEY', NOW)).skipped === 'no D1');
+}
+
+{
+  // rows with no usable publish time are skipped at the source too
+  const DB = mockD1([
+    { platform: 'yt', video_id: 'ok', published_at: NOW - 5 * D, title: '', channel: 'UC1' },
+    { platform: 'yt', video_id: 'nodate', published_at: undefined, title: '', channel: 'UC1' },
+    { platform: 'yt', video_id: undefined, published_at: NOW - 5 * D, title: '', channel: 'UC1' },
+  ]);
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  const onHour = new Date(NOW); onHour.setUTCMinutes(0, 0, 0);
+  Date.now = () => onHour.getTime();
+  const asked = [];
+  globalThis.fetch = async u => {
+    asked.push(new URL(String(u)).searchParams.get('id'));
+    return { ok: true, status: 200, json: async () => ({ items: [] }) };
+  };
+  try {
+    const r = await W.coldTick({ DB }, 'KEY', onHour.getTime());
+    check('only the row with a real id and a real date is sampled', r.due === 1, r.due);
+    check('and nothing undefined reaches the API call',
+      !asked.join(',').includes('undefined'), asked.join(','));
+  } finally { globalThis.fetch = realFetch; Date.now = realNow; }
 }
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');

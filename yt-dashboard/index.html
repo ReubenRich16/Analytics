@@ -1116,12 +1116,18 @@
     for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
     return { lo: nlo, hi: nhi, ticks, step };
   }
-  // axis ticks stay short — 120,000 becomes 120k — so the left gutter can be narrow
-  function axisNum(v, unit) {
+  /* Axis ticks stay short — 120,000 becomes 120k — so the left gutter can be narrow.
+
+     `step` is the distance between gridlines, and it decides how much precision the label
+     needs. Without it a zoomed axis whose step is smaller than the abbreviation's own
+     resolution prints the same number on consecutive lines: subscriber history stepping by
+     10 around 10,500 rendered "10.5k" three times in a row, which reads as a broken chart.
+     Compact only while the step is coarse enough to survive it. */
+  function axisNum(v, unit, step) {
     const a = Math.abs(v);
     let s;
-    if (a >= 1e6) s = (v / 1e6).toFixed(a % 1e6 ? 1 : 0).replace(/\.0$/, '') + 'M';
-    else if (a >= 1e4) s = (v / 1e3).toFixed(a % 1e3 ? 1 : 0).replace(/\.0$/, '') + 'k';
+    if (a >= 1e6 && (!step || step >= 1e5)) s = (v / 1e6).toFixed(a % 1e6 ? 1 : 0).replace(/\.0$/, '') + 'M';
+    else if (a >= 1e4 && (!step || step >= 100)) s = (v / 1e3).toFixed(a % 1e3 ? 1 : 0).replace(/\.0$/, '') + 'k';
     else if (a >= 1000) s = fmt.format(Math.round(v));
     else s = String(Math.round(v * 10) / 10);
     return s.replace('-', '−') + (unit || ''); // typographic minus, not a hyphen
@@ -1136,7 +1142,7 @@
     for (const t of sc.ticks) {
       const y = Y(t);
       if (Math.abs(y - base) > 0.5) s += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
-      s += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t, opts.unit)) + '</text>';
+      s += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t, opts.unit, sc.step)) + '</text>';
     }
     if (!opts.noBaseline) s += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
     if (opts.x0) s += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(opts.x0) + '</text>';
@@ -1424,9 +1430,23 @@
       chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
       return;
     }
-    let idx = d.bars
-      ? Math.floor((xv - d.L) / Math.max(1, d.w - d.L - d.R) * d.tips.length)
-      : Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
+    // Bars sit in fixed slots, so their index is arithmetic. Lines are not: since
+    // lineChartHtml gained a real-time x axis the points are only evenly spaced when the
+    // samples were, and dividing the width by the point count then named a different
+    // sample than the crosshair was standing on. Nearest actual pixel is right either way.
+    let idx;
+    if (d.bars) {
+      idx = Math.floor((xv - d.L) / Math.max(1, d.w - d.L - d.R) * d.tips.length);
+    } else if (d.xs && d.xs.length) {
+      idx = 0;
+      let best = Infinity;
+      for (let i = 0; i < d.xs.length; i++) {
+        const dist = Math.abs(d.xs[i] - xv);
+        if (dist < best) { best = dist; idx = i; }
+      }
+    } else {
+      idx = Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
+    }
     idx = Math.max(0, Math.min(d.tips.length - 1, idx));
     // the crosshair finds the X: readers aim at a day, never at a 2px line
     if (d.bars) {
@@ -1638,7 +1658,10 @@
       const sPts = chn.map(s2 => s2[1]);
       const sTips = chn.map(s2 => fmt.format(s2[1]) + ' subs — ' + new Date(s2[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
       aud += section('Subscriber history — recorded hourly', 'From the repo’s snapshot robot. YouTube publicly shows rounded subscriber counts, so the line moves in steps — this is the only free way to see movement between days.',
-        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', zoom: true, x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
+        // `at`, because the robot's channel history is not evenly spaced either — it writes
+        // every ~5 minutes around a launch and hourly otherwise, so index-spacing stretched
+        // the busy days and squeezed the quiet ones
+        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', zoom: true, at: chn.map(s2 => s2[0]), x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
       const bIds = Object.keys(hist.bench || {});
       if (bIds.length) {
         const cut = Date.now() - 30 * 864e5;

@@ -339,6 +339,10 @@
   /* ---------- chart ----------
      Same anatomy as the YouTube dashboard: ticks on human numbers, hairline grid,
      a labelled endpoint, and a crosshair that snaps to the nearest sample. */
+  // Bounded the same way the YouTube page's registry is. Every poll re-renders the latest
+  // post card and pushes a fresh entry holding that post's whole sample arrays — up to
+  // 2,880 points each — and nothing ever removed the old one, so a tab left open all day
+  // accumulated well over a thousand of them.
   const ttReg = new Map();
   let chartId = 0;
   function niceScale(lo, hi, target) {
@@ -388,6 +392,7 @@
     if (opts.x1) frame += '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     const xs = pts.map((_, i) => X(i)), ys = pts.map(Y);
     ttReg.set(ci, { tips: opts.tips || pts.map(v => fmt.format(v) + ' views'), xs, ys, L, R, w, color });
+    ttReg.delete(ci - 400);
     // A gap far longer than the usual spacing is a stretch where nothing was recorded, not
     // a steady climb. Joining across it would draw a straight line that looks like measured
     // growth, so the path breaks instead and the gap reads as what it is: no data.
