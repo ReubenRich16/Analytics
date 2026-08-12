@@ -641,7 +641,12 @@
   // entirely outside that window even though the Worker's database still holds it.
   // /tiktok/launches serves it age-indexed; converting back to absolute timestamps lets
   // mergeHist do the union, so this can only ever ADD to what is already drawn.
-  const LAUNCH_EVERY = 2 * 3600e3;
+  // Twenty minutes, not two hours. The Worker now answers this from cache unless the set
+  // of finished launches has actually changed, so asking costs it a 22-row query — and
+  // the moment that matters is the one where a second usable reference appears and the
+  // card goes from "not enough" to an actual projection. Waiting two hours to notice that
+  // was the only thing left making it feel slow.
+  const LAUNCH_EVERY = 20 * 60e3;
   let launchPulled = 0;
   async function pullLaunches() {
     if (Date.now() - launchPulled < LAUNCH_EVERY) return;

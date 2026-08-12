@@ -253,13 +253,17 @@ async function d1TtBundle(env, openId, days, since) {
 const PJ_WINDOW = 48 * 3600e3;   // the launch window the projection models
 const PJ_STEP   = 5;             // minutes between emitted points
 const PJ_MAX    = 12;            // how many finished launches to ship
-const PJ_TTL    = 6 * 3600e3;    // how long a cached answer stands
-// Bumped whenever the emitted shape changes. Without it a fix to the query keeps serving
-// six hours of the old answer from cache after the deploy — which is exactly what the
-// floating-point bucket bug would have done, silently, on the way out.
-const PJ_CACHE  = 2;
+const PJ_STALE  = 24 * 3600e3;   // rebuild anyway once a day, however quiet the roster is
+const PJ_MEMO   = 60e3;          // per-isolate breather, so a burst costs nothing at all
+// Bumped whenever the STORED shape changes. Without it a fix to the query keeps serving
+// the old answer from cache after the deploy — which is exactly what the floating-point
+// bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint.
+const PJ_CACHE  = 3;
 
-async function d1Launches(env, platform) {
+// Which launches have finished. Cheap on purpose — measured at 22 rows read against the
+// live database — because this is what gets asked on every request, while the expensive
+// half below only runs when the answer to this has changed.
+async function d1Finished(env, platform) {
   const now = Date.now();
   // finished launches only: old enough to have a complete window, recent enough that D1
   // still holds the samples
@@ -267,7 +271,11 @@ async function d1Launches(env, platform) {
     'SELECT video_id, published_at, title, cover FROM videos WHERE platform = ? AND published_at >= ? AND published_at <= ?' +
     ' ORDER BY published_at DESC LIMIT ' + PJ_MAX
   ).bind(platform, now - D1_KEEP_DAYS * 864e5, now - PJ_WINDOW).all();
-  const vids = vres.results || [];
+  return vres.results || [];
+}
+
+async function d1Launches(env, platform, vids) {
+  if (!vids) vids = await d1Finished(env, platform);
   if (!vids.length) return { curves: {} };
 
   const bucket = PJ_STEP * 60000;
@@ -306,17 +314,51 @@ async function d1Launches(env, platform) {
   return { curves };
 }
 
-// The cache is also the abuse guard: however often this is asked for, D1 sees it at most
-// once per PJ_TTL. Four KV writes a day for YouTube and four per connected TikTok account,
-// against a 1,000/day cap currently running at about 220.
+/* Cached on WHAT IT DEPENDS ON rather than on a clock.
+
+   A finished launch never changes again — that is the whole point of only serving
+   finished ones. The single thing that can move is WHICH launches have finished, and on
+   this account that happens once or twice a day, when a video crosses 48 hours old.
+   A time-based TTL therefore trades freshness against cost on an axis where neither
+   side wins: a six-hour TTL means a completed launch can be six hours late to appear,
+   and an hourly one would rebuild twenty-four times a day to notice a change that
+   happens once — 1.15 million D1 rows read a day for YouTube alone, against a 5,000,000
+   cap, to learn nothing twenty-three times out of twenty-four.
+
+   So the roster query runs on every request (22 rows) and the curves are rebuilt only
+   when the roster actually differs — about 48,000 rows, once or twice a day. That is
+   roughly 97,000 rows a day all in: LESS than the six-hour TTL it replaces, and a
+   finished launch now appears the moment it is asked for rather than up to six hours
+   later. PJ_STALE rebuilds once a day regardless, so a change this scheme cannot see —
+   a backfill correcting old samples in place — still works its way out within a day.
+
+   Two guards sit in front of the roster query. A per-isolate memo absorbs bursts for
+   free (no storage, no quota, and it simply misses when the isolate is cold), and the
+   dashboards ask at most once every two hours anyway. */
+const pjMemo = new Map();
 async function launchBody(env, platform) {
   const key = 'launch:' + PJ_CACHE + ':' + platform;
   const now = Date.now();
+  const memo = pjMemo.get(key);
+  if (memo && now - memo.at < PJ_MEMO) return memo.body;
+
   let hit = null;
   try { hit = await env.MINUTE.get(key, 'json'); } catch (e) {}
-  if (hit && hit.curves && now - (hit.at || 0) < PJ_TTL) return hit;
-  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, ...(await d1Launches(env, platform)) };
+
+  let vids = null, ids = null;
+  if (hit && hit.curves && hit.ids && now - (hit.at || 0) < PJ_STALE) {
+    vids = await d1Finished(env, platform);
+    ids = vids.map(v => v.video_id).join(',');
+    if (ids === hit.ids) { pjMemo.set(key, { at: now, body: hit }); return hit; }
+  }
+  if (!vids) { vids = await d1Finished(env, platform); ids = vids.map(v => v.video_id).join(','); }
+
+  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, ids,
+                 ...(await d1Launches(env, platform, vids)) };
+  // a write only when the answer actually changed, so this stays at one or two KV writes
+  // a day per partition against a 1,000/day cap currently running at about 220
   try { await env.MINUTE.put(key, JSON.stringify(body)); } catch (e) {}
+  pjMemo.set(key, { at: now, body });
   return body;
 }
 

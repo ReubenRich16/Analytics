@@ -271,9 +271,18 @@ already finished, which for anything published more than three days ago sits ent
 outside that window even though D1 still holds every minute of it. That mismatch is why the
 projection first shipped saying it had no reference curves while the data sat in the
 database. `/launches` and `/tiktok/launches` serve that slice, age-indexed and downsampled
-to one point per five minutes, capped at the twelve newest finished launches and cached for
-six hours — so however often it is asked for, D1 sees it four times a day, about 48,000
-rows read per call against a 5,000,000/day allowance.
+to one point per five minutes, capped at the twelve newest finished launches.
+
+They are cached on **what the answer depends on, not on a clock**. A finished launch never
+changes again — that is the point of only serving finished ones — so the only thing that
+can move is *which* launches have finished, which happens once or twice a day when a video
+crosses 48 hours old. So every request runs a cheap roster query (**22 rows**, measured)
+and the curves are rebuilt only when the roster differs (**~48,000 rows**, once or twice a
+day), plus one forced rebuild every 24 hours for anything the roster cannot see. That comes
+to roughly **97,000 rows a day** — less than a six-hour timer would have cost, while a
+finished launch now appears the moment it is asked for instead of up to six hours later.
+An hourly timer, for comparison, would have burned 1.15 million rows a day on YouTube alone
+to notice a once-a-day change.
 
 The ages are emitted per point rather than as a dense array, deliberately: a hole in the
 recording has to survive the downsampling, because the model throws away reference curves

@@ -16,7 +16,7 @@ import fs from 'fs';
 const HERE = new URL('.', import.meta.url).pathname;
 const src = fs.readFileSync(HERE + 'worker.js', 'utf8')
   .replace(/export default\s*\{/, 'const HANDLER = {') +
-  '\nexport { d1Launches, launchBody, ttKey, PJ_STEP, PJ_MAX, PJ_WINDOW, PJ_TTL };';
+  '\nexport { d1Launches, d1Finished, launchBody, ttKey, PJ_STEP, PJ_MAX, PJ_WINDOW, PJ_STALE, PJ_MEMO, pjMemo };';
 const tmp = HERE + '.worker-launches.mjs';
 fs.writeFileSync(tmp, src);
 const W = await import(tmp);
@@ -227,36 +227,60 @@ console.log('\n5. TikTok accounts stay separate');
   check('it does not carry a YouTube-style pub', out.curves.a1.pub === undefined);
 }
 
-/* 6 — the cache, which is also the abuse guard */
-console.log('\n6. the answer is cached');
+/* 6 — the cache tracks what it depends on, not a clock */
+console.log('\n6. the answer is cached on the roster, not on a timer');
 {
   const pub = NOW - 100 * HOUR;
   const vids = [{ platform: 'yt', video_id: 'v', published_at: pub, title: '', cover: '' }];
-  const DB = mockD1(vids, launch('yt', 'v', pub, 2000, 8));
+  const rows = launch('yt', 'v', pub, 2000, 8);
+  const DB = mockD1(vids, rows);
   const MINUTE = mockKV();
   const env = { DB, MINUTE };
+  W.pjMemo.clear();
+
   const first = await W.launchBody(env, 'yt');
-  // the key carries a format version, so a shape change cannot serve stale bytes for six
-  // hours after the deploy that fixed it
-  check('the cache key is versioned', [...MINUTE.m.keys()][0] === 'launch:2:yt', [...MINUTE.m.keys()][0]);
-  const after1 = DB.stats().rowsRead;
-  check('the first call reads D1', after1 > 1000, after1);
+  const built = DB.stats().rowsRead;
+  check('the cache key is versioned', [...MINUTE.m.keys()][0] === 'launch:3:yt', [...MINUTE.m.keys()][0]);
+  check('the first call reads the samples', built > 1000, built);
   check('and writes the cache once', MINUTE.puts() === 1, MINUTE.puts());
+  check('the roster it built from is remembered', first.ids === 'v', first.ids);
 
-  const second = await W.launchBody(env, 'yt');
-  check('a second call reads no further rows', DB.stats().rowsRead === after1, DB.stats().rowsRead);
-  check('and writes nothing more', MINUTE.puts() === 1, MINUTE.puts());
-  check('and serves the same curves', JSON.stringify(second.curves) === JSON.stringify(first.curves));
+  // within the isolate memo, nothing is asked of anything
+  const memoed = await W.launchBody(env, 'yt');
+  check('a burst inside the memo window touches neither D1 nor KV',
+    DB.stats().rowsRead === built && MINUTE.puts() === 1);
+  check('and still returns the same answer', memoed.ids === first.ids);
 
-  // age the cached entry past its TTL
-  const stale = JSON.parse(MINUTE.m.get([...MINUTE.m.keys()][0]));
-  stale.at = Date.now() - W.PJ_TTL - 1;
-  MINUTE.m.set([...MINUTE.m.keys()][0], JSON.stringify(stale));
+  // past the memo, the roster is re-checked but the curves are not rebuilt
+  W.pjMemo.clear();
   await W.launchBody(env, 'yt');
-  check('an expired cache is rebuilt', DB.stats().rowsRead > after1);
-  check('and rewritten', MINUTE.puts() === 2, MINUTE.puts());
+  const afterCheck = DB.stats().rowsRead - built;
+  check('an unchanged roster costs only the cheap query', afterCheck > 0 && afterCheck < 50, afterCheck + ' rows');
+  check('and writes nothing', MINUTE.puts() === 1, MINUTE.puts());
+
+  // a launch finishing changes the roster, and that is what triggers the rebuild
+  const pub2 = NOW - 60 * HOUR;
+  vids.unshift({ platform: 'yt', video_id: 'w', published_at: pub2, title: '', cover: '' });
+  rows.push(...launch('yt', 'w', pub2, 800, 8));
+  W.pjMemo.clear();
+  const before = DB.stats().rowsRead;
+  const grown = await W.launchBody(env, 'yt');
+  check('a newly finished launch rebuilds immediately', DB.stats().rowsRead - before > 1000, DB.stats().rowsRead - before);
+  check('and appears in the answer', !!grown.curves.w && !!grown.curves.v, Object.keys(grown.curves).join(','));
+  check('and is written back', MINUTE.puts() === 2, MINUTE.puts());
+  check('with the new roster recorded', grown.ids === 'w,v', grown.ids);
+
+  // and a rebuild happens once a day regardless, for changes the roster cannot see
+  const stale = JSON.parse(MINUTE.m.get('launch:3:yt'));
+  stale.at = Date.now() - W.PJ_STALE - 1;
+  MINUTE.m.set('launch:3:yt', JSON.stringify(stale));
+  W.pjMemo.clear();
+  const b2 = DB.stats().rowsRead;
+  await W.launchBody(env, 'yt');
+  check('a day-old answer is rebuilt even with an unchanged roster', DB.stats().rowsRead - b2 > 1000);
 
   // KV falling over must not take the route with it
+  W.pjMemo.clear();
   const dead = { async get() { throw new Error('kv down'); }, async put() { throw new Error('kv down'); } };
   const out = await W.launchBody({ DB, MINUTE: dead }, 'yt');
   check('a broken KV still serves fresh curves', !!out.curves.v);
