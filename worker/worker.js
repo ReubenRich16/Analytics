@@ -151,12 +151,29 @@ async function api(ep, params, key) {
 
 const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
 
+/* Load the KV state, and — importantly — say whether the load actually worked.
+
+   This used to swallow the error and return `{}`, which is byte-identical to what a first
+   run returns. That conflation is not harmless, because the tick WRITES this object back:
+   a single transient KV read failure produced an empty roster, the scan filled it with the
+   last few uploads, `rosterChanged` came out true, and the blank state was persisted over
+   the real one. One hiccup, and the KV mirror lost every curve it held — plus
+   s.d1Backfilled went with it, re-running the whole backfill against the row budget.
+
+   D1 is the read source now, so nothing user-facing breaks, which is exactly why this
+   could have run for months unnoticed while the declared fallback quietly held nothing.
+   `failed` is set instead, and the caller declines to write on that tick: recording into
+   D1 is still safe (INSERT OR IGNORE, keyed on the minute), but overwriting a state we
+   could not read is not. */
 async function loadState(env) {
-  let s = null;
-  try { s = await env.MINUTE.get(KV_KEY, 'json'); } catch (e) {}
+  let s = null, failed = false;
+  try { s = await env.MINUTE.get(KV_KEY, 'json'); }
+  catch (e) { failed = true; }
   if (!s || typeof s !== 'object') s = {};
   s.videos = s.videos || {};   // { vid: { pub, title, chan, s: [[ts,views,likes,comments],...] } }
   s.lastScan = s.lastScan || 0;
+  // non-enumerable so it never reaches the serialised blob, even if a write does slip past
+  Object.defineProperty(s, 'loadFailed', { value: failed, enumerable: false, writable: true });
   return s;
 }
 
@@ -324,6 +341,10 @@ const PJ_MEMO   = 60e3;          // per-isolate breather, so a burst costs nothi
 // the old answer from cache after the deploy — which is exactly what the floating-point
 // bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint.
 const PJ_CACHE  = 3;
+
+// /run's cooldown — see the route. Module-level, so it lives as long as the isolate does.
+const RUN_COOLDOWN = 60e3;
+let lastManualRun = 0;
 
 // Which launches have finished. Cheap on purpose — measured at 22 rows read against the
 // live database — because this is what gets asked on every request, while the expensive
@@ -618,6 +639,14 @@ async function tick(env) {
   // state that has never heard of it and doesn't sample it — losing the opening minutes of
   // a launch from D1 as well, since d1rows only covers what's in hotIds.
   const rosterBefore = rosterOf(s.videos);
+  // Faults are collected rather than thrown — one bad response must not cost the minute —
+  // but they are collected, not discarded. An expired key fails every call identically and
+  // forever, and silence made that look the same as a quiet channel.
+  const ytErrors = [];
+  const noteYt = (where, e) => {
+    const msg = where + ': ' + String((e && e.message) || e).slice(0, 120);
+    if (!ytErrors.includes(msg)) ytErrors.push(msg);   // one line per distinct fault
+  };
 
   // (1) Scan for new uploads on a fixed 5-minute boundary. Deriving the cadence from the
   // clock (rather than a stored lastScan) means quiet minutes need no KV write at all.
@@ -628,7 +657,7 @@ async function tick(env) {
         if (!s.videos[vid]) s.videos[vid] = { pub: info.pub, title: info.title, chan: info.chan, s: [] };
         else { s.videos[vid].title = info.title || s.videos[vid].title; s.videos[vid].pub = info.pub; }
       }
-    } catch (e) { /* transient API hiccup — try again next scan */ }
+    } catch (e) { noteYt('scan', e); /* transient API hiccup — try again next scan */ }
   }
 
   // (2) which tracked videos are still inside their hot window?
@@ -663,7 +692,7 @@ async function tick(env) {
           }
           sampled++;
         }
-      } catch (e) { /* skip this sample; the curve tolerates a gap */ }
+      } catch (e) { noteYt('sample', e); /* skip this sample; the curve tolerates a gap */ }
     }
   }
 
@@ -719,10 +748,21 @@ async function tick(env) {
   // on the next tick, and the one after that, forever.
   const due = now - (s.updated || 0) >= KV_WRITE_MIN * 60000;
   const mustWrite = rosterChanged || !!d1.backfill || (!!d1.error && changed);
-  const wrote = mustWrite || (changed && due);
+  // If the load failed we are holding a blank state, not an empty one — writing it back
+  // would replace the real mirror with whatever this single tick happened to scan. See
+  // loadState. Nothing else changes: D1 still gets this minute.
+  const wrote = !s.loadFailed && (mustWrite || (changed && due));
+  let kvError = null;
   if (wrote) {
     s.updated = now;
-    await env.MINUTE.put(KV_KEY, JSON.stringify(s));
+    /* Wrapped, because this is the last statement before the cold tail and an unwrapped
+       throw here skipped it entirely — the failure mode being KV's 1,000-writes-a-day cap,
+       which arrives once and then persists for the rest of the day. So the day KV filled
+       up was also the day the cold tail stopped running, for a reason nothing connected to
+       it. It is reported rather than raised: D1 already has this minute, so a KV write
+       failure is a mirror falling behind, not data being lost. */
+    try { await env.MINUTE.put(KV_KEY, JSON.stringify(s)); }
+    catch (e) { kvError = String((e && e.message) || e).slice(0, 160); }
   }
   // The cold tail runs after the hot record is safely written, and its failures are
   // caught here rather than thrown: a missed cold sample can be taken again in fifteen
@@ -731,7 +771,19 @@ async function tick(env) {
   try { cold = await coldTick(env, key, slot); }
   catch (e) { cold = { error: String((e && e.message) || e).slice(0, 160) }; }
 
-  return { hot: hotIds.length, sampled, wrote, deferred: changed && !wrote, d1, d1pruned, cold };
+  /* `wrote` reports what happened, not what was decided — a put that threw is not a write.
+     And the YouTube faults come back too. They were swallowed in silence, which is right
+     for the retry (a curve tolerates a gap) and wrong for everything else: an expired key
+     or a disabled Data API stops all sampling, and /run and the cron log both said
+     `sampled: 0` with no reason and no distinction from "nothing is hot right now". The
+     TikTok side already reports its health this way; this brings YouTube level. */
+  return {
+    hot: hotIds.length, sampled, wrote: wrote && !kvError,
+    deferred: changed && !wrote, d1, d1pruned, cold,
+    ...(kvError ? { kvError } : {}),
+    ...(s.loadFailed ? { kvLoadFailed: true } : {}),
+    ...(ytErrors.length ? { ytErrors } : {})
+  };
 }
 
 /* ---------- AI proxy (Idea Studio), locked to the channel owners ---------- */
@@ -785,9 +837,27 @@ async function callGemini(env, prompt) {
       lastErr = model + ' → HTTP ' + r.status;
       return undefined;
     }
-    const j = await r.json();
+    let j;
+    try { j = await r.json(); }
+    catch (e) { lastErr = model + ' → sent HTTP 200 with a body that is not JSON'; return undefined; }
     const txt = j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] ? j.candidates[0].content.parts[0].text : '';
-    const parsed = JSON.parse(txt);
+    /* A model answering 200 with something that isn't JSON is a failed attempt, not a
+       failed request. This used to be a bare JSON.parse, which threw straight out of
+       callGemini and abandoned the entire fallback chain — so one chatty model early in
+       the list meant the twenty perfectly good ones after it were never tried, and the
+       user got "Unexpected token ` in JSON at position 0" instead of ideas. The backtick
+       in that message is the giveaway: responseMimeType asks for raw JSON, and models that
+       ignore it wrap the answer in a ```json fence. Unwrap that, then treat a parse failure
+       as this model being unusable and move to the next. */
+    const clean = String(txt || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    let parsed;
+    try { parsed = JSON.parse(clean); }
+    catch (e) {
+      lastErr = model + ' → returned text, not JSON' + (clean ? ' (starts "' + clean.slice(0, 40) + '")' : ' (empty response)');
+      return undefined;
+    }
+    // an empty object or a bare string is not an answer either; keep looking
+    if (!parsed || typeof parsed !== 'object') { lastErr = model + ' → returned a bare value, not an object'; return undefined; }
     if (model !== cached) { try { await env.MINUTE.put('ai-model', model); } catch (e) {} } // remember the winner
     return parsed;
   };
@@ -1403,9 +1473,38 @@ async function route(request, env) {
       try { return json(await launchBody(env, 'yt')); }
       catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
     }
-    // manual trigger for testing: /run does one tick immediately
+    /* Manual trigger for testing: /run does one tick immediately.
+
+       Rate-limited, because it is unauthenticated and expensive. The Worker URL is in the
+       dashboard's own source and this repo is public, so anyone — or any crawler that
+       follows a link — can call it, and every call spends the scarcest budget here: a KV
+       write against a free tier of 1,000 a day, plus YouTube quota and D1 rows. A few
+       hundred requests, which is a rounding error for a crawler, would exhaust the day's
+       KV writes and stop sampling until midnight UTC.
+
+       A cooldown rather than a secret, deliberately. The cron already runs this every
+       minute, so /run is only ever a convenience for seeing the result immediately, and
+       nothing is lost by making the caller wait for the next minute. A shared secret would
+       be stronger but needs configuring, and an unset secret is a broken route.
+
+       Isolate-scoped, so it caps the rate per isolate rather than globally. That is enough
+       for what this defends against — a crawler or a stuck tab hammering one endpoint —
+       and it costs nothing, which a KV-backed counter would not: recording each attempt
+       would spend the very writes being protected. */
     if (url.pathname === '/run') {
-      const [yt, tt] = await Promise.all([tick(env), ttTick(env).catch(e => ({ error: String(e.message || e) }))]);
+      const since = Date.now() - lastManualRun;
+      if (since < RUN_COOLDOWN) {
+        return json({
+          error: 'Rate limited — /run is available once every ' + (RUN_COOLDOWN / 1000) + 's.',
+          retryInSeconds: Math.ceil((RUN_COOLDOWN - since) / 1000),
+          note: 'The cron runs both trackers every minute regardless, so the data is already being collected.'
+        }, 429);
+      }
+      lastManualRun = Date.now();
+      const [yt, tt] = await Promise.all([
+        tick(env).catch(e => ({ error: String((e && e.message) || e) })),
+        ttTick(env).catch(e => ({ error: String((e && e.message) || e) }))
+      ]);
       return json({ youtube: yt, tiktok: tt });
     }
     // diagnostic: which Gemini models this key can call, plus the remembered winner

@@ -276,7 +276,7 @@ of TikTok. Free, no card.
 | Route | Purpose |
 |---|---|
 | `/` | the recorded YouTube minute bundle |
-| `/run` | run both trackers now (handy for testing) |
+| `/run` | run both trackers now (handy for testing). Rate limited to once a minute — it is unauthenticated and each call spends a KV write, so a crawler hitting it in a loop could burn the day's 1,000 and stop sampling until midnight UTC. A 429 is not a fault: the cron runs every minute anyway |
 | `/d1diff` | compares the D1 and KV copies field by field (expect disagreement now: KV is deliberately coarser since the write gate — this was the phase-2 verification tool) |
 | `/models` | which Gemini models your key can actually call |
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
