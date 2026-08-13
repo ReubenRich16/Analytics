@@ -205,5 +205,119 @@ console.log('\nscatter hover');
     order[9] !== 9, 'DOM 9 holds point ' + order[9]);
 }
 
+// the six defects the design review measured, each one pinned
+console.log('\nscatter, corrected');
+{
+  const P = new Function('fmt',
+    'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
+    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
+    cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
+    '\nreturn {ratePlotHtml, rankListHtml, CH};')(new Intl.NumberFormat('en-US'));
+
+  // a catalogue shaped like the real one: 85 videos, right-skewed rate, a quiet gem
+  const pts = Array.from({length: 85}, (_, i) => ({
+    id: 'v' + i, x: 90 + i * 28, rate: 0.6 + (i % 17) * 0.13, at: i
+  }));
+  pts[3].rate = 8.2; pts[3].x = 146; pts[3].best = true;      // best-loved, tiny audience
+  pts[60].rate = 1.4; pts[60].hot = true;                      // newest, near the median
+  const rates = pts.map(p => p.rate).sort((a,b)=>a-b);
+  const medRate = rates[rates.length >> 1];
+  const views = pts.map(p => p.x).sort((a,b)=>a-b);
+  const medViews = views[views.length >> 1];
+  const opts = { label:'x', xLabel:'Views →', medRate, medViews };
+  const svg = P.ratePlotHtml(pts, pts.map(p => p.id), opts);
+
+  check('both references are named, not just drawn',
+    (svg.match(/class="reft"/g) || []).length === 2, (svg.match(/class="reft"/g) || []).length);
+  check('and one of them names the vertical line',
+    /typical [\d,]+ views/.test(svg), 'the views median is still unlabelled');
+
+  check('each callout is tethered by a leader',
+    (svg.match(/class="lead"/g) || []).length === 2, (svg.match(/class="lead"/g) || []).length);
+
+  /* The newest video sits near the median by definition, so "put the label above the dot"
+     put it straight onto the typical-rate line. */
+  const medY = (svg.match(/<line class="refline" x1="52" y1="([\d.]+)"/) || [])[1];
+  const vals = [...svg.matchAll(/<text class="val" x="([\d.]+)" y="([\d.]+)"/g)].map(m => +m[2]);
+  check('no callout label lands on the typical-rate line',
+    vals.every(y => Math.abs(y - +medY) >= 9), 'label y ' + vals.join(',') + ' vs line ' + medY);
+
+  // the last x tick has to fit inside the frame, now and when the numbers get bigger
+  const fits = h => {
+    const t = [...h.matchAll(/<text class="ax" x="([\d.]+)" y="\d+" text-anchor="middle">([^<]+)</g)]
+      .map(m => ({x:+m[1], t:m[2]})).filter(t => /^[\d.,]+k?M?$/.test(t.t));
+    const L = t[t.length-1];
+    return L.x + L.t.length * 4.2 <= 620;
+  };
+  check('the last x label fits inside the viewBox', fits(svg));
+  const big = pts.map(p => ({...p, x: p.x * 60}));   // a channel 60x this size
+  check('and still fits when the counts reach six figures',
+    fits(P.ratePlotHtml(big, big.map(p=>p.id), {...opts, medViews: medViews*60})));
+
+  // the dead air under the axis is gone: the title sits close to the tick row
+  const tickY = +(svg.match(/<text class="ax" x="[\d.]+" y="(\d+)" text-anchor="middle">0</) || [])[1];
+  const titleY = +(svg.match(/y="(\d+)" text-anchor="middle">Views/) || [])[1];
+  check('the axis title is not stranded below the ticks', titleY - tickY <= 20, (titleY - tickY) + 'px');
+
+  // and colour still is not the carrier
+  check('callouts are still separated by size', /r="[\d.]+"[^>]*class="pt (hot|best)"|class="pt (hot|best)"[^>]*r="[\d.]+"/.test(svg));
+  check('and by a written label', /best-loved/.test(svg) && /newest/.test(svg));
+}
+
+console.log('\nranked view');
+{
+  const P = new Function('fmt',
+    'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
+    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
+    cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
+    '\nreturn {rankListHtml, CH};')(new Intl.NumberFormat('en-US'));
+
+  const pts = Array.from({length: 85}, (_, i) => ({ id:'v'+i, x: 100 + i*30, rate: 0.5 + (i%17)*0.2 }));
+  pts[3].rate = 8.2; pts[3].best = true;
+  pts[60].rate = 1.4; pts[60].hot = true;          // newest is NOT in the top ten
+  const tips = pts.map(p => 'tip for ' + p.id);
+  P.CH.length = 0;
+  const svg = P.rankListHtml(pts, tips, { medRate: 1.7, label:'ranked' });
+
+  check('ten ranked rows plus the newest', (svg.match(/class="rowtrack"/g) || []).length === 11,
+    (svg.match(/class="rowtrack"/g) || []).length);
+  check('the newest is carried in even though it is not top ten', /newest/.test(svg));
+  check('and marked as out of rank rather than given a false position', />·</.test(svg));
+  check('the best-loved is row one', /rowtrack[\s\S]{0,400}best-loved/.test(svg));
+  check('the typical rate is drawn and named', /class="refline"/.test(svg) && /typical 1\.7%/.test(svg));
+  check('views ride along, so rate alone cannot flatter a tiny audience',
+    (svg.match(/class="ax vnum"/g) || []).length === 11);
+  check('every row is hoverable across its full width',
+    (svg.match(/class="rowhit"/g) || []).length === 11);
+
+  /* Rows are sorted by rate, so row order is not data order — the tooltip has to map back
+     through rowIdx or it names the wrong video. */
+  const d = P.CH[P.CH.length - 1];
+  check('the registry carries the original index of each row', Array.isArray(d.rowIdx) && d.rowIdx.length === 11);
+  check('row one maps to the best-loved video', d.tips[d.rowIdx[0]] === 'tip for v3', d.tips[d.rowIdx[0]]);
+  check('the last row maps to the newest', d.tips[d.rowIdx[10]] === 'tip for v60', d.tips[d.rowIdx[10]]);
+  check('and row order really is not data order',
+    d.rowIdx.join(',') !== d.rowIdx.slice().sort((a,b)=>a-b).join(','), d.rowIdx.join(','));
+
+  // the longest bar's label must not run into the views column
+  const lastVal = [...svg.matchAll(/<text class="val" x="([\d.]+)"/g)].map(m => +m[1]);
+  check('no value label reaches the views column', Math.max(...lastVal) < 620 - 116, Math.max(...lastVal));
+
+  check('a page with too few videos renders nothing rather than a one-row ranking',
+    P.rankListHtml([], [], {}) === '');
+}
+
+console.log('\nthe two views are a toggle');
+{
+  check('the scatter is the default', /let rateView = 'scatter'/.test(src));
+  check('both buttons exist', /data-rv="scatter"/.test(src) && /data-rv="rank"/.test(src));
+  check('and the block redraws itself rather than re-running the whole card',
+    /closest\('button\[data-rv\]'\)[\s\S]{0,220}rateBodyHtml\(\)/.test(src));
+  check('moveTip knows about the ranked view', /if \(d\.rows\)/.test(src));
+  check('and maps the hovered row back through rowIdx', /d\.tips\[d\.rowIdx\[n\]\]/.test(src));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail?1:0);
