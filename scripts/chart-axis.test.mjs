@@ -2,7 +2,9 @@
 // history samples every ~5 min for two days then hourly, and index-spacing stretched
 // those two days across most of the plot.
 import fs from 'fs';
-const src = fs.readFileSync('/home/user/Analytics/yt-dashboard/index.html','utf8');
+// resolved from this file, not an absolute path: the suite has to run wherever the repo
+// is checked out, and a hard-coded /home/... only existed on one machine
+const src = fs.readFileSync(new URL('../yt-dashboard/index.html', import.meta.url), 'utf8');
 const cut=(a,b)=>{const i=src.indexOf(a);return src.slice(i,src.indexOf(b,i));};
 const F = new Function('reducedMotion','fmt',
   'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
@@ -100,9 +102,6 @@ console.log('\nsmall bars');
     bars(h) === spiky.filter(v => v).length, bars(h) + ' bars for ' + spiky.filter(v => v).length + ' non-zero days');
   check('and the zero days draw nothing', bars(h) === 5, bars(h));
 
-  /* Measure each bar from its own path rather than from the V target: barPath rounds the
-     data-end, so the V goes to y1 ± r and on a sliver r is clamped to the whole height.
-     Every y in the path, against the baseline it starts from, is the honest extent. */
   /* Recover each bar's signed height from its path. The V target is not the data end —
      barPath rounds the corner, so it stops at y1 ± r and then arcs the last r across. The
      arc's own dy carries that r back with the right sign, so y1 = Vtarget + dy holds for

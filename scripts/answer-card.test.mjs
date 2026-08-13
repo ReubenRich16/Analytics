@@ -2,7 +2,9 @@
 // OUTSIDE its try/catch, so a chip that returns null or undefined throws uncaught and
 // freezes the whole card rather than just its own chip.
 import fs from 'fs';
-const src = fs.readFileSync('/home/user/Analytics/yt-dashboard/index.html','utf8');
+// resolved from this file, not an absolute path: the suite has to run wherever the repo
+// is checked out, and a hard-coded /home/... only existed on one machine
+const src = fs.readFileSync(new URL('../yt-dashboard/index.html', import.meta.url), 'utf8');
 let pass=0, fail=0;
 const check=(n,c,x='')=>{c?(pass++,console.log('  ✓',n)):(fail++,console.log('  ✗',n,x));};
 console.log('\nanswer card contract');

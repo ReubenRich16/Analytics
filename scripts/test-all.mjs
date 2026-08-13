@@ -52,10 +52,19 @@ if (!failed.length) {
   process.exit(0);
 }
 
-// print the failing lines from each broken suite, so the runner is enough on its own
+/* Print enough from each broken suite that the runner is enough on its own.
+
+   Failing assertions print as ✗ lines. A suite that CRASHES prints none of those — it dies
+   with a stack trace — and the first version only looked for ✗, so a crash showed as a bare
+   "─── suite" header with nothing under it. That is exactly what the first CI run produced
+   for two suites that had hard-coded an absolute path, and it made a one-line fix look like
+   a mystery. When there are no ✗ lines, show the tail instead. */
 for (const [s, out] of failed) {
   console.log('\x1b[31m─── ' + s + '\x1b[0m');
-  for (const line of out.split('\n')) if (line.includes('✗')) console.log(line);
+  const marks = out.split('\n').filter(l => l.includes('✗'));
+  if (marks.length) { for (const line of marks) console.log(line); continue; }
+  const tail = out.trimEnd().split('\n').slice(-14);
+  console.log(tail.length ? tail.join('\n') : '(no output — the suite produced nothing at all)');
 }
 console.log('\n\x1b[31m' + failed.length + ' of ' + suites.length + ' suites failed\x1b[0m');
 process.exit(1);
