@@ -57,9 +57,11 @@ jobs:
           echo "::warning::only a problem if schema.sql changed in this commit."
           echo "::warning::If it is a one-off, re-run this workflow — a newly created database can"
           echo "::warning::take a couple of minutes to be visible to every Cloudflare API edge."
-          echo "::warning::If it keeps failing, CLOUDFLARE_API_TOKEN needs the D1 permission:"
-          echo "::warning::re-create it at dash.cloudflare.com/profile/api-tokens with the"
-          echo "::warning::'Edit Cloudflare Workers' template and update the repo secret."
+          echo "::warning::If it keeps failing, CLOUDFLARE_API_TOKEN is missing Account -> D1 -> Edit."
+          echo "::warning::EDIT the existing token at dash.cloudflare.com/profile/api-tokens and add"
+          echo "::warning::that permission — editing keeps the same token value, so the repo secret"
+          echo "::warning::does NOT need updating. Only 'Roll' changes the value. If you re-create the"
+          echo "::warning::token instead, you must also update the CLOUDFLARE_API_TOKEN repo secret."
       # Deploy so the Worker exists (this also applies the KV and D1 bindings and the
       # every-minute cron trigger from wrangler.toml).
       - name: Deploy Worker
