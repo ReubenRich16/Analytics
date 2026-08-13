@@ -1312,8 +1312,22 @@
         }) +
         '<p class="dnote" style="margin-top:6px">' + rec.s.length + ' samples · first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
     } else {
-      html += '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
-        '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
+      /* "No recording" and "the recording is outside what this view carries" are different
+         things, and saying the first when the second is true is a lie about the user's own
+         data. /tiktok/history serves an absolute three-day window (the Worker's KEEP_DAYS),
+         so a post recorded perfectly at the time drops out of THIS chart on its fourth day
+         while its samples sit in D1 for two months. The old copy told her an eight-day-old
+         post was never recorded and that the next one "will appear here in real time" —
+         when it had been recorded, and the hourly chart below is about to draw it.
+         Age is what tells the two apart. */
+      const HIST_WINDOW_D = 3;      // matches KEEP_DAYS in worker.js — the served bundle
+      const ageD = (Date.now() - v.create_time * 1000) / 864e5;
+      html += ageD > HIST_WINDOW_D
+        ? '<p class="dnote">The minute-by-minute chart only carries the last ' + HIST_WINDOW_D + ' days, so this ' +
+          'post has scrolled out of it. Nothing is lost — the Worker recorded it at the time, and the hourly ' +
+          'record below covers its whole life.</p>'
+        : '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
+          '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
     }
     /* How it compares to the account's own posts.
 
@@ -1350,8 +1364,58 @@
         '<div class="gbar"><span class="gl">Engagement</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
         '</div></div></div></div>';
     }
-    $('latestContent').innerHTML = html;
+    $('latestContent').innerHTML = html +
+      '<div class="dsection" id="lifeSection" style="display:none">' +
+      '<h4>Every hour since it went up</h4><p class="explain" id="lifeExplain"></p><div id="lifeChart"></div></div>';
     renderProjection(v);
+    loadLife(v.id);
+  }
+
+  /* The whole recorded life of one post, at an hour's resolution.
+
+     This matters more here than it does on the YouTube page. TikTok publishes no history of
+     its own — the API returns a post's counts as they are right now and nothing about how
+     they got there — so the Worker's recording is the ONLY record that this post ever had a
+     shape. It records for 60 days, tapering from every minute to every fifteen to hourly,
+     and until this chart existed the page read a three-day window and nothing served the
+     rest. Days 3 to 60 were written, kept for two months, pruned, and never looked at once.
+
+     One post's whole life is about 5,100 rows against a 5,000,000/day allowance, so it is
+     fetched when the card renders rather than prefetched for every post.
+
+     Every point is measured. Nothing is interpolated and nothing is extended past the last
+     reading — a gap in the recording is drawn as a gap in the line. */
+  let lifeSeq = 0;
+  async function loadLife(id) {
+    const wrap = $('lifeSection');
+    if (!wrap || !session || !workerUrl) return;
+    const seq = ++lifeSeq;
+    let d = null;
+    try { d = await api('/tiktok/life?id=' + encodeURIComponent(id)); }
+    catch (e) { return; }                       // the card stands without it
+    if (seq !== lifeSeq || !$('lifeSection')) return;   // a newer render won
+    if (!d || !d.found || !d.s || d.s.length < 3) return;
+
+    const t0 = (d.create_time || 0) * 1000;
+    const at = d.s.map(p => t0 + p[0]);
+    const views = d.s.map(p => p[1]);
+    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views \u00b7 ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
+      (i ? ' \u00b7 +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
+    const lastAge = d.s[d.s.length - 1][0];
+    const days = lastAge / 864e5;
+
+    $('lifeExplain').innerHTML =
+      'Recorded by your own Worker, one point an hour, from posting to <b>' +
+      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
+      'TikTok keeps no history at all \u2014 it only ever tells you the count right now \u2014 so this is the ' +
+      'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
+      'in the recording.';
+    // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
+    // label is the third positional argument, not an opts key
+    $('lifeChart').innerHTML = lineChart(views, 'var(--accent)', 'Views every hour since posting', {
+      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+    });
+    $('lifeSection').style.display = 'block';
   }
 
   /* ---------- breakdown + coaching ---------- */

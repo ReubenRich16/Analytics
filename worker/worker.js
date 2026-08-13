@@ -360,6 +360,56 @@ async function d1Finished(env, platform) {
   return vres.results || [];
 }
 
+/* One video's whole recorded life, publish to now.
+
+   The pool this exists to spend. The tracker records every video for D1_KEEP_DAYS — minute
+   by minute for the first 48 hours, every fifteen minutes to day 14, hourly to day 60 — but
+   until this route nothing served more than the last three days of it. Every read defaulted
+   to the KEEP_DAYS bundle, the YouTube page discarded anything over a week old, and no
+   caller ever passed ?days=. So days 3-60 of every video were written, held for two months,
+   pruned, and never once looked at. On TikTok that is the entire record: TikTok publishes no
+   history of its own, so there was no other place that data could come from.
+
+   Bucketed to LIFE_STEP (an hour) rather than served raw. The raw shape is front-loaded —
+   2,880 of a 60-day video's ~5,100 samples fall in its first 48 hours — so raw would spend
+   more than half the payload on the 3% of the x axis that the dedicated minute-race chart
+   already covers in full. An hour is finer than anything else available for this stretch:
+   YouTube's own analytics only go down to a day, and TikTok offers nothing.
+
+   Cost is one video's rows, about 5,100 at the far end, against a 5,000,000/day read
+   allowance — roughly a tenth of a percent per open. The seek is (platform, video_id), the
+   samples primary key's prefix, so it never touches another video's rows.
+
+   CAST(... AS INTEGER) for the same reason as d1Launches below, and it is not decoration:
+   SQLite divides two INTEGERs as integers, but a bound JavaScript number arrives as a REAL,
+   and without the cast every sample lands in a bucket of its own. That shipped to production
+   once already. */
+const LIFE_STEP = 3600e3;
+async function d1Life(env, platform, id) {
+  const vres = await env.DB.prepare(
+    'SELECT video_id, published_at, title, cover FROM videos WHERE platform = ? AND video_id = ?'
+  ).bind(platform, String(id)).all();
+  const v = (vres.results || [])[0];
+  if (!v) return { found: false };
+
+  const bucketOf = '(CAST((ts - ?) / ? AS INTEGER))';
+  const sres = await env.DB.prepare(
+    'SELECT ' + bucketOf + ' AS b, MAX(views) AS views, MAX(likes) AS likes,' +
+    ' MAX(comments) AS comments, MAX(shares) AS shares' +
+    ' FROM samples WHERE platform = ? AND video_id = ? AND ts >= ?' +
+    ' GROUP BY ' + bucketOf + ' ORDER BY b'
+  ).bind(v.published_at, LIFE_STEP, platform, String(id), v.published_at, v.published_at, LIFE_STEP).all();
+
+  // [ageMs, views, likes, comments, shares] — same column order the bundles use
+  const s = (sres.results || []).map(r => [r.b * LIFE_STEP, r.views, r.likes, r.comments, r.shares]);
+  return {
+    found: true, id: v.video_id, step: LIFE_STEP, title: v.title || '',
+    ...(isTt(platform) ? { create_time: Math.round(v.published_at / 1000), cover: v.cover || '' }
+                       : { pub: isoOf(v.published_at) }),
+    s
+  };
+}
+
 async function d1Launches(env, platform, vids) {
   if (!vids) vids = await d1Finished(env, platform);
   if (!vids.length) return { curves: {} };
@@ -1255,6 +1305,14 @@ async function ttHandler(request, env, url) {
     try { return json(await launchBody(env, part)); }
     catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
   }
+  // as /life, scoped to this account's partition
+  if (p === '/tiktok/life') {
+    if (!env.DB) return json({ found: false });
+    const id = url.searchParams.get('id') || '';
+    if (!id) return json({ error: 'no id' }, 400);
+    try { return json(await d1Life(env, ttKey(openId), id)); }
+    catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
+  }
   if (p === '/tiktok/sync') {
     const key = 'tt:sync:' + openId;
     if (request.method === 'POST') {
@@ -1494,6 +1552,15 @@ async function route(request, env) {
     if (url.pathname === '/launches') {
       if (!env.DB) return json({ error: 'no D1 binding' }, 501);
       try { return json(await launchBody(env, 'yt')); }
+      catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
+    }
+    /* One YouTube video's whole recorded life. Public for the same reason /launches and the
+       bundle at / are: already-public view counts on already-public video ids. */
+    if (url.pathname === '/life') {
+      if (!env.DB) return json({ error: 'no D1 binding' }, 501);
+      const id = url.searchParams.get('id') || '';
+      if (!id) return json({ error: 'no id' }, 400);
+      try { return json(await d1Life(env, 'yt', id)); }
       catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
     }
     /* Manual trigger for testing: /run does one tick immediately.

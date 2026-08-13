@@ -3701,7 +3701,62 @@
       html += section('Who’s watching — age & gender', 'Share of watch time by age group. Only appears once enough people have watched.', demoHtml);
     }
 
+    // filled in by loadLife() once the Worker answers — see below
+    html += '<div class="dsection" id="lifeSection" style="display:none"><h4>Every hour since it went up</h4>' +
+      '<p class="explain" id="lifeExplain"></p><div id="lifeChart"></div></div>';
+
     c.innerHTML = html;
+    // svid, not vid: renderAnalytics takes only the report bundle, and analyticsSeq is the
+    // module-level counter loadLife compares against to know the drawer has moved on
+    loadLife(svid, analyticsSeq);
+  }
+
+  /* The whole recorded life of one video, at an hour's resolution.
+
+     This is the only place the tracker's long tail is visible. It records every video for
+     60 days — minute by minute for the first 48 hours, every fifteen minutes to day 14,
+     hourly to day 60 — but everything else on this page reads the three-day bundle, and the
+     minute race throws a video away once it is a week old. Days 3 to 60 were being written,
+     held for two months, pruned, and never once read.
+
+     Hourly is finer than anything else that exists for this stretch: YouTube's own analytics
+     stop at a day. One video's whole life costs about 5,100 rows against a 5,000,000/day
+     allowance, so this is affordable per open rather than something to prefetch.
+
+     Every point here is measured. Nothing is interpolated between samples and nothing is
+     extended past the last one — a gap in the recording shows as a gap in the line, which
+     lineChartHtml draws by breaking the path rather than joining across it. */
+  async function loadLife(vid, seq) {
+    const wrap = $('lifeSection');
+    if (!wrap || !workerUrl) return;
+    let d = null;
+    try {
+      const r = await fetch(workerUrl.split('?')[0].replace(/\/+$/, '') + '/life?id=' + encodeURIComponent(vid), { cache: 'no-store' });
+      if (r.ok) d = await r.json();
+    } catch (e) { /* the Worker is optional; the rest of the drawer stands without it */ }
+    // the drawer may have moved on to another video while this was in flight
+    if (seq !== analyticsSeq || !$('lifeSection')) return;
+    if (!d || !d.found || !d.s || d.s.length < 3) return;
+
+    const HOURMS = 3600e3;
+    const pub = Date.parse(d.pub);
+    const at = d.s.map(p => pub + p[0]);
+    const views = d.s.map(p => p[1]);
+    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views · ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
+      (i ? ' · +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
+    const lastAge = d.s[d.s.length - 1][0];
+    const days = lastAge / 864e5;
+
+    $('lifeExplain').innerHTML =
+      'Recorded by your own Worker, one point an hour, from publication to ' +
+      '<b>' + (days < 1 ? Math.round(lastAge / HOURMS) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
+      'YouTube\u2019s own figures only go down to a day, so this is the finest record that exists for the ' +
+      'stretch after the launch. Every point is a real reading \u2014 a gap in the line is a gap in the recording.';
+    $('lifeChart').innerHTML = lineChartHtml(views, tips, 'var(--accent)', {
+      at, label: 'Views every hour since publication', unit: '',
+      x0: 'published', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+    });
+    wrap.style.display = 'block';
   }
 
   /* ---------- cross-device sync (via the owner-locked Worker's KV) ---------- */

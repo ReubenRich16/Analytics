@@ -283,7 +283,26 @@ of TikTok. Free, no card.
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/launches`, `/tiktok/launches` | the first 48 hours of finished launches, age-indexed — the projection's reference curves |
+| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour. The only route that reads past the three-day bundle — see below |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
+
+**The long tail, and how to see it**
+
+The tracker records every video for 60 days — minute by minute for the first 48 hours,
+every fifteen minutes to day 14, hourly to day 60. For a long time nothing *served* more
+than the last three days of that: both bundles cut on an absolute `KEEP_DAYS` window, the
+YouTube page discarded any video over a week old, and no caller ever passed `?days=`. Days
+3–60 were written, held for two months, pruned, and never read. On TikTok that was the
+entire record, because TikTok publishes no history of its own.
+
+`/life` and `/tiktok/life` are what spend it. One video, publication to now, bucketed to an
+hour — finer than anything else that exists for that stretch, since YouTube's own analytics
+stop at a day. It appears as **"Every hour since it went up"** in the YouTube drawer and on
+the TikTok post card. About 5,100 rows per open against a 5,000,000/day read allowance, so
+it is fetched when a card opens rather than prefetched.
+
+Every point on it is measured. Nothing is interpolated between samples and nothing is
+extended past the last one — a gap in the recording is drawn as a gap in the line.
 
 **Where the minute samples live**
 

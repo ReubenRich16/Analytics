@@ -1,0 +1,44 @@
+name: Tests
+
+# Every suite, on every push. Until now nothing ran them: scripts/test-all.mjs exists but
+# only when someone remembers to type it, and twelve accuracy bugs sat live for weeks
+# because no automated check ever looked. Regressions to any of those are now caught here
+# before they reach the deployed page.
+#
+# No secrets, no network: the suites read the source files and drive mocks, so this runs
+# in seconds on a stock runner and cannot leak anything from a public repo's logs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'yt-dashboard/**'
+      - 'scripts/**'
+      - '.github/workflows/test.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Every dashboard and worker file is parsed by the suites, but a syntax error in a
+      # file no suite happens to import would still slip through, so check them directly.
+      - name: Syntax check the worker and scripts
+        run: |
+          node --check worker/worker.js
+          for f in scripts/*.mjs; do node --check "$f"; done
+      - name: Run every suite
+        run: node scripts/test-all.mjs
