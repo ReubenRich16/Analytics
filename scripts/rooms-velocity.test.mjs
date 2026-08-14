@@ -299,6 +299,37 @@ console.log('\nTikTok view velocity');
   check('it keeps counting afterwards', st.velSession.views === 22, st.velSession.views);
   check('shares are counted too, which YouTube has no field for', /shares/.test(out.sessionText || ''));
 
+  /* The table's movement columns ride on this same record rather than accumulating a
+     second time — two accumulators over one poll would eventually disagree, and the one
+     that disagreed would be the one nobody was testing. */
+  check('the per-post record carries this tick\'s gain', st.perPost.a.tickV === 5, JSON.stringify(st.perPost.a));
+  check('and the running session gain', st.perPost.a.sessV === 15, JSON.stringify(st.perPost.a));
+  check('a post that never moved carries zero, not undefined',
+    st.perPost.b.tickV === 7 && typeof st.perPost.b.sessV === 'number', JSON.stringify(st.perPost.b));
+  check('a post that fell out of the window leaves no record behind', !st.perPost.old);
+  /* and if it comes back it is a first sighting again — zero, rather than a spike made of
+     everything it gained while nobody could see it */
+  const back = fn($, fmtN, document, [post('a', 200), post('b', 220), post('old', 9999)], st);
+  check('a returning post starts from zero rather than spiking',
+    back.perPost.old.tickV === 0 && back.perPost.old.sessV === 0, JSON.stringify(back.perPost.old));
+  check('and the account total does not jump with it', back.velSession.views - st.velSession.views < 200,
+    back.velSession.views + ' vs ' + st.velSession.views);
+
+  check('the table reads that record instead of deriving its own',
+    /tickV: v => \(perPost\[v\.id\] && perPost\[v\.id\]\.tickV\) \|\| 0/.test(TT) &&
+    /sessV: v => \(perPost\[v\.id\] && perPost\[v\.id\]\.sessV\) \|\| 0/.test(TT));
+  check('and velocity is computed before the table draws, every poll',
+    TT.indexOf('renderVelocity();') < TT.indexOf('renderTable(); showSlot(slotIdx);'),
+    'the columns would show the previous tick otherwise');
+  check('both new columns have a header that sorts', /data-sort="tickV"/.test(TT) && /data-sort="sessV"/.test(TT));
+  check('and a dropdown option, without which a header click blanks the dropdown',
+    /<option value="tickV">/.test(TT) && /<option value="sessV">/.test(TT));
+  check('the table still opens on newest, not on a delta that is zero on the first poll',
+    /let tableSort = \{ key: 'newest'/.test(TT),
+    'a delta default reshuffles the whole table on the second poll');
+  check('and the footnote says the counters are per-tab and never go backwards',
+    /reset when you reload/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
+
   for (const [src, page] of [[YT, 'index.html'], [TT, 'tiktok.html']]) {
     check(page + ' hides the per-minute rate until the session is half a minute old',
       /mins >= 0\.5 && pm >= 0\.05/.test(src), 'a 3-second session divides by 1/60 and prints four figures');

@@ -187,6 +187,8 @@
       <select id="sortMode" title="Or click any column header to sort by it">
         <option value="newest" selected>Sort: newest</option>
         <option value="views">Sort: most views</option>
+        <option value="tickV">Sort: moving right now</option>
+        <option value="sessV">Sort: hottest this session</option>
         <option value="pace">Sort: views/day pace</option>
         <option value="likes">Sort: most likes</option>
         <option value="comments">Sort: most comments</option>
@@ -202,6 +204,8 @@
           <th></th>
           <th data-sort="title" style="text-align:left" title="Click to sort">Caption</th>
           <th data-sort="views" title="Click to sort">Views</th>
+          <th data-sort="tickV" title="Views this post gained since the last refresh. Click to sort">+tick</th>
+          <th data-sort="sessV" title="Views this post has gained since you opened this tab. Click to sort">+session</th>
           <th data-sort="likes" title="Click to sort">Likes</th>
           <th data-sort="comments" title="Click to sort">Comments</th>
           <th data-sort="shares" title="Click to sort">Shares</th>
@@ -211,7 +215,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to any third-party app.</p>
+    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to any third-party app. +tick and +session are counted live in this tab and reset when you reload; a post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
   </div>
   </div>
 
@@ -1206,9 +1210,19 @@
       const cur = { views: +x.view_count || 0, likes: +x.like_count || 0,
                     comments: +x.comment_count || 0, shares: +x.share_count || 0 };
       const was = perPost[x.id];
+      /* The table's "+tick" and "+session" columns ride on this same record rather than
+         accumulating a second time. renderVelocity runs before renderTable on every poll,
+         so by the time the table draws, this holds the current tick's gains keyed by post.
+         The clamp is the one already guarding the sums: a post that scrolled out of the
+         60-post window is simply absent here, so it has no row and no number, and one that
+         reappears is a first sighting again — zero, never a negative, and never a spike
+         made of everything it gained while out of sight. */
+      const gain = was ? Math.max(0, cur.views - was.views) : 0;
+      cur.tickV = gain;
+      cur.sessV = (was ? was.sessV || 0 : 0) + gain;
       seen[x.id] = cur;
       if (!was) continue;                      // first sighting contributes nothing
-      tick += Math.max(0, cur.views - was.views);
+      tick += gain;
       for (const k of ['views', 'likes', 'comments', 'shares']) step[k] += Math.max(0, cur[k] - was[k]);
     }
     const first = !velSession;
@@ -1290,6 +1304,12 @@
   const SORT_VAL = {
     newest: v => v.create_time || 0,
     views: v => v.view_count || 0,
+    /* Read off the velocity card's per-post record rather than re-deriving them. A post
+       with no record — a first sighting, or one that just came back into the 60-post
+       window — sorts as 0, so it can never outrank a post that genuinely moved and can
+       never sort as a negative. */
+    tickV: v => (perPost[v.id] && perPost[v.id].tickV) || 0,
+    sessV: v => (perPost[v.id] && perPost[v.id].sessV) || 0,
     likes: v => v.like_count || 0,
     comments: v => v.comment_count || 0,
     shares: v => v.share_count || 0,
@@ -1316,10 +1336,14 @@
     const tb = $('tbody'); tb.innerHTML = '';
     for (const v of rows) {
       const tr = document.createElement('tr');
+      const d = perPost[v.id] || {};
+      if (d.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
         '<td class="title">' + esc(capOf(v)) + '</td>' +
         '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
+        '<td data-label="+tick">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
+        '<td data-label="+session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
         '<td data-label="Likes">' + fmt.format(v.like_count || 0) + '</td>' +
         '<td data-label="Comments">' + fmt.format(v.comment_count || 0) + '</td>' +
         '<td data-label="Shares">' + fmt.format(v.share_count || 0) + '</td>' +
