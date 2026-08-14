@@ -392,19 +392,15 @@
   // post card and pushes a fresh entry holding that post's whole sample arrays — up to
   // 2,880 points each — and nothing ever removed the old one, so a tab left open all day
   // accumulated well over a thousand of them.
-  const ttReg = new Map();
-  let chartId = 0;
-  /* Named chartPush, and the attribute is data-ci, to match the YouTube page exactly.
-     Two chart renderers are shared verbatim between these files and pinned that way by
-     scripts/plateau.test.mjs — a renderer that has to say `ttReg.set` here and
-     `chartPush` there could not be shared at all, and the copy that is not under test
-     is the one that quietly rots. */
-  function chartPush(entry) {
-    const ci = ++chartId;
-    ttReg.set(ci, entry);
-    ttReg.delete(ci - 400);
-    return ci;
-  }
+  /* Named exactly as index.html names them — chartReg, chartCi, chartPush, data-ci — so the
+     chart renderers and the tooltip engine can be shared between the two pages verbatim
+     and pinned that way by a test. A renderer that has to name one registry here and a
+     different one there cannot be shared at all, and the copy not under test is the one
+     that quietly rots. This page carried its own single-branch tooltip until five charts
+     that need the other four branches were about to be ported onto it. */
+  const chartReg = new Map();
+  let chartCi = 0;
+  const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };
   function niceScale(lo, hi, target) {
     if (!(hi > lo)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
@@ -426,7 +422,7 @@
   function lineChart(pts, color, label, opts) {
     if (!pts || pts.length < 2) return '';
     opts = opts || {};
-    const w = 620, h = 178, L = 66, R = 18, T = 18, B = 30, ci = ++chartId;
+    const w = 620, h = 178, L = 66, R = 18, T = 18, B = 30;
     const sc = niceScale(Math.min(...pts, 0), Math.max(...pts, 1), 4);
     // opts.at is the real time of each point. Without it the x axis is the array index,
     // which is only the same thing while samples arrive at a perfectly steady rate — and
@@ -451,7 +447,10 @@
     if (opts.x0) frame += '<text class="ax" x="' + L + '" y="' + (h - 8) + '">' + esc(opts.x0) + '</text>';
     if (opts.x1) frame += '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     const xs = pts.map((_, i) => X(i)), ys = pts.map(Y);
-    ttReg.set(ci, { tips: opts.tips || pts.map(v => fmt.format(v) + ' views'), xs, ys, L, R, w, color });
+    // through chartPush, not a raw set: the raw set never pruned, so a tab left open all
+    // day accumulated entries holding whole sample arrays that nothing could reach
+    const ci = chartPush({ tips: opts.tips || pts.map(v => fmt.format(v) + ' views'),
+                           xs, ys, L, R, w, T, B, h, color });
     /* A gap far longer than the usual spacing is a stretch where nothing was recorded, not
        a steady climb. Joining across it would draw a straight line that looks like measured
        growth, so the path breaks instead and the gap reads as what it is: no data.
@@ -501,35 +500,102 @@
       '</svg>';
   }
 
-  let ttTip = null;
-  function ttMoveTip(e) {
+  /* The tooltip engine, identical to index.html's and pinned that way by a test.
+
+     What was here before resolved an index exactly one way — nearest point along x — which
+     is right for a line and wrong for everything else. A ranked list needs the row under
+     the pointer; a scatter needs the nearest point in BOTH axes; a bar chart needs
+     arithmetic against fixed slots; and a chart with tips but no xs needs even spacing.
+     Rather than bolt four branches on one at a time as each chart arrives, this is
+     index.html's moveTip verbatim. */
+  let chartTip = null;
+  const hideChartCursors = () => {
+    document.querySelectorAll('svg.chart .cdot, svg.chart .cline, svg.chart .cband').forEach(c => c.style.display = 'none');
+    document.querySelectorAll('svg.chart circle.pt.near').forEach(c => c.classList.remove('near'));
+    document.querySelectorAll('svg.chart rect.rowhit.near').forEach(c => c.classList.remove('near'));
+  };
+  function moveTip(e) {
     const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-ci]') : null;
-    if (!ttTip) { ttTip = document.createElement('div'); ttTip.id = 'chartTip'; document.body.appendChild(ttTip); }
-    document.querySelectorAll('svg.chart .cdot, svg.chart .cline').forEach(c => c.style.display = 'none');
-    if (!svg) { ttTip.style.display = 'none'; return; }
-    const d = ttReg.get(+svg.dataset.ci);
-    if (!d || !d.tips.length) return;
+    if (!chartTip) { chartTip = document.createElement('div'); chartTip.id = 'chartTip'; document.body.appendChild(chartTip); }
+    if (!svg) { chartTip.style.display = 'none'; hideChartCursors(); return; }
+    const d = chartReg.get(+svg.dataset.ci);
+    if (!d || !d.tips || !d.tips.length) return;
+    hideChartCursors();
     const rect = svg.getBoundingClientRect();
     const xv = (e.clientX - rect.left) / rect.width * d.w;
-    // nearest point by actual pixel position, not by assuming the points are evenly
-    // spaced — they aren't once the x axis is real time (see opts.at in lineChart)
-    let idx = 0, best = Infinity;
-    for (let i = 0; i < d.xs.length; i++) {
-      const dist = Math.abs(d.xs[i] - xv);
-      if (dist < best) { best = dist; idx = i; }
+    // scatter has no single X to snap to — pick the nearest point in both axes so
+    // the pointer only has to be closest, never dead-centre on a 8px dot
+    /* The ranked view is neither bars nor a line: which row the pointer is in comes from
+       the y position, and the tip it maps to is that row's ORIGINAL index in points —
+       the rows are sorted by rate, so row order is not data order. */
+    if (d.rows) {
+      const yv = (e.clientY - rect.top) / rect.height * d.h;
+      const n = Math.floor((yv - d.top) / d.H);
+      if (n < 0 || n >= d.rowIdx.length) { chartTip.style.display = 'none'; return; }
+      svg.querySelectorAll('rect.rowhit').forEach((c, i) => c.classList.toggle('near', i === n));
+      chartTip.textContent = d.tips[d.rowIdx[n]];
+      chartTip.style.removeProperty('--tip-key');
+      chartTip.style.display = 'block';
+      chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+      chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
+      return;
     }
-    const line = svg.querySelector('.cline');
-    if (line) { line.setAttribute('x1', d.xs[idx]); line.setAttribute('x2', d.xs[idx]); line.style.display = 'block'; }
-    const dot = svg.querySelector('.cdot');
-    if (dot) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
-    ttTip.textContent = d.tips[idx];
-    ttTip.style.setProperty('--tip-key', d.color);
-    ttTip.style.display = 'block';
-    ttTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
-    ttTip.style.top = Math.max(6, e.clientY - 44) + 'px';
+    if (d.scatter) {
+      const yv = (e.clientY - rect.top) / rect.height * d.h;
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < d.sxs.length; i++) {
+        const dd = (d.sxs[i] - xv) ** 2 + (d.sys[i] - yv) ** 2;
+        if (dd < bd) { bd = dd; best = i; }
+      }
+      /* Matched on data-i, not on DOM position. ratePlotHtml emits the plain dots first,
+         SKIPPING the newest and best-loved points, then appends those two as callouts — so
+         DOM index and data index diverge from the first callout onwards, and this used to
+         ring a dot several videos away from the one the tooltip was describing. Worse on
+         exactly the videos worth pointing at, since the callouts are what shift everything. */
+      svg.querySelectorAll('circle.pt').forEach(c => c.classList.toggle('near', +c.dataset.i === best));
+      chartTip.textContent = d.tips[best];
+      chartTip.style.removeProperty('--tip-key');
+      chartTip.style.display = 'block';
+      chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+      chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
+      return;
+    }
+    // Bars sit in fixed slots, so their index is arithmetic. Lines are not: since
+    // lineChartHtml gained a real-time x axis the points are only evenly spaced when the
+    // samples were, and dividing the width by the point count then named a different
+    // sample than the crosshair was standing on. Nearest actual pixel is right either way.
+    let idx;
+    if (d.bars) {
+      idx = Math.floor((xv - d.L) / Math.max(1, d.w - d.L - d.R) * d.tips.length);
+    } else if (d.xs && d.xs.length) {
+      idx = 0;
+      let best = Infinity;
+      for (let i = 0; i < d.xs.length; i++) {
+        const dist = Math.abs(d.xs[i] - xv);
+        if (dist < best) { best = dist; idx = i; }
+      }
+    } else {
+      idx = Math.round((xv - d.L) / Math.max(1, d.w - d.L - d.R) * (d.tips.length - 1));
+    }
+    idx = Math.max(0, Math.min(d.tips.length - 1, idx));
+    // the crosshair finds the X: readers aim at a day, never at a 2px line
+    if (d.bars) {
+      const band = svg.querySelector('.cband');
+      if (band && d.slot) { band.setAttribute('x', (d.L + idx * d.slot).toFixed(1)); band.setAttribute('width', d.slot.toFixed(1)); band.style.display = 'block'; }
+    } else if (d.xs) {
+      const line = svg.querySelector('.cline');
+      if (line) { line.setAttribute('x1', d.xs[idx]); line.setAttribute('x2', d.xs[idx]); line.style.display = 'block'; }
+      const dot = svg.querySelector('.cdot');
+      if (dot && d.ys) { dot.setAttribute('cx', d.xs[idx]); dot.setAttribute('cy', d.ys[idx]); dot.style.display = 'block'; }
+    }
+    chartTip.textContent = d.tips[idx];
+    if (d.color) chartTip.style.setProperty('--tip-key', d.color); else chartTip.style.removeProperty('--tip-key');
+    chartTip.style.display = 'block';
+    chartTip.style.left = Math.max(6, Math.min(window.innerWidth - 250, e.clientX + 14)) + 'px';
+    chartTip.style.top = Math.max(6, e.clientY - 44) + 'px';
   }
-  document.addEventListener('pointermove', ttMoveTip);
-  document.addEventListener('pointerdown', ttMoveTip);
+  document.addEventListener('pointermove', moveTip);
+  document.addEventListener('pointerdown', moveTip);
 
   // shared with the YouTube page through the same localStorage key, so the sound
   // preference follows the person rather than the tab they happen to be on

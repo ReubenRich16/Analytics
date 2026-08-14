@@ -120,6 +120,53 @@ console.log('\nthe break threshold clears the sampler\'s slowest cadence');
     /path\.line \{[^}]*stroke-linecap:round/.test(CSS));
 }
 
+/* ---------- 2b. one tooltip engine, two pages ---------- */
+/* TikTok used to carry its own cut-down tooltip that resolved an index exactly one way:
+   nearest point along x. That is right for a line and wrong for everything else — a ranked
+   list needs the row under the pointer, a scatter needs the nearest point in BOTH axes, a
+   bar chart needs arithmetic against fixed slots, and a chart with tips but no xs needs
+   even spacing. Five charts that need those branches are being ported onto that page, so
+   the engine is now index.html's, verbatim, and this keeps it that way. */
+console.log('\nthe tooltip engine is the same on both pages');
+{
+  const strip = t => (t || '').split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n').replace(/\s+/g, ' ').trim();
+  const grab = (src, from, to) => {
+    const i = src.indexOf(from);
+    if (i < 0) return null;
+    const j = src.indexOf(to, i);
+    return j < 0 ? null : src.slice(i, j + to.length);
+  };
+  for (const fn of ['function moveTip(e) {', 'const hideChartCursors = () => {']) {
+    const a = grab(YT, '  ' + fn, '\n  }'), b2 = grab(TT, '  ' + fn, '\n  }');
+    check(fn.replace(/[({].*/, '').trim() + ' exists on the TikTok page', !!b2);
+    check(fn.replace(/[({].*/, '').trim() + ' is identical on both', !!b2 && strip(a) === strip(b2),
+      'the two have drifted');
+  }
+  for (const decl of ['const chartReg = new Map();', 'let chartCi = 0;',
+                      'const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };']) {
+    check('both declare: ' + decl.slice(0, 34) + '…', YT.includes(decl) && TT.includes(decl),
+      (YT.includes(decl) ? '' : 'missing on index ') + (TT.includes(decl) ? '' : 'missing on tiktok'));
+  }
+  // the name survives only in the comment that explains why it went
+  const code = TT.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  check('the old single-branch engine is gone', !/ttMoveTip|ttReg\b|let ttTip/.test(code),
+    (code.match(/ttMoveTip|ttReg\b|let ttTip/g) || []).join(','));
+  // every branch the ported charts will rely on
+  const mt = grab(TT, '  function moveTip(e) {', '\n  }') || '';
+  for (const [name, probe] of [['ranked rows', /if \(d\.rows\)/], ['scatter', /if \(d\.scatter\)/],
+                               ['bars', /if \(d\.bars\)/], ['nearest-x for lines', /d\.xs && d\.xs\.length/],
+                               ['even spacing fallback', /d\.tips\.length - 1/],
+                               ['an index clamp', /Math\.min\(d\.tips\.length - 1, idx\)/],
+                               ['a guard on a tipless entry', /!d\.tips \|\| !d\.tips\.length/]]) {
+    check('TikTok now handles ' + name, probe.test(mt), 'branch missing');
+  }
+  /* The raw ttReg.set in lineChart never pruned, so entries holding whole sample arrays
+     accumulated for as long as the tab stayed open. */
+  check('every chart on the TikTok page registers through chartPush, so the registry prunes',
+    !/chartReg\.set\(/.test(TT.slice(TT.indexOf('function lineChart'))), 'a raw set is back');
+}
+
 /* ---------- 3. TikTok velocity ---------- */
 console.log('\nTikTok view velocity');
 {
