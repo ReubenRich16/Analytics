@@ -424,6 +424,11 @@
     if (a >= 1000) return fmt.format(Math.round(v));
     return String(Math.round(v * 10) / 10);
   }
+  // legend keys mirror the mark: a line for lines, a square for bars, a dot for scatter
+  const legendHtml = items => '<div class="legend">' + items.map(i =>
+    '<span class="lg-item"><span class="lg-key' + (i.bar ? ' bar' : i.dot ? ' dot' : '') + '" style="background:' + i.color +
+    (i.opacity != null ? ';opacity:' + Math.max(0.55, i.opacity) : '') + '"></span>' + esc(i.name) + '</span>').join('') + '</div>';
+
   function lineChart(pts, color, label, opts) {
     if (!pts || pts.length < 2) return '';
     opts = opts || {};
@@ -503,6 +508,57 @@
       '<circle class="end-dot" cx="' + xs[xs.length - 1].toFixed(1) + '" cy="' + ys[ys.length - 1].toFixed(1) + '" r="4.5" style="fill:' + color + ';stroke:var(--ink);stroke-width:2"/>' +
       '<circle class="cdot" r="5" style="display:none;fill:' + color + ';stroke:var(--ink);stroke-width:2"/>' +
       '</svg>';
+  }
+
+  // several lines on one chart (launch-curve overlays)
+  /* Three deltas from index.html's copy, every one forced by this page's data:
+       (a) a series may contain nulls — a curve that stopped, or a hole in the recording —
+           so the path is built in segments. index.html's single M…L… would emit NaN.
+       (b) the frame is inlined rather than taken from chartFrame, because this page's
+           axisNum takes one argument and its niceScale returns no `step`.
+       (c) xs goes into the registry, so the crosshair this renderer emits can actually be
+           moved. index.html pushes no xs, so its .cline is dead markup. */
+  function multiLineHtml(series, tips, opts) {
+    opts = opts || {};
+    const g = { w: 620, h: 190, L: 66, R: 18, T: 16, B: 30 };
+    const maxLen = Math.max(2, ...series.map(s2 => s2.pts.length));
+    const sc = niceScale(0, Math.max(1, ...series.flatMap(s2 => s2.pts).filter(v => v != null)), 4);
+    const Y = v => g.h - g.B - (v - sc.lo) / (sc.hi - sc.lo || 1) * (g.h - g.T - g.B);
+    const X = i => g.L + i * (g.w - g.L - g.R) / (maxLen - 1);
+    const base = g.h - g.B;
+    let frame = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) frame += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
+    }
+    frame += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    if (opts.x0) frame += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(opts.x0) + '</text>';
+    if (opts.xMid) frame += '<text class="ax" x="' + ((g.L + g.w - g.R) / 2).toFixed(1) + '" y="' + (g.h - 8) + '" text-anchor="middle">' + esc(opts.xMid) + '</text>';
+    if (opts.x1) frame += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
+    const xs = []; for (let i = 0; i < maxLen; i++) xs.push(X(i));
+    const ci = chartPush({ tips, xs, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, color: 'var(--live)' });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      frame + (opts.nowAt != null ? '<line class="refline" x1="' + X(opts.nowAt).toFixed(1) + '" y1="' + g.T + '" x2="' + X(opts.nowAt).toFixed(1) + '" y2="' + base + '"/>' +
+        '<text class="ax" x="' + (X(opts.nowAt) + 6).toFixed(1) + '" y="' + (g.T + 10) + '">now</text>' : '') +
+      '<line class="cline" y1="' + g.T + '" y2="' + base + '" style="display:none"/>';
+    for (const s2 of series) {
+      if (s2.pts.filter(v => v != null).length < 2) continue;
+      let d = '', open = false, last = -1;
+      for (let i = 0; i < s2.pts.length; i++) {
+        const v = s2.pts[i];
+        if (v == null) { open = false; continue; }
+        d += (open ? ' L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1);
+        open = true; last = i;
+      }
+      if (!d) continue;
+      out += '<path class="line" d="' + d + '" style="fill:none;stroke:' + s2.color + ';stroke-width:' + (s2.width || 1.5) + ';opacity:' + (s2.opacity != null ? s2.opacity : 1) + '"/>';
+      // the focus series gets an end marker so it stays findable in the tangle
+      if (s2.dot && last >= 0) out += '<circle cx="' + X(last).toFixed(1) + '" cy="' + Y(s2.pts[last]).toFixed(1) + '" r="4.5" style="fill:' + s2.color + ';stroke:var(--ink);stroke-width:2"/>';
+    }
+    out += '</svg>';
+    const keys = series.filter(s2 => s2.name);
+    return out + (keys.length > 1 ? legendHtml(keys.map(s2 => ({ name: s2.name, color: s2.color, opacity: s2.opacity }))) : '');
   }
 
   /* The tooltip engine, identical to index.html's and pinned that way by a test.
@@ -875,7 +931,7 @@
     }
     // a curve that lands after the card was drawn would otherwise wait a whole poll to
     // appear in the race — pullLaunches is deliberately not awaited inside poll()
-    if (Object.keys(conv.videos).length) { mergeHist(conv); if (ttRaceCur) renderTtRace(); }
+    if (Object.keys(conv.videos).length) { mergeHist(conv); if (ttRaceCur) { renderTtRace(); ttLaunchCurves(); } }
   }
 
   /* ---------- auth ---------- */
@@ -1707,6 +1763,89 @@
     renderTtRace();
   });
 
+  /* ---------- launch curves: every post's first 48 hours, aligned by age ----------
+     The race above answers "how is this doing right now". This answers "what shape is this
+     launch". Same source, no new request: pullLaunches has already merged the first week of
+     every FINISHED launch into hist, and pullHistory has the live one at minute resolution.
+     pjCurveOf turns either into [ageMinutes, views], which is exactly this chart's x axis.
+
+     Deliberately NOT built from /tiktok/life. That route is one request per post and about
+     5,100 D1 rows each; eight rivals re-fetched on every poll would be tens of millions of
+     rows a day against a 5,000,000/day cap. It is also hourly, so the first six hours —
+     where launches actually separate — would be six points. */
+  const TTC_SPAN = PJ_HORIZON;   // 2880 minutes: the window the Worker records in full
+  const TTC_STEP = 30;           // minutes between grid points, so 97 of them
+  const TTC_MAX = 8;             // grey lines, matching the YouTube page
+  const TTC_MIN_VOTES = 2;       // one surviving curve is an anecdote, not a typical launch
+
+  /* pjAt, but honest at both ends.
+
+     pjAt holds the last recorded value forever past the end of a curve. That is right for
+     the projection, which is asking about a finished 48-hour window, and wrong here: a
+     six-hour recording held flat to hour 48 drags the median down, and a post performing
+     exactly normally then reads as several hundred per cent of typical. That is the bug
+     scripts/compare-curve.test.mjs exists to pin, and this is the other place on the site
+     that could repeat it.
+
+     It also refuses to interpolate across a HOLE, by pjClean's rule rather than a new one:
+     max(PJ_GAP, t / 4), so two missing hours at 39h are the flat tail and change nothing,
+     while the same two hours at 5h are the whole answer. */
+  function ttcAt(c, t) {
+    if (!c || c.length < 2 || t < c[0][0] || t > c[c.length - 1][0] + 1e-6) return null;
+    for (let i = 1; i < c.length; i++) {
+      if (c[i][0] < t) continue;
+      if (c[i][0] - c[i - 1][0] > Math.max(PJ_GAP, t / 4)) return null;
+      return pjAt(c, t);
+    }
+    return c[c.length - 1][1];
+  }
+  const ttLaunchGrid = () => { const g = []; for (let t = 0; t <= TTC_SPAN; t += TTC_STEP) g.push(t); return g; };
+
+  function ttLaunchCurves(v) {
+    const holder = $('ttLaunchWrap');
+    v = v || ttRaceCur;
+    if (!holder || !v || !v.create_time) return;
+    const recs = (hist && hist.videos) || {};
+    const focus = pjCurveOf(v.id, v.create_time, recs[v.id]);
+    const others = Object.entries(recs)
+      .filter(([id, r]) => id !== v.id && r && r.create_time)
+      .sort((a, b) => b[1].create_time - a[1].create_time)
+      .map(([id, r]) => pjCurveOf(id, r.create_time, r))
+      .filter(c => c && c.length > 1)
+      .slice(0, TTC_MAX);
+    if (!others.length && (!focus || focus.length < 2)) { holder.innerHTML = ''; return; }
+    const grid = ttLaunchGrid();
+    // every curve DRAWS; only a curve with no disqualifying hole VOTES on the median
+    const voters = others.filter(c => pjClean(c) >= 0);
+    const oPts = others.map(c => grid.map(t => ttcAt(c, t)));
+    const vPts = voters.map(c => grid.map(t => ttcAt(c, t)));
+    const med = grid.map((t, i) => {
+      const vals = vPts.map(a => a[i]).filter(x => x != null);
+      return vals.length >= TTC_MIN_VOTES ? pjMed(vals) : null;   // null, never 0 — a zero would draw
+    });
+    const fPts = focus ? grid.map(t => ttcAt(focus, t)) : grid.map(() => null);
+    const ageM = Math.max(0, (Date.now() - v.create_time * 1000) / 60000);
+    const tips = grid.map((t, i) =>
+      fmtAge(t) + ' \u2014 \u2605 this post: ' + (fPts[i] == null ? '\u2014' : fmt.format(Math.round(fPts[i]))) +
+      ' \u00b7 typical launch: ' + (med[i] == null ? 'not enough recorded' : fmt.format(Math.round(med[i]))));
+    const series = [
+      ...oPts.map((a, i) => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .28, name: i === 0 ? 'Your past launches' : '' })),
+      { pts: med, color: 'var(--gold)', width: 1.5, name: 'Typical launch' },
+      ...(fPts.filter(x => x != null).length > 1 ? [{ pts: fPts, color: 'var(--live)', width: 2, dot: true, name: 'This post' }] : [])
+    ];
+    const thin = voters.length < TTC_MIN_VOTES
+      ? '<p class="dnote" style="margin-top:6px">No typical line yet — that needs at least ' + TTC_MIN_VOTES +
+        ' of your posts recorded cleanly through the same hours, and your Worker has ' + voters.length +
+        '. It records every new post automatically, so this fills itself in.</p>'
+      : '<p class="dnote" style="margin-top:6px">The gold line stops wherever fewer than ' + TTC_MIN_VOTES +
+        ' of your posts had been recorded that long — one surviving curve is an anecdote, not a typical launch. ' +
+        'A break in any line is a break in the recording, never a flat stretch.</p>';
+    holder.innerHTML = '<div class="dsection"><h4>Launch curves \u2014 every post\u2019s first 48 hours, aligned by age</h4>' +
+      '<p class="explain">Grey lines are your previous launches, each measured from its own posting moment. Gold is your typical launch, red is this post. Red above gold means it is beating your usual start.</p>' +
+      multiLineHtml(series, tips, { label: 'Launch curves', x0: 'posted', xMid: '24h', x1: '48h',
+        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null }) + thin + '</div>';
+  }
+
   function renderLatest(v) {
     // filled by renderProjection() once the card is in the DOM — it is the first thing
     // on the card because "where is this heading" is the question the card exists to answer
@@ -1733,7 +1872,8 @@
       '<button class="ghost' + (ttRaceMode === 'latest' ? ' active' : '') + '" data-ttrace="latest">Latest 10</button>' +
       '<button class="ghost' + (ttRaceMode === 'best' ? ' active' : '') + '" data-ttrace="best">Best 10 openings</button>' +
       '</div>' +
-      '<div id="ttRaceContent"><p class="dnote">warming up\u2026</p></div></div>';
+      '<div id="ttRaceContent"><p class="dnote">warming up\u2026</p></div></div>' +
+      '<div id="ttLaunchWrap"></div>';
     // minute-by-minute, recorded by the Worker even with no browser open
     const rec = hist && hist.videos && hist.videos[v.id];
     if (rec && rec.s && rec.s.length > 1) {
@@ -1804,6 +1944,7 @@
       '<h4>Every hour since it went up</h4><p class="explain" id="lifeExplain"></p><div id="lifeChart"></div></div>';
     renderProjection(v);
     renderTtRace(v);
+    ttLaunchCurves(v);
     loadLife(v.id);
   }
 
