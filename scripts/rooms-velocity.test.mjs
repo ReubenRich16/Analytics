@@ -350,6 +350,31 @@ console.log('\nTikTok view velocity');
    called. Most of the work was deciding what must NOT go through it — an adversarial pass
    over the original plan found that syncing the recorded curves would have caused
    cross-device DATA LOSS, so these checks are the fence around that. */
+/* ---------- 2f. the hashtag card ---------- */
+console.log('\nhashtags ranked by what they returned');
+{
+  const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
+  check('the card exists and has a room', /id="tagsCard"/.test(TT) && /id="tagsContent"/.test(TT));
+  check('and is revealed at sign-in', /'breakdownCard', 'tagsCard', 'coachCard'/.test(TT));
+  /* Frequency ranks your habits; reach ranks your results. A tag on two hits should beat
+     a tag spread across ten quiet ones, which is the whole reason this is not a chip row
+     sorted by count. */
+  check('tags are ranked by average reach, not by how often they were used',
+    /avg: e\.s \/ e\.n/.test(body) && /sort\(\(a, b\) => b\.avg - a\.avg\)/.test(body));
+  check('and reach is the same figure the report card and Top 5 use', /scoreOf\(v\)/.test(body),
+    'a tag must not look good here and bad three cards away');
+  check('a tag used once is listed as untested rather than ranked', /e\.n >= TAG_MIN/.test(body),
+    'one lucky post would otherwise top the list with a meaningless average');
+  check('the bar carries how many posts the average rests on', /t\.n \+ ' posts'/.test(body));
+  check('and the typical post is stated so a bar reads as better or worse than usual',
+    /typical post reaches/.test(body));
+  check('truncation is admitted rather than silent', /rated\.length > 10/.test(body));
+  check('the thinner unranked copy in Coach is gone, not left above it',
+    !/Hashtags to lean into/.test(TT), 'saying it twice let the weaker half win by being higher up');
+  check('it repaints on the poll', /renderBreakdown\(\); renderTags\(\);/.test(TT));
+  check('and a caption cannot inject markup through a tag', /esc\(t\)/.test(body));
+}
+
 console.log('\ncross-device sync');
 {
   const pull = TT.slice(TT.indexOf('async function ttSyncPull()'), TT.indexOf('\n  }\n', TT.indexOf('async function ttSyncPull()')));

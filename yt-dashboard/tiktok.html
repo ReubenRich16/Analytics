@@ -242,6 +242,13 @@
   <div class="room-pane" data-pane="coach" id="pane-coach" role="tabpanel" aria-labelledby="tab-coach" tabindex="0">
   <div class="room-divider"><span>Coach</span><hr></div>
 
+  <!-- HASHTAGS -->
+  <div class="card" id="tagsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">What's working — hashtags &amp; keywords</div>
+    <p class="explain" style="margin-top:8px">Every hashtag across your captions, ranked by the <b>average reach of the posts that use it</b> — so a tag on two hits beats a tag spread across ten quiet ones. Use the winners in your next caption.</p>
+    <div id="tagsContent"><p class="dnote">crunching…</p></div>
+  </div>
+
   <!-- COACHING -->
   <div class="card" id="coachCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
@@ -1237,7 +1244,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'latestCard', 'tableCard', 'breakdownCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1345,7 +1352,7 @@
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer(); renderTtSparks(); ttdRepaint();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
@@ -2833,6 +2840,66 @@
     { label: 'Evening (7pm–11pm)', t: h => h >= 19 && h < 23 },
     { label: 'Late night (11pm–5am)', t: h => h >= 23 || h < 5 }
   ];
+  /* ---------- hashtags, with the account's own record attached ----------
+     Ranked by the average REACH of the posts carrying each tag, not by how often the tag
+     was used. Frequency ranks your habits; this ranks your results, and a tag on two hits
+     should beat a tag spread across ten quiet ones.
+
+     "Reach" is scoreOf — each post's own first-48-hour total once its launch is over, and
+     the projected total while one is still running. That is the same figure the report
+     card and the Top 5 use, so a tag cannot look good here and bad three cards away.
+
+     A tag used once is not a record of anything, so it is listed as untested rather than
+     ranked: on an account with sixty posts, a single lucky video would otherwise sit at
+     the top of the list with a number that means nothing. */
+  const TAG_MIN = 2;
+  function renderTags() {
+    const el = $('tagsContent');
+    if (!el) return;
+    const pool = scored();
+    if (pool.length < 3) {
+      el.innerHTML = '<p class="dnote">Not enough comparable posts yet. A tag needs at least ' + TAG_MIN +
+        ' posts behind it before its average means anything, and the account needs a few more before ' +
+        'there is a typical post to measure against.</p>';
+      return;
+    }
+    const map = {};
+    for (const v of pool) {
+      const sc = scoreOf(v);
+      if (sc == null) continue;
+      for (const t of hashtagsOf(v)) { const e = map[t] || (map[t] = { n: 0, s: 0 }); e.n++; e.s += sc; }
+    }
+    const all = pool.map(scoreOf).filter(x => x != null);
+    if (!all.length) { el.innerHTML = '<p class="dnote">No comparable reach figures yet.</p>'; return; }
+    const med = pjMed(all);
+    const rated = Object.entries(map).filter(([, e]) => e.n >= TAG_MIN)
+      .map(([t, e]) => ({ tag: t, n: e.n, avg: e.s / e.n }))
+      .sort((a, b) => b.avg - a.avg);
+    const untested = Object.entries(map).filter(([, e]) => e.n < TAG_MIN).map(([t]) => t).sort();
+    if (!rated.length) {
+      el.innerHTML = '<p class="dnote">No tag has been used on ' + TAG_MIN + ' posts yet' +
+        (untested.length ? ' \u2014 ' + untested.length + ' have been used once' : '') +
+        '. Reuse one and it starts earning a figure here.</p>';
+      return;
+    }
+    let html = hbarList(rated.slice(0, 10).map(t => ({
+      label: t.tag, val: Math.round(t.avg),
+      valText: fmt.format(Math.round(t.avg)) + ' views \u00b7 ' + t.n + ' posts'
+    })), { color: 'var(--up)' });
+    // where the median sits, so a bar is readable as better or worse than usual rather
+    // than only as longer or shorter than the bar above it
+    html += '<p class="dnote" style="margin-top:8px">Your typical post reaches <b>' +
+      fmt.format(Math.round(med)) + ' views</b>, so anything above that is a tag pulling its weight. ' +
+      'The second figure is how many posts the average rests on.</p>';
+    if (rated.length > 10) html += '<p class="dnote">' + (rated.length - 10) + ' more tags have a figure; the ten strongest are shown.</p>';
+    if (untested.length) {
+      html += section('Used once, so far untested',
+        'These have no average yet \u2014 one post is not a record. Reuse one and it joins the list above.',
+        '<div class="chiprow">' + untested.slice(0, 20).map(t => '<span class="chip">' + esc(t) + '</span>').join('') + '</div>');
+    }
+    el.innerHTML = html;
+  }
+
   function renderCoaching() {
     const el = $('coachContent');
     if (videos.length < 4) { el.innerHTML = '<p class="dnote">Once a few posts are tracked, personalised coaching appears here.</p>'; return; }
@@ -2856,11 +2923,9 @@
     }
     bands.sort((a, b) => b.val - a.val);
     if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average views/day.', hbarList(bands, { color: 'var(--accent)' }));
-    const tagMap = {};
-    for (const r of rows) for (const t of r.tags) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += r.pace; }
-    const tags = Object.entries(tagMap).filter(([, e]) => e.n >= 2).map(([t, e]) => ({ tag: t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 10);
-    if (tags.length) html += section('Hashtags to lean into', 'Ranked by the average views/day of the posts using them.',
-      '<div class="chiprow">' + tags.map(t => '<span class="chip">' + esc(t.tag) + '</span>').join('') + '</div>');
+    /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
+       of their own with the figures attached — saying the same thing twice, once without
+       the numbers, was the weaker half winning by being higher up the page. */
     const pubs = rows.map(r => r.d.getTime()).sort((a, b) => a - b), gaps = [];
     for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
     if (gaps.length >= 3) {
