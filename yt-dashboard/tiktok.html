@@ -113,14 +113,21 @@
     <div class="abody" id="answerBody"></div>
   </div>
 
-  <!-- ROOMS — the same cards, sorted into three, and the same mechanism as the YouTube
-       page (the CSS already lives in the shared stylesheet). Three rather than four:
-       TikTok's API exposes no audience data of any kind, so an Audience tab here could
-       only ever be an empty room. The one-page switch turns the rooms off entirely. -->
+  <!-- ROOMS — the same cards, sorted into five, and the same mechanism as the YouTube
+       page (the CSS already lives in the shared stylesheet). Five rather than six, and the
+       two that are missing are missing for a reason rather than for want of building them:
+       TikTok's API exposes no audience data of any kind (no retention, no demographics, no
+       traffic sources), so an Audience tab could only ever be an empty room; and it
+       publishes no daily series of its own, so a Trends tab would have nothing but this
+       dashboard's own recording, which the Now room already shows in full. The panes here
+       must be authored in TAB ORDER — unlike index.html this page has no orderPanes pass.
+       The one-page switch turns the rooms off entirely. -->
   <div class="roombar" id="roomBar" style="display:none">
     <div class="tabs" role="tablist" id="roomTabs">
       <button role="tab" id="tab-now" aria-controls="pane-now" aria-selected="true" tabindex="0" data-room="now">Now</button>
       <button role="tab" id="tab-posts" aria-controls="pane-posts" aria-selected="false" tabindex="-1" data-room="posts">Posts</button>
+      <button role="tab" id="tab-account" aria-controls="pane-account" aria-selected="false" tabindex="-1" data-room="account">Account</button>
+      <button role="tab" id="tab-coach" aria-controls="pane-coach" aria-selected="false" tabindex="-1" data-room="coach">Coach</button>
       <button role="tab" id="tab-ideas" aria-controls="pane-ideas" aria-selected="false" tabindex="-1" data-room="ideas">Ideas</button>
     </div>
     <label class="onepage" title="Turn the rooms off and stack every card, exactly as it was before">
@@ -137,6 +144,15 @@
     <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
     <div class="stat"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div></div>
     <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
+  </div>
+
+  <div class="card velocity" id="velocityPanel">
+    <div class="vhead">
+      <div class="label">View velocity — gained per refresh</div>
+      <div class="rate" id="rateText"></div>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="session" id="sessionText"></div>
   </div>
 
   <!-- LATEST POST -->
@@ -162,13 +178,6 @@
 
   <div class="room-pane" data-pane="posts" id="pane-posts" role="tabpanel" aria-labelledby="tab-posts" tabindex="0">
   <div class="room-divider"><span>Posts</span><hr></div>
-
-  <!-- ACCOUNT BREAKDOWN -->
-  <div class="card" id="breakdownCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
-    <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
-    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
-  </div>
 
   <!-- VIDEO TABLE -->
   <div class="card tablecard" id="tableCard" style="display:none">
@@ -205,6 +214,29 @@
   </div>
   </div>
 
+  <div class="room-pane" data-pane="account" id="pane-account" role="tabpanel" aria-labelledby="tab-account" tabindex="0">
+  <div class="room-divider"><span>Account</span><hr></div>
+
+  <!-- ACCOUNT BREAKDOWN -->
+  <div class="card" id="breakdownCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
+    <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
+    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
+  </div>
+
+  </div>
+
+  <div class="room-pane" data-pane="coach" id="pane-coach" role="tabpanel" aria-labelledby="tab-coach" tabindex="0">
+  <div class="room-divider"><span>Coach</span><hr></div>
+
+  <!-- COACHING -->
+  <div class="card" id="coachCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
+    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
+    <div id="coachContent"><p class="dnote">crunching…</p></div>
+  </div>
+  </div>
+
   <div class="room-pane" data-pane="ideas" id="pane-ideas" role="tabpanel" aria-labelledby="tab-ideas" tabindex="0">
   <div class="room-divider"><span>Ideas</span><hr></div>
 
@@ -220,12 +252,6 @@
     <div id="ideaOut" style="margin-top:12px"></div>
   </div>
 
-  <!-- COACHING -->
-  <div class="card" id="coachCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
-    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
-    <div id="coachContent"><p class="dnote">crunching…</p></div>
-  </div>
   </div>
 
 </div>
@@ -254,6 +280,21 @@
 
   let workerUrl = '', session = '', me = null, videos = [], prevTotals = null, timer = null,
       paused = false, hiddenPaused = false, intervalMs = 60000, hist = null, polling = false, pollCount = 0;
+  /* View velocity, accumulated PER POST rather than from the account total.
+
+     The YouTube page can difference two account totals because its roster only ever grows.
+     TikTok's cannot: `video/list` returns at most 60 posts, so the summed view total FALLS
+     when an old post scrolls out of the window. Differenced, that reads as negative growth
+     — the card would print "+-1,234 views" (the '+' is unconditional) and the views/min
+     readout would stay blank for the rest of the session once it went negative.
+
+     Summing each post's own positive movement is immune to that by construction rather
+     than by clamping: a post that vanished contributes nothing and is forgotten, a post
+     seen for the first time contributes nothing on that first sighting, and `gained` can
+     never be negative. It also measures the right thing — views gained by posts, not
+     churn in which posts the API felt like returning. */
+  const MAX_BARS = 60;
+  let velHistory = [], velSession = null, velStart = 0, perPost = {};
 
   const setStatus = t => { $('statusText').textContent = t; };
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
@@ -353,6 +394,17 @@
   // accumulated well over a thousand of them.
   const ttReg = new Map();
   let chartId = 0;
+  /* Named chartPush, and the attribute is data-ci, to match the YouTube page exactly.
+     Two chart renderers are shared verbatim between these files and pinned that way by
+     scripts/plateau.test.mjs — a renderer that has to say `ttReg.set` here and
+     `chartPush` there could not be shared at all, and the copy that is not under test
+     is the one that quietly rots. */
+  function chartPush(entry) {
+    const ci = ++chartId;
+    ttReg.set(ci, entry);
+    ttReg.delete(ci - 400);
+    return ci;
+  }
   function niceScale(lo, hi, target) {
     if (!(hi > lo)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
@@ -400,15 +452,26 @@
     if (opts.x1) frame += '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     const xs = pts.map((_, i) => X(i)), ys = pts.map(Y);
     ttReg.set(ci, { tips: opts.tips || pts.map(v => fmt.format(v) + ' views'), xs, ys, L, R, w, color });
-    ttReg.delete(ci - 400);
-    // A gap far longer than the usual spacing is a stretch where nothing was recorded, not
-    // a steady climb. Joining across it would draw a straight line that looks like measured
-    // growth, so the path breaks instead and the gap reads as what it is: no data.
+    /* A gap far longer than the usual spacing is a stretch where nothing was recorded, not
+       a steady climb. Joining across it would draw a straight line that looks like measured
+       growth, so the path breaks instead and the gap reads as what it is: no data.
+
+       The floor has to clear the sampler's SLOWEST DELIBERATE cadence, which is a different
+       number from "a couple of missed minutes". The Worker records every minute for 48
+       hours, then every 15 minutes to day 14, then hourly to day 60 — a planned step down,
+       not an outage. At the old 6e5 (10 minutes) every single sample past hour 48 exceeded
+       the threshold, so each one became a one-point segment; an SVG subpath that is a bare
+       moveto is not stroked, so a whole day of real samples rendered as nothing at all, the
+       area fill stopped dead with a hard vertical edge at the 48-hour mark, and the end dot
+       — drawn unconditionally at the last point — floated on its own at the right-hand
+       edge. That is exactly the "data stopped at 48 hours" report, and the data had not
+       stopped: it was in D1, it was served, it was merged, and then it was drawn as
+       nothing. 75 minutes clears the hourly tier with slack. */
     let maxGap = Infinity;
     if (at && pts.length > 2) {
       const dts = []; for (let i = 1; i < at.length; i++) dts.push(at[i] - at[i - 1]);
       dts.sort((a, b) => a - b);
-      maxGap = Math.max(4 * dts[dts.length >> 1], 6e5);   // never break on a couple of missed minutes
+      maxGap = Math.max(4 * dts[dts.length >> 1], 75 * 60e3);
     }
     const segs = [[0]];
     for (let i = 1; i < pts.length; i++) {
@@ -416,12 +479,16 @@
       else segs[segs.length - 1].push(i);
     }
     const pt = i => xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
-    const d = segs.map(seg => 'M' + seg.map(pt).join(' L')).join(' ');
+    // A lone sample between two real gaps still has to leave a mark. `M x,y` on its own
+    // paints nothing; `M x,y L x,y` is a zero-length subpath, which the round linecap in
+    // style.css turns into a dot. Belt and braces for the failure above — whatever the
+    // threshold is, an isolated point must never render as blank.
+    const d = segs.map(seg => seg.length > 1 ? 'M' + seg.map(pt).join(' L') : 'M' + pt(seg[0]) + ' L' + pt(seg[0])).join(' ');
     const dFill = segs.filter(seg => seg.length > 1).map(seg =>
       'M' + xs[seg[0]].toFixed(1) + ',' + base + ' L' + seg.map(pt).join(' L') +
       ' L' + xs[seg[seg.length - 1]].toFixed(1) + ',' + base + ' Z').join(' ');
     const ey = Math.max(T + 10, ys[ys.length - 1] - 10);
-    return '<svg class="chart" data-tci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(label || '') + '">' +
       '<defs><linearGradient id="ttg' + ci + '" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0" stop-color="' + color + '" stop-opacity="0.14"/><stop offset="1" stop-color="' + color + '" stop-opacity="0.01"/></linearGradient></defs>' +
       frame +
@@ -436,11 +503,11 @@
 
   let ttTip = null;
   function ttMoveTip(e) {
-    const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-tci]') : null;
+    const svg = e.target && e.target.closest ? e.target.closest('svg.chart[data-ci]') : null;
     if (!ttTip) { ttTip = document.createElement('div'); ttTip.id = 'chartTip'; document.body.appendChild(ttTip); }
     document.querySelectorAll('svg.chart .cdot, svg.chart .cline').forEach(c => c.style.display = 'none');
     if (!svg) { ttTip.style.display = 'none'; return; }
-    const d = ttReg.get(+svg.dataset.tci);
+    const d = ttReg.get(+svg.dataset.ci);
     if (!d || !d.tips.length) return;
     const rect = svg.getBoundingClientRect();
     const xv = (e.clientX - rect.left) / rect.width * d.w;
@@ -785,7 +852,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -798,6 +865,54 @@
     await poll();
     if (timer) clearInterval(timer);
     timer = setInterval(poll, intervalMs);
+  }
+
+  /* One tick of the velocity card. Reads `videos`, which poll() has just refreshed.
+
+     Every number here is a sum of per-post positive deltas over posts present in BOTH the
+     previous reading and this one. Anything else would be measuring the API's window, not
+     the account: see the note on perPost above. */
+  function renderVelocity() {
+    const seen = {};
+    let tick = 0;
+    const step = { views: 0, likes: 0, comments: 0, shares: 0 };
+    for (const x of videos) {
+      const cur = { views: +x.view_count || 0, likes: +x.like_count || 0,
+                    comments: +x.comment_count || 0, shares: +x.share_count || 0 };
+      const was = perPost[x.id];
+      seen[x.id] = cur;
+      if (!was) continue;                      // first sighting contributes nothing
+      tick += Math.max(0, cur.views - was.views);
+      for (const k of ['views', 'likes', 'comments', 'shares']) step[k] += Math.max(0, cur[k] - was[k]);
+    }
+    const first = !velSession;
+    perPost = seen;
+    if (first) { velSession = { views: 0, likes: 0, comments: 0, shares: 0 }; velStart = Date.now(); return; }
+    for (const k of ['views', 'likes', 'comments', 'shares']) velSession[k] += step[k];
+    velHistory.push(tick);
+    if (velHistory.length > MAX_BARS) velHistory.shift();
+    const wrap = $('bars');
+    if (wrap) {
+      wrap.innerHTML = '';
+      const max = Math.max(1, ...velHistory);
+      velHistory.forEach(v => {
+        const b = document.createElement('div');
+        b.className = 'bar' + (v === 0 ? ' zero' : '');
+        b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
+        b.title = '+' + fmt.format(v) + ' views';
+        wrap.appendChild(b);
+      });
+    }
+    const mins = Math.max(1 / 60, (Date.now() - velStart) / 60000);
+    $('sessionText').innerHTML = 'session: <b>+' + fmt.format(velSession.views) + '</b> views · <b>+' +
+      fmt.format(velSession.likes) + '</b> likes · <b>+' + fmt.format(velSession.comments) + '</b> comments · <b>+' +
+      fmt.format(velSession.shares) + '</b> shares · ' + Math.round(mins) + 'm';
+    // Not before half a minute of session. `mins` is floored at one second, so the very
+    // first refresh divides a real gain by 1/60 of a minute and prints a rate in the
+    // thousands — a number that is arithmetically correct and describes nothing.
+    const pm = velSession.views / mins;
+    $('rateText').textContent = mins >= 0.5 && pm >= 0.05
+      ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min' : '';
   }
 
   async function poll(force) {
@@ -826,6 +941,7 @@
         });
       $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
         fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
+      renderVelocity();
       prevTotals = totals;
       // re-pull the Worker's recordings periodically so the minute chart keeps growing
       // while a launch is live, not only when Refresh is pressed
@@ -906,6 +1022,23 @@
   const PJ_COVER = 44 * 60;     // a reference curve has to almost reach the horizon
   const PJ_GAP = 60;            // minutes — the smallest hole worth caring about, at any age
   const PJ_MIN_REFS = 2;
+  /* The second horizon: a week.
+     Two targets, not one moved. The 48-hour horizon stays exactly where it is because
+     that is the only horizon this model's error has ever been measured against — moving
+     it would have thrown away every reference curve on the account on the day of the
+     deploy and left both dashboards saying "0 of 2" for the best part of a week, in
+     exchange for a number about 2% different (the recorded tail past hour 48 adds well
+     under half a per cent a day). So the week is a SECOND answer computed by the same
+     arithmetic: a reference that recorded a full week gets its seven-day total as
+     `final`, and every share, median and band below is the identical code on a longer
+     target. Nothing about the 48-hour projection changes.
+     The week figure is also held to a stricter admission rule than the 48-hour one —
+     PJ_MIN_REFS + 1, so pjError can always run. With only two references the band would
+     fall back to PJ_FLOOR, and PJ_FLOOR was measured at 48 hours; stretching it to a week
+     would produce a plausible-looking margin that nobody has ever checked. Better to say
+     how many more posts it needs. */
+  const PJ_WEEK = 7 * 1440;         // minutes — the second target, and how long the card keeps working
+  const PJ_WEEK_COVER = 6.5 * 1440; // a curve has to almost reach a week to vote on the week
   // The margin measured on the first three curves that ever finished, keyed by age.
   // Used only until there are enough recorded launches to measure the error live (see
   // pjError) — with two references the spread between them is all there is, and two
@@ -951,7 +1084,23 @@
   function pjRef(c) {
     if (pjClean(c) < PJ_COVER) return null;
     const final = pjAt(c, PJ_HORIZON);
-    return final >= 25 ? { c, final } : null;
+    // `reach` is how far the recording actually got, which is a different question from
+    // pjClean's "how far without a hole" — the week rule needs the former.
+    return final >= 25 ? { c, final, reach: c[c.length - 1][0] } : null;
+  }
+  // The same references, re-aimed a week out. `final` becomes the seven-day total, so
+  // pjShares/pjMed/pjError below need no changes at all — they divide by whatever `final`
+  // is. A curve whose week total comes out BELOW its 48-hour one is a downward revision
+  // (spam filtering, a deleted comment thread), not a tail, and votes on neither.
+  function pjWeekRefs(refs) {
+    const out = [];
+    for (const r of refs) {
+      if (!(r.reach >= PJ_WEEK_COVER)) continue;
+      const w = pjAt(r.c, PJ_WEEK);
+      if (!(w >= 25) || w < r.final) continue;
+      out.push({ c: r.c, final: w, reach: r.reach });
+    }
+    return out;
   }
   // When `need` curves will be usable FOR THIS TARGET, in minutes. "Not enough data" with
   // no date attached is the least helpful thing software says, and here the date is
@@ -1004,11 +1153,13 @@
   }
   // the age at which a typical launch already holds 90% of its 48-hour total —
   // what "most of the rest arrives in the next …" is counting down to
-  function pjSettle(refs) {
-    for (let t = 60; t <= PJ_HORIZON; t += 30) { const s = pjShares(refs, t); if (s.length && pjMed(s) >= .9) return t; }
-    return PJ_HORIZON;
+  function pjSettle(refs, horizon) {
+    const end = horizon || PJ_HORIZON;
+    const step = end > PJ_HORIZON ? 120 : 30;   // a week's worth at 30-minute resolution is 336 probes for no gain
+    for (let t = 60; t <= end; t += step) { const s = pjShares(refs, t); if (s.length && pjMed(s) >= .9) return t; }
+    return end;
   }
-  const pjDur = m => m >= 150 ? Math.round(m / 60) + ' hours' : m >= 75 ? '2 hours' : m >= 45 ? 'hour' : Math.max(5, Math.round(m / 5) * 5) + ' minutes';
+  const pjDur = m => m >= 2880 ? Math.round(m / 1440) + ' days' : m >= 150 ? Math.round(m / 60) + ' hours' : m >= 75 ? '2 hours' : m >= 45 ? 'hour' : Math.max(5, Math.round(m / 5) * 5) + ' minutes';
   // The margin is measured, not assumed. Each reference is left out in turn, its own
   // 48-hour total predicted from the median of the others at this age, and the worst miss
   // kept — the leave-one-out error of this exact model on this exact account. So the band
@@ -1032,13 +1183,44 @@
     }
     return worst * PJ_SAFETY;
   }
+  /* The week answer. Identical arithmetic to the 'ok' branch of pjProject below, over
+     references whose `final` is a seven-day total — deliberately a separate function
+     rather than a parameter on pjProject, so the 48-hour path that has been validated
+     against real launches cannot be altered by accident while adding the second one.
+
+     The one difference is the admission rule: PJ_MIN_REFS + 1 instead of PJ_MIN_REFS,
+     because pjError needs three curves to leave one out, and a week band that falls back
+     to PJ_FLOOR would be a 48-hour measurement worn by a seven-day claim. Returning null
+     here is how the card knows to say "not yet" instead of inventing a margin. */
+  function pjWeek(wrefs, age, views) {
+    if (!(views > 0) || wrefs.length < PJ_MIN_REFS + 1) return null;
+    const use = pjUsable(wrefs, age);
+    const sh = pjShares(use, age);
+    if (sh.length < PJ_MIN_REFS + 1) return null;
+    const err = pjError(use, age);
+    if (err == null || err > .45) return null;
+    const med = pjMed(sh), mid = views / med;
+    const fl = Math.max(mid * err, mid * .03, 3);
+    const lo = Math.max(views, Math.round(Math.min(views / Math.max(...sh), mid - fl)));
+    const hi = Math.round(Math.max(views / Math.min(...sh), mid + fl, lo + 1));
+    return {
+      med, mid: Math.round(mid), lo, hi, refs: use, n: wrefs.length, span: PJ_WEEK,
+      pct: Math.max(0, Math.min(1, views / mid)), rest: Math.max(0, pjSettle(use, PJ_WEEK) - age)
+    };
+  }
   function pjProject(refs, age, views, cands) {
     // `cands` is every curve on the account with its current age, so a "nomodel" answer
     // can say how many are usable and when the next one lands rather than just "not yet"
     const wait = () => ({ state: 'nomodel', have: (refs || []).length,
                           ...pjWhen(cands || [], PJ_MIN_REFS, age) });
     if (!refs || refs.length < PJ_MIN_REFS) return wait();
-    if (age >= PJ_HORIZON) return { state: 'done' };
+    const wr = pjWeekRefs(refs);
+    // Past a week there is nothing left to project — the lifetime count IS the answer.
+    if (age >= PJ_WEEK) return { state: 'done' };
+    // Between two days and a week the launch is settled but the week is not. The card used
+    // to stop dead here and print one sentence with no chart and no tabs, which is why a
+    // two-day-old post looked like it had lost its data.
+    if (age >= PJ_HORIZON) return { state: 'settled', week: pjWeek(wr, age, views), weekHave: wr.length };
     if (age < PJ_MIN_AGE) return { state: 'early' };
     if (!(views > 0)) return { state: 'early' };
     // Fixed for the whole projection: a reference that does not reach back to this age
@@ -1059,7 +1241,8 @@
     const lo = Math.max(views, Math.round(Math.min(views / Math.max(...sh), mid - fl)));
     const hi = Math.round(Math.max(views / Math.min(...sh), mid + fl, lo + 1));
     return {
-      state: 'ok', med, mid: Math.round(mid), lo, hi, refs: use,
+      state: 'ok', med, mid: Math.round(mid), lo, hi, refs: use, span: PJ_HORIZON,
+      week: pjWeek(wr, age, views), weekHave: wr.length,
       pct: Math.max(0, Math.min(1, views / mid)), rest: Math.max(0, pjSettle(use) - age)
     };
   }
@@ -1150,6 +1333,23 @@
       '</div></div>';
   }
 
+  // The week, in the same shape as the 48-hour sentence. It says how many posts the figure
+  // rests on because that is half the claim — a median of three is not a median of twelve.
+  function pjWeekHtml(wk) {
+    return '<p class="pjline">And by the end of its first week, about <b>' + fmt.format(wk.mid) + ' views</b> — likely ' +
+      fmt.format(wk.lo) + ' to ' + fmt.format(wk.hi) + '. Same method, measured against the ' + wk.n +
+      ' of your posts that have a full week recorded.</p>';
+  }
+  // Why there is no week figure yet, with the number that would turn it on. The alternative
+  // was to stretch PJ_FLOOR — a margin measured at 48 hours — across seven days and print
+  // the result, which would look exactly like a measurement and be nothing of the kind.
+  function pjWeekWaitHtml(have) {
+    const n = have || 0, need = PJ_MIN_REFS + 1;
+    return '<p class="dnote">No seven-day figure yet. That needs ' + need + ' of your posts with a full week recorded — ' +
+      n + ' ' + (n === 1 ? 'has' : 'have') + ' one so far, so ' + (need - n) + ' more and it turns itself on by itself. ' +
+      'Until then the only number here is the one that was actually counted.</p>';
+  }
+
   // Option B — the same answer as a sentence, for where a chart would not fit
   function pjSentenceHtml(p) {
     return '<p class="pjline">Heading for about <b>' + fmt.format(p.mid) + ' views</b> in its first 48 hours — likely ' +
@@ -1163,9 +1363,15 @@
   // at now and opens to the full range at 48h, because the uncertainty is in what is still
   // to come, not in what was already counted.
   function pjCurveHtml(curve, refs, p, age, views) {
+    // `span` is how much of the video's life the x axis covers: two days while the launch
+    // is running, a week once it has settled. `p.mid == null` means there is nothing to
+    // project — draw only what was recorded, which is still the whole point of the view.
+    const span = p.span || PJ_HORIZON;
     const w = 620, h = 190, L = 66, R = 18, T = 18, B = 30, base = h - B;
-    const sc = niceScale(0, p.hi, 4);
-    const X = t => L + (w - L - R) * Math.max(0, Math.min(1, t / PJ_HORIZON));
+    const rec = (curve || []).filter(pt => pt[0] <= age + 1 && pt[1] != null);
+    const ceil = p.mid == null ? Math.max(views, ...rec.map(pt => pt[1] || 0), 1) : p.hi;
+    const sc = niceScale(0, ceil, 4);
+    const X = t => L + (w - L - R) * Math.max(0, Math.min(1, t / span));
     const Y = v => base - (base - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
     let frame = '';
     for (const t of sc.ticks) {
@@ -1174,36 +1380,73 @@
       frame += '<text class="ax" x="' + (L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
     }
     frame += '<line class="axis-line" x1="' + L + '" y1="' + base + '" x2="' + (w - R) + '" y2="' + base + '"/>';
-    for (const hh of [0, 12, 24, 36, 48]) frame += '<text class="ax" x="' + X(hh * 60).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="' +
-      (hh === 0 ? 'start' : hh === 48 ? 'end' : 'middle') + '">' + hh + 'h</text>';
+    // hours across two days, days across a week — five ticks crammed into the first third
+    // of a seven-day plot would label the axis without describing it
+    const inDays = span > PJ_HORIZON;
+    const marks = inDays ? [0, 1, 2, 3, 4, 5, 6, 7] : [0, 12, 24, 36, 48];
+    const last = marks[marks.length - 1];
+    for (const mk of marks) frame += '<text class="ax" x="' + X(mk * (inDays ? 1440 : 60)).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="' +
+      (mk === 0 ? 'start' : mk === last ? 'end' : 'middle') + '">' + mk + (inDays ? 'd' : 'h') + '</text>';
     // the recorded side, thinned to something a path string can carry
-    const rec = (curve || []).filter(pt => pt[0] <= age + 1 && pt[1] != null);
     const step = Math.max(1, Math.ceil(rec.length / 180));
     const thin = rec.filter((_, i) => i % step === 0);
     if (rec.length && thin[thin.length - 1] !== rec[rec.length - 1]) thin.push(rec[rec.length - 1]);
     let d = '';
     thin.forEach((pt, i) => { d += (i ? ' L' : 'M') + X(pt[0]).toFixed(1) + ',' + Y(pt[1]).toFixed(1); });
     if (d) d += ' L' + X(age).toFixed(1) + ',' + Y(views).toFixed(1);
+    // Every point the reader can land on, in x order: what was recorded, then what is
+    // projected. Built here rather than in moveTip because this is the only place that
+    // knows which half of the line a given x belongs to, and the tooltip has to say so —
+    // "recorded" and "projected" are not the same kind of claim.
+    const tips = [], xs = [], ys = [];
+    const nxn = X(age);
+    for (const pt of thin) {
+      if (X(pt[0]) >= nxn - 0.5) continue;     // the sample at `now` is the projected head's job
+      tips.push(fmtAge(pt[0]) + ' · ' + fmt.format(Math.round(pt[1])) + ' views recorded');
+      xs.push(X(pt[0])); ys.push(Y(pt[1]));
+    }
     // u(t) is the fraction of the REMAINING share that a typical launch has taken in by t,
     // so every projected line leaves the recorded endpoint exactly and none of them jump
     const u = t => { const s = pjShares(refs, t); return s.length ? Math.max(0, Math.min(1, (pjMed(s) - p.med) / (1 - p.med || 1))) : 0; };
-    const steps = [];
-    for (let i = 0; i <= 24; i++) steps.push(age + (PJ_HORIZON - age) * i / 24);
-    const seg = target => steps.map((t, i) => (i ? ' L' : 'M') + X(t).toFixed(1) + ',' + Y(views + (target - views) * u(t)).toFixed(1)).join('');
-    const cone = seg(p.hi) + steps.slice().reverse().map(t => ' L' + X(t).toFixed(1) + ',' + Y(views + (p.lo - views) * u(t)).toFixed(1)).join('') + ' Z';
-    const nx = X(age).toFixed(1);
-    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' +
-      esc('Views recorded to ' + fmtAge(age) + ', then projected toward about ' + fmt.format(p.mid) + ' by 48 hours') + '">' +
-      frame +
-      // stroked as well as filled: at twelve hours the range is only a few percent of the
-      // plot's height, and a fill that faint at that size is not a mark, it is a smudge
-      '<path d="' + cone + '" style="fill:var(--live);opacity:.16;stroke:var(--live);stroke-opacity:.4;stroke-width:1"/>' +
-      '<path d="' + seg(p.mid) + '" style="fill:none;stroke:var(--live);stroke-width:2;stroke-dasharray:6 5;opacity:.8"/>' +
+    let proj = '', endLabel = '';
+    if (p.mid == null) {
+      tips.push(fmtAge(age) + ' · now — ' + fmt.format(views) + ' views recorded');
+      xs.push(nxn); ys.push(Y(views));
+    } else {
+      const steps = [];
+      for (let i = 0; i <= 48; i++) steps.push(age + (span - age) * i / 48);
+      const uAt = steps.map(u);
+      const at = (target, i) => views + (target - views) * uAt[i];
+      const seg = target => steps.map((t, i) => (i ? ' L' : 'M') + X(t).toFixed(1) + ',' + Y(at(target, i)).toFixed(1)).join('');
+      const cone = seg(p.hi) + steps.map((t, i) => ' L' + X(t).toFixed(1) + ',' + Y(at(p.lo, i)).toFixed(1)).reverse().join('') + ' Z';
+      steps.forEach((t, i) => {
+        tips.push(fmtAge(t) + ' · ' + (i === 0
+          ? 'now — ' + fmt.format(views) + ' views recorded'
+          : '~' + fmt.format(Math.round(at(p.mid, i))) + ' projected · likely ' +
+            fmt.format(Math.round(at(p.lo, i))) + '–' + fmt.format(Math.round(at(p.hi, i)))));
+        xs.push(X(t)); ys.push(Y(at(p.mid, i)));
+      });
+      proj =
+        // stroked as well as filled: at twelve hours the range is only a few percent of the
+        // plot's height, and a fill that faint at that size is not a mark, it is a smudge
+        '<path d="' + cone + '" style="fill:var(--live);opacity:.16;stroke:var(--live);stroke-opacity:.4;stroke-width:1"/>' +
+        '<path d="' + seg(p.mid) + '" style="fill:none;stroke:var(--live);stroke-width:2;stroke-dasharray:6 5;opacity:.8"/>';
+      endLabel = '<text class="val" x="' + (w - R) + '" y="' + Math.max(T + 10, Y(p.mid) - 9).toFixed(1) + '" text-anchor="end">~' + esc(axisNum(p.mid)) + '</text>';
+    }
+    const ci = chartPush({ tips, xs, ys, L, R, w, T, B, h, color: 'var(--live)' });
+    const nx = nxn.toFixed(1);
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' +
+      esc(p.mid == null
+        ? 'Views recorded over the first ' + (inDays ? '7 days' : '48 hours') + ', ending at ' + fmt.format(views)
+        : 'Views recorded to ' + fmtAge(age) + ', then projected toward about ' + fmt.format(p.mid) +
+          ' by ' + (inDays ? '7 days' : '48 hours')) + '">' +
+      frame + proj +
+      '<line class="cline" y1="' + T + '" y2="' + base + '" style="display:none"/>' +
       '<line class="refline" x1="' + nx + '" y1="' + T + '" x2="' + nx + '" y2="' + base + '"/>' +
       (d ? '<path class="line" d="' + d + '" style="fill:none;stroke:var(--live);stroke-width:2.4"/>' : '') +
       '<circle cx="' + nx + '" cy="' + Y(views).toFixed(1) + '" r="4.5" style="fill:var(--live);stroke:var(--ink);stroke-width:2"/>' +
-      '<text class="ax" x="' + (X(age) + 6).toFixed(1) + '" y="' + (T + 10) + '">now</text>' +
-      '<text class="val" x="' + (w - R) + '" y="' + Math.max(T + 10, Y(p.mid) - 9).toFixed(1) + '" text-anchor="end">~' + esc(axisNum(p.mid)) + '</text>' +
+      '<text class="ax" x="' + (nxn + 6).toFixed(1) + '" y="' + (T + 10) + '">now</text>' + endLabel +
+      '<circle class="cdot" r="5" style="display:none;fill:var(--live);stroke:var(--ink);stroke-width:2"/>' +
       '</svg>';
   }
 
@@ -1223,22 +1466,38 @@
     if (p.state === 'early') return '<p class="dnote">Too early to call where this one lands — this early the estimate misses badly when tested against your own finished posts. Check back once it is a few hours old.</p>';
     if (p.state === 'loose') return '<p class="dnote">Not callable yet — your posts vary enough that at this age the estimate could still be out by more than half. It sharpens over the next few hours.</p>';
     if (p.state === 'nomodel') return pjWaitHtml(p);
-    if (p.state === 'done') {
-      const f = curve ? pjAt(curve, PJ_HORIZON) : null;
-      if (f == null) return '<p class="dnote">Past its first 48 hours, so the launch projection has retired.</p>';
-      const settled = Math.round(f);
-      return '<p class="pjline">Its launch window is over — it took <b>' + fmt.format(settled) + ' views</b> in its first 48 hours' +
-        (views > settled ? ', and has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>';
-    }
-    return '<div class="range-row pjtabs">' +
+    const tabs = '<div class="range-row pjtabs">' +
         '<button class="ghost' + (pjView === 'curve' ? '' : ' active') + '" data-pj="bar">Progress</button>' +
         '<button class="ghost' + (pjView === 'curve' ? ' active' : '') + '" data-pj="curve">Curve</button>' +
-      '</div>' +
+      '</div>';
+    const scrub = '<p class="dnote" style="margin-top:6px">Solid is what was recorded. Dashed is where it is heading, and the shaded band is the range — it narrows as the post matures, because the projection is recomputed on every sample. Run the pointer across it to read any moment.</p>';
+    /* Two days to a week. The launch is over, so there is nothing left to project toward
+       48 hours — but the recording continues, the week is still open, and the card used to
+       answer all of that with one grey sentence and no chart. That is the "data stopped"
+       report: the data had not stopped, the card had. */
+    if (p.state === 'settled' || p.state === 'done') {
+      const f = curve ? pjAt(curve, PJ_HORIZON) : null;
+      if (f == null) return '<p class="dnote">Past its first 48 hours, and none of the launch was recorded, so there is nothing to carry forward here.</p>';
+      const settled = Math.round(f);
+      const head = '<p class="pjline">Its launch window is over — it took <b>' + fmt.format(settled) + ' views</b> in its first 48 hours' +
+        (views > settled ? ', and has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>';
+      if (p.state === 'done') return head +
+        '<p class="dnote">Its first week is over too, so the projection has retired. From here the lifetime count is the honest number — nothing about a two-month-old post needs estimating.</p>';
+      const wk = p.week;
+      // no week figure yet → a chart of what was recorded, with no dashed half at all
+      const cp = wk ? wk : { mid: null, span: PJ_WEEK };
+      return tabs +
+        (pjView === 'curve'
+          ? pjCurveHtml(curve, wk ? wk.refs : [], cp, age, views) +
+            (wk ? scrub : '<p class="dnote" style="margin-top:6px">Everything here was recorded, right across the week — nothing is projected. Run the pointer across it to read any moment.</p>')
+          : (wk ? pjBarHtml(wk, views) : '')) +
+        head + (wk ? pjWeekHtml(wk) : pjWeekWaitHtml(p.weekHave));
+    }
+    return tabs +
       (pjView === 'curve'
-        ? pjCurveHtml(curve, p.refs, p, age, views) +
-          '<p class="dnote" style="margin-top:6px">Solid is what was recorded. Dashed is where it is heading, and the shaded band is the range — it narrows as the post matures, because the projection is recomputed on every sample.</p>'
+        ? pjCurveHtml(curve, p.refs, p, age, views) + scrub
         : pjBarHtml(p, views)) +
-      pjSentenceHtml(p);
+      pjSentenceHtml(p) + (p.week ? pjWeekHtml(p.week) : '');
   }
   function renderProjection(v) {
     const el = $('pjWrap');
@@ -1443,6 +1702,72 @@
   // the follower history the Worker records every ~3h: [ts, followers, likes, videoCount]
   const fseries = () => (hist && Array.isArray(hist.followers) ? hist.followers : []);
   const fAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
+  const ATB = fAtOrBefore;
+  /* The last `n` rolling 24-hour windows, newest first, each carrying the span it was
+     actually measured over.
+
+     Two things make a naive today-versus-yesterday wrong on this data, and both are
+     visible in the recording rather than hypothetical.
+
+     One: the sampler writes hourly at best, and the at-or-before lookup returns the last
+     sample AT OR BEFORE a mark rather than the nearest one, so windows are elastic. On the
+     live YouTube history one "day" measured 28.2 hours while the one beside it measured
+     20.0 — a 41% difference between two buckets a sentence would happily call consecutive
+     days. So each bucket records its real span and is normalised to a 24-hour rate before
+     anything is divided by anything.
+
+     Two: the counter itself flaps. The same 4,152 views appeared, vanished and reappeared
+     on the channel total inside three hours on 11 Aug — read-replica behaviour, not
+     viewership — and across the last twelve days 21% of anchor points produce a bucket of
+     zero or less. A percentage against a denominator like that is a number with no meaning
+     attached, so a bucket that went backwards, or whose span is badly off a day, is marked
+     not-ok and is left out instead of quoted. Saying less is the only honest option.
+
+     `vi` is which column of the series holds the running total. */
+  function dayBuckets(series, vi, n) {
+    const out = [], now = Date.now();
+    for (let k = 0; k < n; k++) {
+      const b = ATB(series, now - k * 864e5), a = ATB(series, now - (k + 1) * 864e5);
+      if (!a || !b || a === b) { out.push({ ok: false }); continue; }
+      const spanH = (b[0] - a[0]) / 3600e3, gain = (b[vi] || 0) - (a[vi] || 0);
+      out.push({ ok: spanH >= 18 && spanH <= 30 && gain >= 0, gain, spanH, rate: gain / Math.max(1, spanH) * 24 });
+    }
+    return out;
+  }
+  const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+  // Where today sits among the days behind it, and how it compares with the one before —
+  // the two questions the chip was asked for. Shared by both dashboards verbatim.
+  function weekPlace(b, unit) {
+    const today = b[0], week = b.slice(1).filter(x => x.ok);
+    const y = b[1];
+    const rank = week.filter(x => x.rate > today.rate).length + 1;
+    const sorted = week.map(x => x.rate).sort((p, q) => p - q);
+    const med = sorted.length ? (sorted.length % 2 ? sorted[sorted.length >> 1]
+      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : 0;
+    const pct = med > 0 ? Math.round((today.rate / med - 1) * 100) : 0;
+    const verdict = !week.length ? 'Counting.'
+      : rank === 1 ? 'Your best day of the week.'
+      : rank === week.length + 1 && week.length >= 3 ? 'Your quietest day of the week.'
+      : pct >= 25 ? 'A good day.' : pct >= -10 ? 'A steady day.' : 'A slower day.';
+    const yv = y && y.ok ? Math.round(y.rate) : null;
+    const vs = yv == null
+      ? 'Yesterday is missing from the recording, so there is nothing to hold it against.'
+      : yv < 5
+        ? 'Yesterday came to ' + fmt.format(yv) + ' ' + unit + ' — too small to turn into a percentage, so here are both numbers plain.'
+        : (() => {
+            const d = Math.round((today.rate / y.rate - 1) * 100);
+            return Math.abs(d) < 8 ? 'Almost exactly yesterday, which came to ' + fmt.format(yv) + '.'
+              : (d > 0 ? d + '% above' : Math.abs(d) + '% below') + ' yesterday, which came to ' + fmt.format(yv) + '.';
+          })();
+    const wk = !week.length ? ''
+      : ' Of the last ' + week.length + ' recorded day' + (week.length === 1 ? '' : 's') + ', it places ' +
+        (rank === 1 ? 'first' : ordinal(rank)) + '.';
+    // stated, not hidden: a window that was not 24 hours long has been scaled to one
+    const note = Math.abs(today.spanH - 24) > 2
+      ? ' Measured over ' + Math.round(today.spanH) + ' hours and scaled to a day, because that is when the samples fell.'
+      : '';
+    return { h: verdict, f: '+' + fmt.format(Math.round(today.rate)) + ' ' + unit, p: vs + wk + note };
+  }
 
   function answerToday() {
     const f = fseries();
@@ -1452,26 +1777,18 @@
        out of that window, and a falling number is not something to report as a day's result. */
     if (f.length < 3) return { h: 'Still watching.', f: fmt.format(followers) + ' followers',
       p: 'Your Worker samples the account every few hours. Once there are a couple of days of that, this says how today compares with a normal day.' };
-    const now = Date.now();
-    const dayAgo = fAtOrBefore(f, now - 864e5), weekAgo = fAtOrBefore(f, now - 7 * 864e5);
+    const b = dayBuckets(f, 1, 8);
     const latest = f[f.length - 1];
-    if (!dayAgo || dayAgo === latest) return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
-      p: 'Not quite a day of history yet — check back tomorrow and this compares today with your usual.' };
-    const gained = (latest[1] || 0) - (dayAgo[1] || 0);
-    const likes = (latest[2] || 0) - (dayAgo[2] || 0);
-    if (!weekAgo || weekAgo === latest) return { h: gained > 0 ? 'Growing.' : 'Steady.',
-      f: (gained >= 0 ? '+' : '') + fmt.format(gained) + ' followers',
-      p: 'In the last 24 hours, alongside ' + (likes >= 0 ? '+' : '') + fmt.format(likes) + ' likes. A week of history will let this say whether that is a good day for you.' };
-    const spanD = Math.max(1, (latest[0] - weekAgo[0]) / 864e5);
-    const avg = ((latest[1] || 0) - (weekAgo[1] || 0)) / spanD;
-    const pct = avg > 0 ? Math.round((gained / avg - 1) * 100) : 0;
-    const verdict = gained <= 0 ? 'A flat day.' : !avg || avg <= 0 ? 'A good day.'
-      : pct >= 25 ? 'A good day.' : pct >= -10 ? 'A steady day.' : 'A slower day.';
-    const cmp = !avg || avg <= 0 ? 'There isn’t a positive weekly average to compare it against yet.'
-      : pct >= 0 ? 'That’s ' + pct + '% above your daily average for the past week.'
-      : 'That’s ' + Math.abs(pct) + '% below your daily average for the past week.';
-    return { h: verdict, f: (gained >= 0 ? '+' : '') + fmt.format(gained) + ' followers',
-      p: cmp + ' Likes moved ' + (likes >= 0 ? '+' : '') + fmt.format(likes) + ' over the same day.' };
+    if (!b[0] || !b[0].ok) return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
+      p: 'Not a full day sampled at both ends yet, or the follower count came back lower than it was — check back after the next few samples and this compares today with your usual.' };
+    const ans = weekPlace(b, 'followers');
+    /* Followers rather than views, and this is why: the view total on this page is a sum
+       over the posts TikTok will return — at most 60 — so it FALLS as older posts scroll
+       out of that window, and a falling number is not something to report as a day's
+       result. Likes ride along because the account total for those IS cumulative. */
+    const lk = dayBuckets(f, 2, 2)[0];
+    if (lk && lk.ok) ans.p += ' Likes moved +' + fmt.format(Math.round(lk.rate)) + ' over the same day.';
+    return ans;
   }
 
   function answerNewest() {
@@ -1787,7 +2104,7 @@
      so sharing cc_room would mean landing on TikTok's "Posts", switching to YouTube, and
      silently being dropped back to Now every time. The One page switch IS shared, on the
      same reasoning as the sound preference: it is a choice about the person, not the page. */
-  const ROOM_ORDER = ['now', 'posts', 'ideas'];
+  const ROOM_ORDER = ['now', 'posts', 'account', 'coach', 'ideas'];
   function staggerCards(scope) {
     const cards = (scope || document).querySelectorAll('.card, .grid');
     cards.forEach((c, i) => {
@@ -1812,6 +2129,11 @@
       p.classList.toggle('on', on);
       if (on) pane = p;
     });
+    /* A name in ROOM_ORDER with no pane behind it used to strip `.on` from everything and
+       leave the page as chrome with nothing under it — no recovery, no error, just blank.
+       Adding rooms is a three-place edit (button, pane, ROOM_ORDER) and this is the one
+       mismatch that fails silently instead of loudly, so it falls back rather than blanks. */
+    if (!pane && k !== 'now') { showRoom('now', remember); return; }
     if (remember !== false) { try { localStorage.setItem('cc_room_tt', k); } catch (e) {} }
     if (pane && !reducedMotion) staggerCards(pane);
   }
@@ -1827,7 +2149,9 @@
     const n = ROOM_ORDER.length;
     const next = step === 'first' ? 0 : step === 'last' ? n - 1 : (cur + step + n) % n;
     showRoom(ROOM_ORDER[next]);
-    document.querySelector('[data-room="' + ROOM_ORDER[next] + '"]').focus();
+    // a ROOM_ORDER entry with no matching button used to throw here and kill the keypress
+    const nextBtn = document.querySelector('[data-room="' + ROOM_ORDER[next] + '"]');
+    if (nextBtn) nextBtn.focus();
   });
   $('onePage').addEventListener('change', e => {
     const on = e.target.checked;

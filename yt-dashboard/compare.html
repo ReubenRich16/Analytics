@@ -29,15 +29,24 @@
   .pair-row.linked { opacity:.8; }
   /* the two sides sit as rows so the frames stack vertically and line up with each other,
      which is what makes "same video or not?" answerable at a glance */
-  .pside { display:flex; gap:9px; align-items:center; min-width:0; }
+  .pside { display:flex; gap:11px; align-items:center; min-width:0; }
   .pmeta { min-width:0; flex:1; }
-  .pthumb { flex:none; border-radius:6px; border:1px solid var(--line); background:var(--panel-2);
+  .pshot { position:relative; flex:none; line-height:0; }
+  .pthumb { border-radius:8px; border:1px solid var(--line); background:var(--panel-2);
             object-fit:cover; display:block; }
   /* YouTube frames are 16:9, TikTok covers are 9:16 — matching their real shapes is a
-     cue in itself, and forcing one aspect on both would crop the subject out of one */
-  .pthumb.y { width:72px; height:41px; }
-  .pthumb.t { width:32px; height:57px; }
+     cue in itself, and forcing one aspect on both would crop the subject out of one.
+     Sized so the subject of the frame is actually recognisable: at the old 72×41 / 32×57
+     these were icons rather than pictures, and the frame is half the evidence for
+     "is this the same video?" — the other half being the date. */
+  .pthumb.y { width:124px; height:70px; }
+  .pthumb.t { width:62px; height:110px; }
   .pthumb.none { opacity:.35; }
+  /* the length, worn the way a video player wears it — over the bottom-right of the
+     frame, so it costs no row height and reads as a property of that picture */
+  .plen { position:absolute; right:4px; bottom:4px; font:600 10.5px/1 var(--f-mono);
+          padding:3px 5px; border-radius:4px; background:rgba(0,0,0,.78); color:#fff;
+          letter-spacing:.02em; pointer-events:none; }
   .gap { margin-top:4px; font-size:11px; color:var(--muted); }
   .gap.far { color:var(--text); font-weight:600; }
   .pair-row .who b { display:block; font-size:13px; font-weight:700; overflow:hidden;
@@ -421,13 +430,26 @@
   const dstamp = ms => !ms ? 'date unknown'
     : new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
       ' · ' + new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  /* Length, as a person writes it. Seconds for a short, m:ss up to an hour, h:mm:ss past it.
+     Zero means "not reported" rather than "zero seconds long" — TikTok returns 0 for some
+     posts and the YouTube parser returns 0 for a live stream with no duration — so those
+     get no chip at all instead of "0:00", which would be a stated fact that isn't true. */
+  function durText(sec) {
+    const s = Math.round(+sec || 0);
+    if (s <= 0) return '';
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    const p = n => String(n).padStart(2, '0');
+    return h ? h + ':' + p(m) + ':' + p(ss) : m + ':' + p(ss);
+  }
   function side(kind, badge, v) {
+    const len = durText(v.dur);
+    const chip = len ? '<span class="plen">' + esc(len) + '</span>' : '';
     const t = v.thumb
       ? '<img class="pthumb ' + kind + '" src="' + esc(v.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">'
       : '<span class="pthumb ' + kind + ' none" aria-hidden="true"></span>';
-    return '<div class="pside">' + t +
+    return '<div class="pside"><div class="pshot">' + t + chip + '</div>' +
       '<div class="pmeta"><b><span class="pf ' + kind + '">' + badge + '</span>' + esc(v.title || '(no caption)') + '</b>' +
-      '<small>' + esc(dstamp(v.pub)) + '</small></div></div>';
+      '<small>' + esc(dstamp(v.pub)) + (len ? ' · ' + len + ' long' : '') + '</small></div></div>';
   }
   // Only the WARNING, never the gap itself — whyText already states how far apart the two
   // were posted, and printing it twice in the same row is noise that makes the row look
@@ -492,7 +514,11 @@
           '<div class="acts"><button class="ghost unlink" data-i="' + i + '">Unlink</button></div></div>';
       }).join('') : '';
 
-    const opts = a => a.map(v => '<option value="' + esc(v.id) + '">' + esc((v.title || '(no caption)').slice(0, 70)) + '</option>').join('');
+    const opts = a => a.map(v => {
+      const len = durText(v.dur);
+      return '<option value="' + esc(v.id) + '">' + esc((v.title || '(no caption)').slice(0, 70)) +
+        (len ? esc(' · ' + len) : '') + '</option>';
+    }).join('');
     $('manY').innerHTML = '<option value="">Pick a YouTube video…</option>' + opts(ytVideos);
     $('manT').innerHTML = '<option value="">…and its TikTok post</option>' + opts(ttVideos);
   }
@@ -535,7 +561,8 @@
     const yp = percentile(ytVideos, y), tp = percentile(ttVideos, t);
     const col = (cls, name, v, extra, pct, pctLabel, colour) =>
       '<div class="col ' + cls + '"><div class="cap"><span class="d" style="background:' + colour + '"></span>' + name + '</div>' +
-      [['Views', fmt.format(v.views)], ['Likes', fmt.format(v.likes)], ['Comments', fmt.format(v.comments)]]
+      [['Length', durText(v.dur) || 'not reported'],
+       ['Views', fmt.format(v.views)], ['Likes', fmt.format(v.likes)], ['Comments', fmt.format(v.comments)]]
         .concat(extra)
         .map(([k, val]) => '<div class="mrow"><span class="k">' + k + '</span><span class="v">' + val + '</span></div>').join('') +
       (pct == null ? '<div class="pctbox"><div class="pl">Not enough posts on this platform to rank it yet</div></div>'

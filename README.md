@@ -45,7 +45,13 @@ data/             recorded history, committed by the robots
 
 - Live counters with per-refresh movement, and a sortable table of every post
   (click any column header; it becomes readable cards on a phone)
-- **Latest-upload card** with ◀ ▶ to cycle recent posts
+- **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
+  running session total. On TikTok this accumulates each post's own movement rather than
+  differencing the account total, because the API returns at most 60 posts and that total
+  *falls* when an older one scrolls out of the window
+- **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
+  full treatment — the same-age race and the launch-curve overlay used to appear only on
+  the newest upload, so nine slots out of ten showed nothing where a chart belongs
 - **Minute-by-minute launch tracking** — recorded by the Worker even when nobody
   has the site open, because the platforms don't provide it
 - **Plateau projection** — "where is this one heading?", on the latest-upload card.
@@ -61,12 +67,16 @@ data/             recorded history, committed by the robots
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
-- **Rooms** — four on YouTube (Now · Videos · Audience · Ideas), three on TikTok
-  (Now · Posts · Ideas — its API exposes no audience data at all, so a fourth room there
-  could only ever be empty). Both carry the same **One page** switch that turns the rooms
-  off and stacks every card exactly as it was before, so nothing is ever out of reach
-- An **answer card** at the top: four chips that say in a sentence how today went, how the
-  newest upload landed, who's watching and when you're next due. Computed from numbers
+- **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
+  TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for
+  a reason rather than for want of building them: its API exposes no audience data of any
+  kind, so an Audience room could only ever be empty, and it publishes no daily series of
+  its own, so a Trends room would hold nothing the Now room does not already show. Both
+  pages carry the same **One page** switch that turns the rooms off and stacks every card
+  exactly as it was before, so nothing is ever out of reach
+- An **answer card** at the top: four chips that say in a sentence how today went — against
+  yesterday and against where it places across the week — how the newest upload landed,
+  who's watching and when you're next due. Computed from numbers
   already on the page, so it costs no extra quota
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever
@@ -128,6 +138,28 @@ data. Four rules keep it honest:
   on the day the account was connected.
 - **The low end never sits below the count already banked**, and the band is never
   narrower than ±3%.
+
+**Two horizons, not one.** The card answers 48 hours *and* seven days, and the second one
+is a second answer rather than the first one moved. The 48-hour horizon is the only one
+this model's error has ever been measured against, and every reference curve on the account
+covers exactly that — so retargeting it at a week would have disqualified all of them on
+the day of the deploy and left both dashboards saying "0 of 2" for most of a week, in
+exchange for a figure the recorded tail says is about 2% different. Instead a reference
+that recorded a *full week* gets its seven-day total as its denominator, and the identical
+arithmetic runs again on the longer target.
+
+The week figure is held to a stricter admission rule than the launch: three references
+rather than two, so the leave-one-out margin can always be measured. With two, the band
+would fall back to the floor constants — which were measured at 48 hours — and printing
+those under a seven-day claim would look exactly like a measurement and be nothing of the
+kind. Until three posts have a full week recorded, the card says how many more it needs.
+
+The card also **stops retiring at 48 hours**. It used to print one grey sentence with no
+chart and no tabs the moment the launch window closed, which read as the data having
+stopped; now it settles — keeping the recorded curve, on a seven-day axis, with the
+week-one projection carried forward — and only retires at day seven, when the lifetime
+count is the honest number. Every chart on the curve view answers a pointer with the
+reading at that moment.
 
 Measured by running the shipped model over the launches actually recorded, one held out at
 a time: worst miss 20% at five hours, 17% at six, 10% at twelve, 3% by eighteen, and every
@@ -350,12 +382,20 @@ failed D1 write still persists immediately, but ordinary sample growth waits.
 
 **Two different slices, two different routes.** That incremental bundle cuts on an
 *absolute* timestamp — the last three days — because its job is "what has happened lately".
-The plateau projection needs the opposite slice: the **first 48 hours** of launches that
+The plateau projection needs the opposite slice: the **first week** of launches that
 already finished, which for anything published more than three days ago sits entirely
 outside that window even though D1 still holds every minute of it. That mismatch is why the
 projection first shipped saying it had no reference curves while the data sat in the
 database. `/launches` and `/tiktok/launches` serve that slice, age-indexed and downsampled
 to one point per five minutes, capped at the twelve newest finished launches.
+
+Eligibility and span are two separate constants there, and keeping them separate is what
+made the seven-day horizon possible without breaking the two-day one. `PJ_WINDOW` (48h)
+decides when a launch has *finished* and may be a reference; `PJ_SPAN` (7d) decides how
+much of its recording travels with it. Widening the span costs about 480 extra points per
+curve — ~165 KB instead of ~90 KB, and 40,332 rows read per rebuild instead of 34,572,
+against a 5,000,000/day allowance. Raising the eligibility bar instead would have cost
+every reference on the account.
 
 They are cached on **what the answer depends on, not on a clock**. A finished launch never
 changes again — that is the point of only serving finished ones — so the only thing that

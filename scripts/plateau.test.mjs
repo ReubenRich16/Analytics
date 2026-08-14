@@ -27,7 +27,7 @@ const slice = (from, to) => {
 const model = slice('const PJ_HORIZON', '  function renderProjection()');
 const fmt = new Intl.NumberFormat('en-US');
 const M = new Function('fmt', 'const esc=String, niceScale=()=>({lo:0,hi:1,ticks:[0,1]}), axisNum=String;\n' + model +
-  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,pjAt,pjRef,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS,pjScore,pjRank,PJ_HORIZON};')(fmt);
+  '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,PJ_WEEK,PJ_WEEK_COVER,pjAt,pjRef,pjWeekRefs,pjWeek,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjWeekHtml,pjWeekWaitHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS,pjScore,pjRank,PJ_HORIZON};')(fmt);
 
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => { if (c) { pass++; console.log('  ✓', n); } else { fail++; console.log('  ✗', n, x); } };
@@ -61,7 +61,8 @@ console.log('\nplateau projection');
   check('both dashboards run the identical model', strip(a) === strip(b),
     strip(a) === strip(b) ? '' : 'index and tiktok have drifted');
   // and the renderers, which is where a copy-paste fix usually gets applied to only one
-  for (const fn of ['function pjBarHtml', 'function pjSentenceHtml', 'function pjCurveHtml', 'function pjWaitHtml']) {
+  for (const fn of ['function pjBarHtml', 'function pjSentenceHtml', 'function pjCurveHtml', 'function pjWaitHtml',
+                    'function pjWeekHtml', 'function pjWeekWaitHtml']) {
     const x = grab(src, fn, '\n  }\n'), y = grab(ttSrc, fn, '\n  }\n');
     check(fn.replace('function ', '') + ' is the same in both', !!y && strip(x) === strip(y));
   }
@@ -138,9 +139,91 @@ console.log('\nplateau projection');
   const refs = [scurve(2000, 8), scurve(1400, 8.4), scurve(3100, 7.7)].map(M.pjRef);
   check('silent under five hours', M.pjProject(refs, 4 * 60, 400).state === 'early');
   check('speaks at five hours', M.pjProject(refs, 5 * 60, 400).state === 'ok');
-  check('retires at the 48h horizon', M.pjProject(refs, 48 * 60, 4000).state === 'done');
+  /* Two days is no longer the end of the card. The launch IS over at 48 hours — that part
+     never changed — but the state it lands in used to print a single grey sentence with no
+     chart and no tabs, which is what a user reported as "the data stops at 48 hours". Now
+     it settles rather than dies, and only retires at a week. */
+  check('the launch window closes into a settled state, not a dead one',
+    M.pjProject(refs, 48 * 60, 4000).state === 'settled', M.pjProject(refs, 48 * 60, 4000).state);
+  check('and one minute earlier it is still projecting', M.pjProject(refs, 48 * 60 - 1, 4000).state === 'ok');
+  check('it retires at a week', M.pjProject(refs, M.PJ_WEEK, 4000).state === 'done');
+  check('and stays retired past it', M.pjProject(refs, 30 * 1440, 4000).state === 'done');
   check('silent with only one reference', M.pjProject(refs.slice(0, 1), 6 * 60, 400).state === 'nomodel');
   check('silent with no views yet', M.pjProject(refs, 6 * 60, 0).state === 'early');
+}
+
+/* 3b — the seven-day answer.
+
+   Deliberately a SECOND target rather than the first one moved. Moving PJ_HORIZON to a
+   week would have disqualified every reference the account already has — a curve that
+   recorded 48 hours cannot cover a seven-day window — so both dashboards would have
+   dropped to "0 of 2" on the day of the deploy, in exchange for a figure the recorded
+   tail says is about 2% different. What is pinned here is that the two answers coexist,
+   that the week one is measured off curves which actually recorded a week, and above all
+   that it REFUSES to speak when its band would have to be assumed instead of measured. */
+function weekCurve(final, k, tailPerDay) {
+  // the launch, then the slow tail the cold sampler records: every 15 minutes out to day 7
+  const out = scurve(final, k, 30);
+  const at48 = out[out.length - 1][1];
+  for (let m = 48 * 60 + 15; m <= 7 * 1440; m += 15) {
+    out.push([m, Math.round(at48 * (1 + tailPerDay * (m - 48 * 60) / 1440))]);
+  }
+  return out;
+}
+{
+  const all = [weekCurve(2000, 8, .005), weekCurve(1400, 8.15, .006),
+               weekCurve(3100, 7.85, .004), weekCurve(900, 8.05, .005)];
+  const refs = all.map(M.pjRef);
+  check('a curve that recorded a week is still an ordinary 48-hour reference', refs.every(Boolean));
+  check('its 48-hour total is unchanged by the tail behind it',
+    refs[0].final === M.pjAt(scurve(2000, 8, 30), 48 * 60), refs[0].final);
+
+  const wr = M.pjWeekRefs(refs);
+  check('all four qualify for the week as well', wr.length === 4, wr.length);
+  check('and the week target is larger than the 48-hour one',
+    wr.every((r, i) => r.final > refs[i].final));
+  check('a curve that stops at 48 hours is not a week reference',
+    M.pjWeekRefs([M.pjRef(scurve(2000, 8))]).length === 0);
+  check('nor is one that stops at five days',
+    M.pjWeekRefs([M.pjRef(weekCurve(2000, 8, .005).filter(p => p[0] <= 5 * 1440))]).length === 0);
+
+  // leave the first curve out and predict it, which is the claim the card makes
+  const others = all.slice(1).map(M.pjRef);
+  const truth48 = M.pjAt(all[0], 48 * 60), truth7 = M.pjAt(all[0], 7 * 1440);
+  const p6 = M.pjProject(others, 6 * 60, M.pjAt(all[0], 6 * 60));
+  check('at six hours the card answers both horizons at once', p6.state === 'ok' && !!p6.week);
+  check('the week figure is the larger of the two', p6.week.mid > p6.mid);
+  check('and the 48-hour one is untouched by its existence',
+    p6.mid === M.pjProject(all.slice(1).map(c => ({ c: c.filter(x => x[0] <= 48 * 60), final: M.pjAt(c, 48 * 60), reach: 48 * 60 })), 6 * 60, M.pjAt(all[0], 6 * 60)).mid);
+  check('the held-out curve lands inside its own 48-hour band',
+    truth48 >= p6.lo && truth48 <= p6.hi, [p6.lo, truth48, p6.hi].join(' '));
+  check('and inside its own seven-day band',
+    truth7 >= p6.week.lo && truth7 <= p6.week.hi, [p6.week.lo, truth7, p6.week.hi].join(' '));
+  check('the week band says how many posts it rests on', p6.week.n === 3, p6.week.n);
+
+  // and past 48 hours, where the whole feature used to stop
+  const p3d = M.pjProject(others, 3 * 1440, M.pjAt(all[0], 3 * 1440));
+  check('three days in it is settled, and still answering', p3d.state === 'settled' && !!p3d.week);
+  check('the seven-day figure still covers the truth at three days',
+    truth7 >= p3d.week.lo && truth7 <= p3d.week.hi, [p3d.week.lo, truth7, p3d.week.hi].join(' '));
+  check('and the band has tightened since six hours',
+    (p3d.week.hi - p3d.week.lo) < (p6.week.hi - p6.week.lo),
+    (p6.week.hi - p6.week.lo) + ' → ' + (p3d.week.hi - p3d.week.lo));
+
+  /* The honesty gate, and the reason the week is held to a stricter rule than the launch:
+     with only two references pjError cannot leave one out, so the band would fall back to
+     PJ_FLOOR — a margin measured against a 48-hour target. Printed under a seven-day claim
+     that would look exactly like a measurement and be nothing of the kind. */
+  const two = M.pjWeekRefs(all.slice(1, 3).map(M.pjRef));
+  check('two week references are refused rather than banded from an assumption',
+    two.length === 2 && M.pjWeek(two, 6 * 60, 500) === null);
+  const pTwo = M.pjProject(all.slice(1, 3).map(M.pjRef), 3 * 1440, 500);
+  check('so the card settles with no week figure at all', pTwo.state === 'settled' && pTwo.week == null);
+  check('and says how many more posts would turn it on', pTwo.weekHave === 2, pTwo.weekHave);
+  check('in words, with the number in them',
+    /2 have one so far/.test(M.pjWeekWaitHtml(pTwo.weekHave)), M.pjWeekWaitHtml(pTwo.weekHave));
+  check('never claiming less than what is already counted',
+    M.pjWeek(wr, 6 * 60, 99999) === null || M.pjWeek(wr, 6 * 60, 99999).lo >= 99999);
 }
 
 /* 4 — leave-one-out: predict each recorded curve from the others, which is the claim

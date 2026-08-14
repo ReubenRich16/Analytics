@@ -16,7 +16,7 @@ import fs from 'fs';
 const HERE = new URL('.', import.meta.url).pathname;
 const src = fs.readFileSync(HERE + 'worker.js', 'utf8')
   .replace(/export default\s*\{/, 'const HANDLER = {') +
-  '\nexport { d1Launches, d1Finished, launchBody, ttKey, PJ_STEP, PJ_MAX, PJ_WINDOW, PJ_STALE, PJ_MEMO, pjMemo };';
+  '\nexport { d1Launches, d1Finished, launchBody, ttKey, PJ_STEP, PJ_MAX, PJ_WINDOW, PJ_SPAN, PJ_CACHE, PJ_STALE, PJ_MEMO, pjMemo };';
 const tmp = HERE + '.worker-launches.mjs';
 fs.writeFileSync(tmp, src);
 const W = await import(tmp);
@@ -194,13 +194,29 @@ console.log('\n4. bounds');
   check('never more than PJ_MAX launches', ids.length === W.PJ_MAX, ids.length);
   check('and they are the newest ones', ids.includes('v0') && !ids.includes('v19'), ids.join(','));
 
-  // samples recorded after the window closes belong to no launch curve
-  const pub = NOW - 100 * HOUR;
-  const late = launch('yt', 'w', pub, 900, 8).concat(
-    [{ platform: 'yt', video_id: 'w', ts: pub + 60 * HOUR, views: 99999 }]);
+  /* How much of a reference's life travels with it.
+
+     These were one constant. PJ_WINDOW decides when a launch has FINISHED and may be a
+     reference at all; PJ_SPAN decides how much of its recording ships. Splitting them is
+     what makes a seven-day projection possible without invalidating every reference the
+     account already has — raise the eligibility bar instead and nothing qualifies for a
+     week, so both dashboards would say "0 of 2" until the data caught up.
+
+     So: a sample from day three now belongs to the curve, and a sample from day eight
+     still does not. */
+  const pub = NOW - 10 * 864e5;
+  const late = launch('yt', 'w', pub, 900, 8).concat([
+    { platform: 'yt', video_id: 'w', ts: pub + 60 * HOUR, views: 950 },      // day 2.5 — inside the span
+    { platform: 'yt', video_id: 'w', ts: pub + 8 * 864e5, views: 99999 }     // day 8 — past it
+  ]);
   const o2 = await W.d1Launches({ DB: mockD1([{ platform: 'yt', video_id: 'w', published_at: pub, title: '', cover: '' }], late) }, 'yt');
-  check('samples past 48h are excluded', o2.curves.w.s[o2.curves.w.s.length - 1][1] !== 99999);
-  check('and the last age is exactly the window', o2.curves.w.s[o2.curves.w.s.length - 1][0] === 48 * 60);
+  const s2 = o2.curves.w.s, lastPt = s2[s2.length - 1];
+  check('the span is a week, not the launch window', W.PJ_SPAN === 7 * 864e5, W.PJ_SPAN);
+  check('but eligibility still turns on the 48-hour window', W.PJ_WINDOW === 48 * 3600e3, W.PJ_WINDOW);
+  check('a sample from day three is carried now', s2.some(p => p[0] === 60 * 60 && p[1] === 950),
+    s2.filter(p => p[0] >= 48 * 60).map(p => p.join('@')).join(' '));
+  check('nothing past the seven-day span is', lastPt[1] !== 99999, lastPt.join('@'));
+  check('and the last age is inside the span', lastPt[0] <= W.PJ_SPAN / 60000, lastPt[0]);
 
   // a curve with almost nothing in it is not worth shipping
   const thin = [{ platform: 'yt', video_id: 'thin', published_at: pub, title: '', cover: '' }];
@@ -240,7 +256,7 @@ console.log('\n6. the answer is cached on the roster, not on a timer');
 
   const first = await W.launchBody(env, 'yt');
   const built = DB.stats().rowsRead;
-  check('the cache key is versioned', [...MINUTE.m.keys()][0] === 'launch:3:yt', [...MINUTE.m.keys()][0]);
+  check('the cache key is versioned', [...MINUTE.m.keys()][0] === 'launch:' + W.PJ_CACHE + ':yt', [...MINUTE.m.keys()][0]);
   check('the first call reads the samples', built > 1000, built);
   check('and writes the cache once', MINUTE.puts() === 1, MINUTE.puts());
   check('the roster it built from is remembered', first.ids === 'v', first.ids);
@@ -271,9 +287,9 @@ console.log('\n6. the answer is cached on the roster, not on a timer');
   check('with the new roster recorded', grown.ids === 'w,v', grown.ids);
 
   // and a rebuild happens once a day regardless, for changes the roster cannot see
-  const stale = JSON.parse(MINUTE.m.get('launch:3:yt'));
+  const stale = JSON.parse(MINUTE.m.get('launch:' + W.PJ_CACHE + ':yt'));
   stale.at = Date.now() - W.PJ_STALE - 1;
-  MINUTE.m.set('launch:3:yt', JSON.stringify(stale));
+  MINUTE.m.set('launch:' + W.PJ_CACHE + ':yt', JSON.stringify(stale));
   W.pjMemo.clear();
   const b2 = DB.stats().rowsRead;
   await W.launchBody(env, 'yt');

@@ -332,15 +332,34 @@ async function d1TtBundle(env, openId, days, since) {
    window widening from 6 hours to 48. A dense array would paper over exactly the defect
    the model needs to see.
 --------------------------------------------------------------------------- */
-const PJ_WINDOW = 48 * 3600e3;   // the launch window the projection models
+const PJ_WINDOW = 48 * 3600e3;   // when a launch counts as FINISHED and may be a reference
+/* How much of each reference's life to ship — deliberately longer than the window above.
+
+   These were one constant and doing two unrelated jobs, which is what made the seven-day
+   projection look like a one-line change. PJ_WINDOW decides ELIGIBILITY: a video is a
+   usable reference once its first 48 hours are complete, because that is the horizon the
+   model's error was measured against. PJ_SPAN decides how much of that reference's curve
+   travels with it. Raising the eligibility bar to seven days would have been the damaging
+   half — every existing reference would stop qualifying on the day of the deploy and both
+   dashboards would drop to "0 of 2" for the best part of a week. Raising only the span
+   costs 480 extra points per curve and lets the client measure the week-one tail from
+   curves that already qualify today.
+
+   Cost: 12 curves x 480 extra rows is about 5,800 more rows read per rebuild (40,332 vs
+   34,572), once or twice a day, against a 5,000,000/day allowance. Payload goes from ~90 KB
+   to ~165 KB, fetched at most once every twenty minutes and served from KV in between.
+   Emission is sparse — one point per occupied bucket — so the five-minute grid costs
+   nothing across days 2-7, where the sampler only writes every fifteen minutes anyway. */
+const PJ_SPAN   = 7 * 864e5;     // how much of a reference's recorded life to ship
 const PJ_STEP   = 5;             // minutes between emitted points
 const PJ_MAX    = 12;            // how many finished launches to ship
 const PJ_STALE  = 24 * 3600e3;   // rebuild anyway once a day, however quiet the roster is
 const PJ_MEMO   = 60e3;          // per-isolate breather, so a burst costs nothing at all
 // Bumped whenever the STORED shape changes. Without it a fix to the query keeps serving
 // the old answer from cache after the deploy — which is exactly what the floating-point
-// bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint.
-const PJ_CACHE  = 3;
+// bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint;
+// v4 widens each curve from PJ_WINDOW to PJ_SPAN, so every cached body is the wrong shape.
+const PJ_CACHE  = 4;
 
 // /run's cooldown — see the route. Module-level, so it lives as long as the isolate does.
 const RUN_COOLDOWN = 60e3;
@@ -435,7 +454,7 @@ async function d1Launches(env, platform, vids) {
     ' AND s.ts >= v.published_at AND s.ts <= v.published_at + ?' +
     ' GROUP BY s.video_id, ' + bucketOf +
     ' ORDER BY s.video_id, b'
-  ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_WINDOW, bucket).all();
+  ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_SPAN, bucket).all();
 
   const byId = {};
   for (const r of (sres.results || [])) (byId[r.id] = byId[r.id] || []).push([r.b * PJ_STEP, r.views]);
@@ -492,7 +511,7 @@ async function launchBody(env, platform) {
   }
   if (!vids) { vids = await d1Finished(env, platform); ids = vids.map(v => v.video_id).join(','); }
 
-  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, ids,
+  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, span: PJ_SPAN, ids,
                  ...(await d1Launches(env, platform, vids)) };
   // a write only when the answer actually changed, so this stays at one or two KV writes
   // a day per partition against a 1,000/day cap currently running at about 220

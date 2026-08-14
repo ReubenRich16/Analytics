@@ -203,10 +203,18 @@
 
   /* ---------- rooms ---------- */
   .roombar { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  /* Scrolls sideways rather than crushing. At four tabs `flex:1` shared the bar evenly and
+     that was fine; at six it gave each label about 50px on a phone, which truncates a word
+     like "Audience" to nothing legible. Now they grow to fill a wide bar and hold their
+     own width on a narrow one, and the row scrolls — the scrollbar itself is hidden
+     because the pill shape is the affordance and a grey trough under it reads as a bug. */
   .tabs { display:flex; gap:4px; background:var(--panel); border:1px solid var(--line);
-    border-radius:999px; padding:4px; flex:1 1 280px; }
-  .tabs button { flex:1; font:inherit; font-family:var(--f-num); font-size:12.5px; font-weight:600;
-    letter-spacing:-.01em; border:0; cursor:pointer; padding:9px 6px; border-radius:999px;
+    border-radius:999px; padding:4px; flex:1 1 280px;
+    overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none; scroll-snap-type:x proximity; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tabs button { flex:1 0 auto; min-width:64px; white-space:nowrap; scroll-snap-align:center;
+    font:inherit; font-family:var(--f-num); font-size:12.5px; font-weight:600;
+    letter-spacing:-.01em; border:0; cursor:pointer; padding:9px 11px; border-radius:999px;
     background:transparent; color:var(--muted); transition:color .2s ease; }
   .tabs button[aria-selected="true"] { background:var(--accent); color:var(--ink); }
   .onepage { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--muted); cursor:pointer;
@@ -299,8 +307,13 @@
   .vhead { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
   .vhead .label { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
   .vhead .rate { margin-left:auto; font-family:var(--f-num); font-weight:600; font-size:12px; }
-  .bars { display:flex; align-items:flex-end; gap:3px; height:56px; border-bottom:1px solid var(--line); }
-  .bars .bar { flex:1; min-width:3px; background:var(--live); border-radius:2px 2px 0 0; min-height:2px; }
+  /* Fills from the right, newest last, and a bar never grows past a bar's width. With
+     `flex:1` and no ceiling the first two refreshes of a session rendered as two slabs
+     half the card wide each, which reads as a chart of something rather than as two
+     samples of a strip that is going to hold sixty. */
+  .bars { display:flex; align-items:flex-end; justify-content:flex-end; gap:3px; height:56px;
+    border-bottom:1px solid var(--line); }
+  .bars .bar { flex:1 1 0; min-width:3px; max-width:16px; background:var(--live); border-radius:2px 2px 0 0; min-height:2px; }
   .bars .bar.zero { background:var(--line); }
   .session { margin-top:10px; font-family:var(--f-sans); font-size:11.5px; color:var(--muted); }
   .session b { color:var(--up); font-weight:600; }
