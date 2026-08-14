@@ -16,6 +16,14 @@
   .switcher .on { background:var(--panel-2); border-color:var(--muted); color:var(--text); }
   .cover { width:64px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); display:block; }
   td.covercell { padding:6px 0 6px 14px; width:78px; }
+  /* the detail drawer — everything else it needs is already in the shared stylesheet */
+  #ttDrawer .cover { width:76px; flex:none; }
+  #ttDrawer .dhead a { flex:none; text-decoration:none; }
+  #tbody tr { cursor:pointer; }
+  #tbody td.title a.ttopen { color:var(--muted); text-decoration:none; font-size:12px;
+    padding:0 5px; border:1px solid var(--line); border-radius:6px; margin-left:6px;
+    display:inline-block; line-height:1.65; }
+  #tbody td.title a.ttopen:hover { color:var(--text); border-color:var(--muted); }
   @media (max-width:640px) {
     #tbody td.covercell { display:block; padding:0 0 8px; width:auto; }
     #tbody td.covercell::before { display:none; }
@@ -183,7 +191,7 @@
   <!-- VIDEO TABLE -->
   <div class="card tablecard" id="tableCard" style="display:none">
     <div class="thead-bar">
-      <div class="label" id="tableLabel">Posts — tap a row to open on TikTok</div>
+      <div class="label" id="tableLabel">Posts — tap a row for the full breakdown</div>
       <select id="sortMode" title="Or click any column header to sort by it">
         <option value="newest" selected>Sort: newest</option>
         <option value="views">Sort: most views</option>
@@ -259,6 +267,22 @@
 
   </div>
 
+</div>
+
+<!-- PER-POST DETAIL DRAWER — the same deep dive the latest card gives, for any post in
+     the table. Outside .wrap on purpose: it is chrome, like the party overlay, so the
+     rooms test is not looking for a room to put it in. Every panel inside it is built by
+     code that already runs on the latest card, and nothing in it asks TikTok for anything
+     the page does not already hold. -->
+<div class="drawer" id="ttDrawer" role="dialog" aria-modal="false" aria-labelledby="ttdTitle">
+  <div class="dhead">
+    <img id="ttdCover" class="cover" alt="" src="" style="display:none">
+    <h3 id="ttdTitle"></h3>
+    <a id="ttdOpen" href="#" target="_blank" rel="noopener"><button class="ghost">Open on TikTok ↗</button></a>
+    <button class="ghost close" id="ttdClose">Close</button>
+  </div>
+  <p class="explain" id="ttdMeta" style="margin-bottom:14px"></p>
+  <div id="ttdBody" class="slidebox"></div>
 </div>
 
 <!-- The milestone moment. Same markup and the same styles as the YouTube page — the
@@ -1132,7 +1156,7 @@
     }
     // a curve that lands after the card was drawn would otherwise wait a whole poll to
     // appear in the race — pullLaunches is deliberately not awaited inside poll()
-    if (Object.keys(conv.videos).length) { mergeHist(conv); if (ttRaceCur) { renderTtRace(); ttLaunchCurves(); } }
+    if (Object.keys(conv.videos).length) { mergeHist(conv); if (ttRaceCur) { renderTtRace(); ttLaunchCurves(); } ttdRepaint(); }
   }
 
   /* ---------- auth ---------- */
@@ -1289,7 +1313,7 @@
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer(); renderTtSparks();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer(); renderTtSparks(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
@@ -1332,7 +1356,7 @@
       th.classList.toggle('desc', on && dir === -1);
       th.classList.toggle('asc', on && dir === 1);
     });
-    $('tableLabel').textContent = 'Posts — tracking ' + rows.length + ' · tap a row to open on TikTok';
+    $('tableLabel').textContent = 'Posts \u2014 tracking ' + rows.length + ' \u00b7 tap a row for the full breakdown, \u2197 to open it on TikTok';
     const tb = $('tbody'); tb.innerHTML = '';
     for (const v of rows) {
       const tr = document.createElement('tr');
@@ -1340,7 +1364,7 @@
       if (d.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
-        '<td class="title">' + esc(capOf(v)) + '</td>' +
+        '<td class="title">' + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
         '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
         '<td data-label="+tick">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
         '<td data-label="+session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
@@ -1349,7 +1373,20 @@
         '<td data-label="Shares">' + fmt.format(v.share_count || 0) + '</td>' +
         '<td data-label="Engagement">' + engOf(v).toFixed(1) + '%</td>' +
         '<td data-label="Views/day">' + fmt.format(Math.round(paceOf(v))) + '</td>';
-      if (v.share_url) tr.addEventListener('click', () => window.open(v.share_url, '_blank', 'noopener'));
+      /* The row now opens the breakdown rather than TikTok. The way out is not lost, and
+         is better than it was: the ↗ in the caption cell is a real anchor, so middle-click,
+         ⌘-click and "copy link address" all work — none of which window.open ever gave —
+         and the drawer's own header carries a full "Open on TikTok" button. */
+      tr.tabIndex = 0;
+      tr.addEventListener('click', e => {
+        if (e.target && e.target.closest && e.target.closest('a')) return;   // the ↗ is its own affordance
+        ttdOpen(v.id, tr);
+      });
+      tr.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        ttdOpen(v.id, tr);
+      });
       tb.appendChild(tr);
     }
   }
@@ -1849,11 +1886,15 @@
         : pjBarHtml(p, views)) +
       pjSentenceHtml(p) + (p.week ? pjWeekHtml(p.week) : '');
   }
-  function renderProjection(v) {
-    const el = $('pjWrap');
+  function renderProjection(v, mount) {
+    /* `mount` is the drawer asking for the same panel in a second place. Without it these
+       resolve their host by id, and an id resolves to the FIRST match in the document —
+       so a drawer render would silently repaint the latest card instead. When a mount is
+       given the module's "which post is on screen" state is left alone, because the drawer
+       is showing a different post from the card behind it. */
+    const el = mount || $('pjWrap');
     if (!el) return;
-    pjCur = v || pjCur;
-    v = pjCur;
+    if (!mount) { pjCur = v || pjCur; v = pjCur; }
     if (!v || !v.create_time) { el.innerHTML = ''; return; }
     const age = Math.max(0, Math.round((Date.now() - v.create_time * 1000) / 60000));
     const vids = (hist && hist.videos) || {};
@@ -1881,6 +1922,7 @@
     if (!b) return;
     pjView = b.dataset.pj;
     renderProjection();
+    ttdRepaint();
   });
 
   /* ---------- latest post + minute race ---------- */
@@ -1930,10 +1972,9 @@
     const live = videos.find(x => x.id === id);
     return live ? capOf(live) : (((rec && rec.title) || '').trim() || '(no caption)');
   };
-  function renderTtRace(v) {
-    const el = $('ttRaceContent');
-    ttRaceCur = v || ttRaceCur;
-    v = ttRaceCur;
+  function renderTtRace(v, mount) {
+    const el = mount || $('ttRaceContent');
+    if (!mount) { ttRaceCur = v || ttRaceCur; v = ttRaceCur; }
     if (!el || !v || !v.create_time) return;
     const t = Math.max(0, (Date.now() - v.create_time * 1000) / 60000);
     const views = v.view_count || 0;
@@ -1979,9 +2020,11 @@
     const b = e.target && e.target.closest ? e.target.closest('button[data-ttrace]') : null;
     if (!b) return;
     ttRaceMode = b.dataset.ttrace;
-    const row = b.parentNode;
-    if (row) row.querySelectorAll('button[data-ttrace]').forEach(x => x.classList.toggle('active', x === b));
+    // two race rows can be on screen at once — the card's and the drawer's — so the
+    // active mark is keyed on the mode rather than on which node was clicked
+    document.querySelectorAll('button[data-ttrace]').forEach(x => x.classList.toggle('active', x.dataset.ttrace === ttRaceMode));
     renderTtRace();
+    ttdRepaint();
   });
 
   /* ---------- launch curves: every post's first 48 hours, aligned by age ----------
@@ -2022,9 +2065,9 @@
   }
   const ttLaunchGrid = () => { const g = []; for (let t = 0; t <= TTC_SPAN; t += TTC_STEP) g.push(t); return g; };
 
-  function ttLaunchCurves(v) {
-    const holder = $('ttLaunchWrap');
-    v = v || ttRaceCur;
+  function ttLaunchCurves(v, mount) {
+    const holder = mount || $('ttLaunchWrap');
+    if (!mount) v = v || ttRaceCur;
     if (!holder || !v || !v.create_time) return;
     const recs = (hist && hist.videos) || {};
     const focus = pjCurveOf(v.id, v.create_time, recs[v.id]);
@@ -2071,16 +2114,7 @@
     // filled by renderProjection() once the card is in the DOM — it is the first thing
     // on the card because "where is this heading" is the question the card exists to answer
     let html = '<div id="pjWrap"></div>';
-    html += '<div class="metric-grid m8">' +
-      mcell('Views', fmt.format(v.view_count || 0)) +
-      mcell('Likes', fmt.format(v.like_count || 0)) +
-      mcell('Comments', fmt.format(v.comment_count || 0)) +
-      mcell('Shares', fmt.format(v.share_count || 0)) +
-      mcell('Engagement', engOf(v).toFixed(1) + '%', 'likes per view') +
-      mcell('Views/day', fmt.format(Math.round(paceOf(v))), 'since posting') +
-      mcell('Length', (v.duration || 0) + 's') +
-      mcell('Age', fmtAgo(v.create_time * 1000)) +
-      '</div>';
+    html += ttMetricGridHtml(v);
     /* Same-age race. A runtime id like pjWrap and lifeSection rather than static markup:
        showSlot rebuilds this whole card on every poll, so there is nothing to mount into.
        It sits directly above the raw recorded curve — comparison first, then this post's
@@ -2095,6 +2129,223 @@
       '</div>' +
       '<div id="ttRaceContent"><p class="dnote">warming up\u2026</p></div></div>' +
       '<div id="ttLaunchWrap"></div>';
+    html += ttMinuteChartHtml(v);
+    html += ttReportCardHtml(v);
+    $('latestContent').innerHTML = html +
+      '<div class="dsection" id="lifeSection" data-life="section" style="display:none">' +
+      '<h4>Every hour since it went up</h4><p class="explain" data-life="explain"></p><div data-life="chart"></div></div>';
+    renderProjection(v);
+    renderTtRace(v);
+    ttLaunchCurves(v);
+    loadLife(v.id);
+  }
+
+  /* The whole recorded life of one post, at an hour's resolution.
+
+     This matters more here than it does on the YouTube page. TikTok publishes no history of
+     its own — the API returns a post's counts as they are right now and nothing about how
+     they got there — so the Worker's recording is the ONLY record that this post ever had a
+     shape. It records for 60 days, tapering from every minute to every fifteen to hourly,
+     and until this chart existed the page read a three-day window and nothing served the
+     rest. Days 3 to 60 were written, kept for two months, pruned, and never looked at once.
+
+     One post's whole life is about 5,100 rows against a 5,000,000/day allowance, so it is
+     fetched when the card renders rather than prefetched for every post.
+
+     Every point is measured. Nothing is interpolated and nothing is extended past the last
+     reading — a gap in the recording is drawn as a gap in the line. */
+  let lifeSeq = 0;
+  /* `scope` is which host is asking — the latest card, or the drawer. The sequence guard
+     lives on the host element rather than in a module counter, because both can be loading
+     at once and a single counter would have whichever finished second cancel the other. */
+  async function loadLife(id, scope) {
+    const wrap = (scope || document).querySelector('[data-life="section"]');
+    if (!wrap || !session || !workerUrl) return;
+    const seq = String(++lifeSeq);
+    wrap.dataset.lifeSeq = seq;
+    let d = null;
+    try { d = await api('/tiktok/life?id=' + encodeURIComponent(id)); }
+    catch (e) { return; }                       // the card stands without it
+    if (!wrap.isConnected || wrap.dataset.lifeSeq !== seq) return;   // a newer render won, or the host is gone
+    if (!d || !d.found || !d.s || d.s.length < 3) return;
+
+    const t0 = (d.create_time || 0) * 1000;
+    const at = d.s.map(p => t0 + p[0]);
+    const views = d.s.map(p => p[1]);
+    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views \u00b7 ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
+      (i ? ' \u00b7 +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
+    const lastAge = d.s[d.s.length - 1][0];
+    const days = lastAge / 864e5;
+
+    wrap.querySelector('[data-life="explain"]').innerHTML =
+      'Recorded by your own Worker, one point an hour, from posting to <b>' +
+      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
+      'TikTok keeps no history at all \u2014 it only ever tells you the count right now \u2014 so this is the ' +
+      'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
+      'in the recording.';
+    // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
+    // label is the third positional argument, not an opts key
+    wrap.querySelector('[data-life="chart"]').innerHTML = lineChart(views, 'var(--accent)', 'Views every hour since posting', {
+      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+    });
+    wrap.style.display = 'block';
+  }
+
+  /* ---------- the per-post drawer ----------
+     A second mount for machinery the latest card already runs. The card is stuck to the
+     ten newest posts that the arrows cycle; the table lists every post the API returns, up
+     to sixty, and until now clicking one of those rows only left the dashboard.
+
+     For an OLD post — most of the table — the projection has retired, the same-age race
+     has retired, and the three-day minute window has scrolled past it. What is left is the
+     metric grid, the hashtags, the report card and the hour-by-hour record of its whole
+     life, and that last one is the reason this earns its keep: it is the only place on the
+     site that shows the shape of a post older than a week.
+
+     Nothing here fetches anything the page does not already hold, with one exception:
+     /tiktok/life, once per open. That reads about 5,100 D1 rows against a 5,000,000/day
+     allowance, so it is called when the drawer opens and never on a poll repaint. */
+  let ttdId = null, ttdVid = null, ttdLastFocus = null;
+
+  function ttdOpen(id, fromEl) {
+    const v = videos.find(x => x.id === id);
+    if (!v) return;
+    ttdId = id; ttdVid = v;
+    ttdLastFocus = document.activeElement;
+    const dr = $('ttDrawer');
+    $('ttdTitle').textContent = capOf(v);
+    const c = $('ttdCover');
+    if (v.cover_image_url) { c.src = v.cover_image_url; c.style.display = 'block'; } else c.style.display = 'none';
+    const a = $('ttdOpen');
+    if (v.share_url) { a.href = v.share_url; a.style.display = ''; } else a.style.display = 'none';
+    $('ttdMeta').innerHTML = 'Posted ' +
+      esc(new Date(v.create_time * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) +
+      ' \u00b7 ' + esc(fmtAgo(v.create_time * 1000)) + ' \u00b7 <b style="color:var(--text)">' +
+      fmt.format(v.view_count || 0) + ' views</b>';
+    dr.style.display = 'block';
+    dr.scrollTop = 0;
+    // grow it out of whatever was tapped, so you keep track of where you came from
+    if (!reducedMotion) {
+      let origin = '50% 20%';
+      try {
+        const r = fromEl && fromEl.getBoundingClientRect && fromEl.getBoundingClientRect();
+        if (r && r.height) origin = '50% ' + Math.round(Math.max(0, Math.min(100, (r.top + r.height / 2) / innerHeight * 100))) + '%';
+      } catch (e) {}
+      dr.style.transformOrigin = origin;
+      dr.classList.remove('opening'); void dr.offsetWidth; dr.classList.add('opening');
+    }
+    ttdFill();
+    loadLife(id, $('ttdBody'));      // the only request, and only on open
+    $('ttdClose').focus();
+  }
+
+  function ttdClose() {
+    const dr = $('ttDrawer');
+    if (!dr || dr.style.display !== 'block') return;
+    dr.style.display = 'none';
+    dr.classList.remove('opening');
+    ttdId = null; ttdVid = null;
+    try { if (ttdLastFocus && ttdLastFocus.focus) ttdLastFocus.focus(); } catch (e) {}
+  }
+
+  /* Everything except the life chart, which is fetched once by ttdOpen and then left
+     alone. The life placeholder is rebuilt empty here on a repaint, which is why the
+     fetch is repeated from ttdRepaint rather than skipped — see the note there. */
+  function ttdFill() {
+    const v = ttdVid, body = $('ttdBody');
+    if (!v || !body) return;
+    body.innerHTML =
+      '<div data-ttd="pj"></div>' +
+      ttMetricGridHtml(v) +
+      ttdHashtagsHtml(v) +
+      '<div class="dsection"><h4>Same-age race \u2014 minute by minute</h4>' +
+      '<p class="explain">This post at ' + fmtAge(Math.max(0, (Date.now() - v.create_time * 1000) / 60000)) +
+      ' old against what your other posts had at that same age.</p>' +
+      '<div class="range-row">' +
+      '<button class="ghost' + (ttRaceMode === 'latest' ? ' active' : '') + '" data-ttrace="latest">Latest 10</button>' +
+      '<button class="ghost' + (ttRaceMode === 'best' ? ' active' : '') + '" data-ttrace="best">Best 10 openings</button>' +
+      '</div><div data-ttd="race"><p class="dnote">warming up\u2026</p></div></div>' +
+      '<div data-ttd="launch"></div>' +
+      ttMinuteChartHtml(v) +
+      ttReportCardHtml(v) +
+      '<div class="dsection" data-life="section" style="display:none"><h4>Every hour since it went up</h4>' +
+      '<p class="explain" data-life="explain"></p><div data-life="chart"></div></div>';
+    renderProjection(v, body.querySelector('[data-ttd="pj"]'));
+    renderTtRace(v, body.querySelector('[data-ttd="race"]'));
+    ttLaunchCurves(v, body.querySelector('[data-ttd="launch"]'));
+  }
+
+  /* Repaint on a poll, or when late history lands. Re-resolves the post from `videos`,
+     because poll() replaces that whole array with fresh objects every tick and the one
+     captured at open time is a dead snapshot.
+
+     The life chart is re-fetched here because ttdFill rebuilds its placeholder empty.
+     That is one /tiktok/life call per poll while the drawer is open — about 5,100 D1 rows
+     a minute against a 5,000,000/day allowance, so roughly 7M/day if a drawer were left
+     open for twenty-four hours straight. It is not, and the guard below is the cheap
+     insurance: refetch only when the post changed or the chart is not currently drawn. */
+  function ttdRepaint() {
+    const dr = $('ttDrawer');
+    if (!dr || dr.style.display !== 'block' || !ttdId) return;
+    const v = videos.find(x => x.id === ttdId);
+    if (v) ttdVid = v;
+    const had = !!$('ttdBody').querySelector('[data-life="section"] svg.chart');
+    ttdFill();
+    if (!had) loadLife(ttdId, $('ttdBody'));
+  }
+
+  /* Hashtags — the one panel the drawer holds that the latest card does not.
+
+     The caption is everything TikTok will say about a post's intent, and hashtagsOf
+     already parses it for the coaching card. What is added here is the account's own
+     record for each tag, so a chip says whether that tag has worked before rather than
+     only that it was used. A tag used once is not a record, so it gets no figure. */
+  function ttdHashtagsHtml(v) {
+    const tags = hashtagsOf(v);
+    if (!tags.length) return '<div class="dsection"><h4>Hashtags</h4><p class="dnote">No hashtags in this caption.</p></div>';
+    const pool = scored();
+    const stat = {};
+    for (const x of pool) {
+      const sc = scoreOf(x);
+      if (sc == null) continue;
+      for (const t of hashtagsOf(x)) { (stat[t] = stat[t] || { n: 0, s: 0 }).n++; stat[t].s += sc; }
+    }
+    const all = pool.map(scoreOf).filter(x => x != null);
+    const med = all.length ? pjMed(all) : 0;
+    const chips = tags.map(t => {
+      const e = stat[t];
+      const idx = (e && e.n >= 2 && med > 0) ? Math.round(e.s / e.n / med * 100) : null;
+      return '<span class="chip">' + esc(t) + (idx != null ? ' <b>' + idx + '%</b>' : '') + '</span>';
+    }).join('');
+    return section('Hashtags in this caption',
+      'The figure is the average first-48-hour total of your posts carrying that tag, against your typical post \u2014 shown only for a tag you have used at least twice.',
+      '<div class="chiprow">' + chips + '</div>');
+  }
+
+  /* ---------- the latest card's panels, as reusable builders ----------
+     Extracted so the per-post drawer can mount exactly the same panels rather than
+     carrying a second copy that drifts. Defined here, AFTER loadLife, deliberately: the
+     race and launch-curve tests assert on source order, checking that the mounts appear
+     before this post's own curve in the file. Hoisting makes runtime order irrelevant. */
+  // the eight-cell summary at the top of the card
+  function ttMetricGridHtml(v) {
+    let html = '';
+    html += '<div class="metric-grid m8">' +
+      mcell('Views', fmt.format(v.view_count || 0)) +
+      mcell('Likes', fmt.format(v.like_count || 0)) +
+      mcell('Comments', fmt.format(v.comment_count || 0)) +
+      mcell('Shares', fmt.format(v.share_count || 0)) +
+      mcell('Engagement', engOf(v).toFixed(1) + '%', 'likes per view') +
+      mcell('Views/day', fmt.format(Math.round(paceOf(v))), 'since posting') +
+      mcell('Length', (v.duration || 0) + 's') +
+      mcell('Age', fmtAgo(v.create_time * 1000)) +
+      '</div>';
+    return html;
+  }
+
+  // this post's own recorded line, or an honest note about why there isn't one
+  function ttMinuteChartHtml(v) {
+    let html = '';
     // minute-by-minute, recorded by the Worker even with no browser open
     const rec = hist && hist.videos && hist.videos[v.id];
     if (rec && rec.s && rec.s.length > 1) {
@@ -2125,6 +2376,12 @@
         : '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
           '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
     }
+    return html;
+  }
+
+  // the grade against the account's own posts
+  function ttReportCardHtml(v) {
+    let html = '';
     /* How it compares to the account's own posts.
 
        This was the worst instance of the views-per-day problem on either dashboard: the
@@ -2160,60 +2417,7 @@
         '<div class="gbar"><span class="gl">Engagement</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + col + '"></span></span><span class="gv">' + idx + '% of typical</span></div>' +
         '</div></div></div></div>';
     }
-    $('latestContent').innerHTML = html +
-      '<div class="dsection" id="lifeSection" style="display:none">' +
-      '<h4>Every hour since it went up</h4><p class="explain" id="lifeExplain"></p><div id="lifeChart"></div></div>';
-    renderProjection(v);
-    renderTtRace(v);
-    ttLaunchCurves(v);
-    loadLife(v.id);
-  }
-
-  /* The whole recorded life of one post, at an hour's resolution.
-
-     This matters more here than it does on the YouTube page. TikTok publishes no history of
-     its own — the API returns a post's counts as they are right now and nothing about how
-     they got there — so the Worker's recording is the ONLY record that this post ever had a
-     shape. It records for 60 days, tapering from every minute to every fifteen to hourly,
-     and until this chart existed the page read a three-day window and nothing served the
-     rest. Days 3 to 60 were written, kept for two months, pruned, and never looked at once.
-
-     One post's whole life is about 5,100 rows against a 5,000,000/day allowance, so it is
-     fetched when the card renders rather than prefetched for every post.
-
-     Every point is measured. Nothing is interpolated and nothing is extended past the last
-     reading — a gap in the recording is drawn as a gap in the line. */
-  let lifeSeq = 0;
-  async function loadLife(id) {
-    const wrap = $('lifeSection');
-    if (!wrap || !session || !workerUrl) return;
-    const seq = ++lifeSeq;
-    let d = null;
-    try { d = await api('/tiktok/life?id=' + encodeURIComponent(id)); }
-    catch (e) { return; }                       // the card stands without it
-    if (seq !== lifeSeq || !$('lifeSection')) return;   // a newer render won
-    if (!d || !d.found || !d.s || d.s.length < 3) return;
-
-    const t0 = (d.create_time || 0) * 1000;
-    const at = d.s.map(p => t0 + p[0]);
-    const views = d.s.map(p => p[1]);
-    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views \u00b7 ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
-      (i ? ' \u00b7 +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
-    const lastAge = d.s[d.s.length - 1][0];
-    const days = lastAge / 864e5;
-
-    $('lifeExplain').innerHTML =
-      'Recorded by your own Worker, one point an hour, from posting to <b>' +
-      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
-      'TikTok keeps no history at all \u2014 it only ever tells you the count right now \u2014 so this is the ' +
-      'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
-      'in the recording.';
-    // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
-    // label is the third positional argument, not an opts key
-    $('lifeChart').innerHTML = lineChart(views, 'var(--accent)', 'Views every hour since posting', {
-      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
-    });
-    $('lifeSection').style.display = 'block';
+    return html;
   }
 
   /* ---------- the answer card ----------
@@ -2675,7 +2879,13 @@
 
   /* ---------- events ---------- */
   $('partyClose').addEventListener('click', closeParty);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('party').classList.contains('on')) closeParty(); });
+  $('ttdClose').addEventListener('click', ttdClose);
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    // the party sits on top of the drawer, so it gets the first Escape
+    if ($('party').classList.contains('on')) { closeParty(); return; }
+    ttdClose();
+  });
   $('signInBtn').addEventListener('click', () => signIn(false));
   $('switchAcctBtn').addEventListener('click', () => signIn(true));
   $('signOutBtn').addEventListener('click', () => signOut());

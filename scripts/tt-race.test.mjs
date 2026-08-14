@@ -93,7 +93,7 @@ function build(mode) {
     const ttRaceMode = MODE;   // plain 'latest' / 'best'
     ${arrow('const ttRaceAt = (c, t) =>')}
     ${arrow('const ttRaceTitle = (id, rec) =>')}
-    ${fn('function renderTtRace(v)')}
+    ${fn('function renderTtRace(v, mount)')}
     renderTtRace(V);
   `;
   return { run: (V, hist, videos, noFilter) => {
@@ -350,6 +350,88 @@ console.log('\nwired onto the card');
     /TTC_MIN_VOTES = 2/.test(TT), 'one curve is an anecdote');
   check('and where it cannot vote it emits null rather than zero',
     /vals\.length >= TTC_MIN_VOTES \? pjMed\(vals\) : null/.test(TT), 'a zero would draw as a real value');
+}
+
+/* ---------- 5. the per-post drawer ---------- */
+/* The latest card reaches the ten newest posts; the table lists every post the API
+   returns. The drawer is a SECOND MOUNT for machinery the card already runs, which is the
+   only design that does not end with two copies of five panels drifting apart.
+
+   The thing that makes a second mount subtle: every one of those renderers resolved its
+   host with getElementById, and an id resolves to the FIRST match in the document. Without
+   an explicit mount, opening the drawer would silently repaint the card behind it. */
+console.log('\nthe per-post drawer');
+{
+  check('the drawer is chrome, outside every room pane',
+    /<div class="drawer" id="ttDrawer"/.test(TT) &&
+    TT.indexOf('id="ttDrawer"') > TT.indexOf('</div>\n\n<!-- PER-POST DETAIL DRAWER') - 1e9,
+    'it must not be inside .wrap or the rooms test wants a home for it');
+  check('and it carries no card or grid the rooms test would adopt',
+    !/<div class="(card|grid)[^"]*" id="ttd/.test(TT));
+  check('it is labelled for a screen reader', /aria-labelledby="ttdTitle"/.test(TT));
+
+  /* The four renderers must take a mount, or the drawer repaints the card behind it. */
+  for (const sig of ['function renderProjection(v, mount)', 'function renderTtRace(v, mount)',
+                     'function ttLaunchCurves(v, mount)', 'async function loadLife(id, scope)']) {
+    check(sig.replace(/function |async /g, '').replace(/\(.*/, '') + ' takes an explicit mount', TT.includes('  ' + sig),
+      'without it, getElementById returns the LATEST CARD\'s element');
+  }
+  check('and a mounted render leaves the card\'s own state alone',
+    /if \(!mount\) \{ pjCur = v \|\| pjCur; v = pjCur; \}/.test(TT) &&
+    /if \(!mount\) \{ ttRaceCur = v \|\| ttRaceCur; v = ttRaceCur; \}/.test(TT),
+    'the drawer shows a different post from the card behind it');
+
+  /* Two hosts can be fetching a life chart at once, so the sequence guard cannot be a
+     single module counter — whichever finished second would cancel the other. */
+  check('the life fetch guards per host, not globally',
+    /wrap\.dataset\.lifeSeq = seq;/.test(TT) && /wrap\.dataset\.lifeSeq !== seq/.test(TT));
+  check('and it gives up if its host left the document', /!wrap\.isConnected/.test(TT));
+
+  /* The three panels are extracted, not duplicated — and they must be defined AFTER
+     renderLatest, because two source-order assertions above depend on where the literal
+     "<h4>Views since it went live" first appears. */
+  for (const f of ['function ttMetricGridHtml(v)', 'function ttMinuteChartHtml(v)', 'function ttReportCardHtml(v)']) {
+    check(f.slice(9, f.indexOf('(')) + ' is a shared builder, not a second copy', TT.includes('  ' + f));
+  }
+  check('and they are defined after renderLatest, which the ordering checks depend on',
+    TT.indexOf('function ttMinuteChartHtml') > TT.indexOf('function renderLatest'),
+    'moving them up relocates the first "<h4>Views since it went live" and breaks section 4');
+  check('renderLatest calls them rather than inlining them',
+    /html \+= ttMetricGridHtml\(v\);/.test(TT) && /html \+= ttMinuteChartHtml\(v\);/.test(TT) &&
+    /html \+= ttReportCardHtml\(v\);/.test(TT));
+
+  /* The way out to TikTok used to be the row click itself. Replacing it with a drawer
+     without replacing the affordance would have removed the only way to reach the post. */
+  check('every row keeps a real anchor out to TikTok', /class="ttopen" href="' \+ esc\(v\.share_url\)/.test(TT));
+  check('and clicking that anchor does not also open the drawer',
+    /if \(e\.target && e\.target\.closest && e\.target\.closest\('a'\)\) return;/.test(TT));
+  check('the drawer header carries the same way out', /id="ttdOpen"/.test(TT));
+  check('the label tells you what a row does now', /tap a row for the full breakdown/.test(TT));
+  check('rows are reachable by keyboard, which they were not before',
+    /tr\.tabIndex = 0;/.test(TT) && /e\.key !== 'Enter' && e\.key !== ' '/.test(TT));
+
+  /* Repaint and cost. /tiktok/life is ~5,100 D1 rows; refetching it on every poll while a
+     drawer sits open would be millions of rows a day against a 5,000,000 cap. */
+  const rep = TT.slice(TT.indexOf('function ttdRepaint()'), TT.indexOf('\n  }\n', TT.indexOf('function ttdRepaint()')));
+  check('a repaint re-resolves the post from the live list', /videos\.find\(x => x\.id === ttdId\)/.test(rep),
+    'poll replaces the array, so the object captured at open time is a dead snapshot');
+  check('and only refetches the life chart when it is not already drawn',
+    /const had = [\s\S]*if \(!had\) loadLife/.test(rep), 'that route is ~5,100 D1 rows a call');
+  check('Escape closes it, after the party which sits on top',
+    /if \(\$\('party'\)\.classList\.contains\('on'\)\) \{ closeParty\(\); return; \}\s*\n\s*ttdClose\(\);/.test(TT));
+  check('focus is returned to whatever opened it', /ttdLastFocus\.focus\(\)/.test(TT));
+
+  // with two race rows possible, the active mark cannot be keyed on the clicked node
+  check('the race toggle marks by mode, not by which button was clicked',
+    /x\.classList\.toggle\('active', x\.dataset\.ttrace === ttRaceMode\)/.test(TT),
+    'the card and the drawer can both show a race row');
+
+  // hashtags: the one panel the drawer adds
+  const tags = TT.slice(TT.indexOf('function ttdHashtagsHtml(v)'), TT.indexOf('\n  }\n', TT.indexOf('function ttdHashtagsHtml(v)')));
+  check('a tag used once gets no figure attached to it', /e\.n >= 2/.test(tags),
+    'one post is not a record of anything');
+  check('and no figure at all without a median to compare against', /med > 0/.test(tags));
+  check('captions cannot inject markup through a tag', /esc\(t\)/.test(tags));
 }
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
