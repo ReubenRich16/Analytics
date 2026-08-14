@@ -105,6 +105,14 @@
     </div>
   </div>
 
+  <!-- The answer card, same shape as the YouTube page: four chips, each a sentence about
+       one question. Styling comes from the shared stylesheet, so there is nothing new here
+       but the markup. -->
+  <div class="card answer-card" id="answerCard" style="display:none">
+    <div class="achips" id="answerChips"></div>
+    <div class="abody" id="answerBody"></div>
+  </div>
+
   <!-- ROOMS — the same cards, sorted into three, and the same mechanism as the YouTube
        page (the CSS already lives in the shared stylesheet). Three rather than four:
        TikTok's API exposes no audience data of any kind, so an Audience tab here could
@@ -777,7 +785,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'latestCard', 'tableCard', 'breakdownCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -825,7 +833,7 @@
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
@@ -1268,7 +1276,8 @@
 
   /* ---------- latest post + minute race ---------- */
   let slotIdx = 0;
-  const recent = () => videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0)).slice(0, 4);
+  const SLOT_MAX = 10;               // matches the YouTube page's ◀ ▶ range
+  const recent = () => videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0)).slice(0, SLOT_MAX);
   function showSlot(i) {
     const slots = recent();
     if (!slots.length) return;
@@ -1416,6 +1425,139 @@
       at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
     });
     $('lifeSection').style.display = 'block';
+  }
+
+  /* ---------- the answer card ----------
+     The YouTube page's four chips, ported. Three map straight across; the fourth does not.
+     YouTube's is "Audience", built from retention and demographics, and TikTok's Display API
+     exposes neither — so rather than ship an empty chip it answers Engagement, which is the
+     one quality measure TikTok does give: likes per view, unaffected by how old a post is.
+
+     Every builder returns {h, f, p} on every path, including the empty ones. paintAnswer
+     reads those fields OUTSIDE its try/catch, so a builder that returned null would throw
+     uncaught and freeze the whole card rather than one chip — that exact bug shipped on the
+     YouTube side once, and scripts/answer-card.test.mjs exists because of it. */
+  const ANSWER_CHIPS = ['Today', 'Newest', 'Engagement', 'Next'];
+  let answerChip = 0;
+
+  // the follower history the Worker records every ~3h: [ts, followers, likes, videoCount]
+  const fseries = () => (hist && Array.isArray(hist.followers) ? hist.followers : []);
+  const fAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
+
+  function answerToday() {
+    const f = fseries();
+    const followers = (me && me.follower_count) || 0;
+    /* Followers and account likes, NOT summed post views. The view total on this page is a
+       sum over the posts TikTok will return — at most 60 — so it FALLS as older posts scroll
+       out of that window, and a falling number is not something to report as a day's result. */
+    if (f.length < 3) return { h: 'Still watching.', f: fmt.format(followers) + ' followers',
+      p: 'Your Worker samples the account every few hours. Once there are a couple of days of that, this says how today compares with a normal day.' };
+    const now = Date.now();
+    const dayAgo = fAtOrBefore(f, now - 864e5), weekAgo = fAtOrBefore(f, now - 7 * 864e5);
+    const latest = f[f.length - 1];
+    if (!dayAgo || dayAgo === latest) return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
+      p: 'Not quite a day of history yet — check back tomorrow and this compares today with your usual.' };
+    const gained = (latest[1] || 0) - (dayAgo[1] || 0);
+    const likes = (latest[2] || 0) - (dayAgo[2] || 0);
+    if (!weekAgo || weekAgo === latest) return { h: gained > 0 ? 'Growing.' : 'Steady.',
+      f: (gained >= 0 ? '+' : '') + fmt.format(gained) + ' followers',
+      p: 'In the last 24 hours, alongside ' + (likes >= 0 ? '+' : '') + fmt.format(likes) + ' likes. A week of history will let this say whether that is a good day for you.' };
+    const spanD = Math.max(1, (latest[0] - weekAgo[0]) / 864e5);
+    const avg = ((latest[1] || 0) - (weekAgo[1] || 0)) / spanD;
+    const pct = avg > 0 ? Math.round((gained / avg - 1) * 100) : 0;
+    const verdict = gained <= 0 ? 'A flat day.' : !avg || avg <= 0 ? 'A good day.'
+      : pct >= 25 ? 'A good day.' : pct >= -10 ? 'A steady day.' : 'A slower day.';
+    const cmp = !avg || avg <= 0 ? 'There isn’t a positive weekly average to compare it against yet.'
+      : pct >= 0 ? 'That’s ' + pct + '% above your daily average for the past week.'
+      : 'That’s ' + Math.abs(pct) + '% below your daily average for the past week.';
+    return { h: verdict, f: (gained >= 0 ? '+' : '') + fmt.format(gained) + ' followers',
+      p: cmp + ' Likes moved ' + (likes >= 0 ? '+' : '') + fmt.format(likes) + ' over the same day.' };
+  }
+
+  function answerNewest() {
+    if (!videos.length) return { h: 'No posts tracked yet.', f: '—', p: 'Once your Worker has seen a post, this says how it landed against the rest.' };
+    /* The newest post comes from `videos`, NOT from scored(). scored() drops anything with
+       no comparable figure yet — which is exactly what the newest post is while its launch
+       window is still running — so taking the newest of THAT list silently described the
+       second-newest post under a heading that says "Newest". Better to name the real one
+       and say it cannot be graded yet. */
+    const newest = videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0))[0];
+    const list = scored();
+    const mine = scoreOf(newest);
+    const ageD = Math.max(0, (Date.now() - newest.create_time * 1000) / 864e5);
+    const title = (newest.title || 'Your latest post').slice(0, 60);
+    const views = fmt.format(newest.view_count || 0) + ' views';
+    // two different reasons, and saying the wrong one is its own small lie
+    if (mine == null) return { h: 'Too early to grade.', f: views,
+      p: '“' + title + '” went up ' + fmtAgo(newest.create_time * 1000) + ' and its launch window is still running, so there is no finished figure to rank yet. It fills in once the projection has enough of your finished launches to lean on.' };
+    if (list.length < 4) return { h: 'Too early to grade.', f: views,
+      p: '“' + title + '” has a figure, but only ' + list.length + ' of your posts do. Four comparable posts are needed before a ranking means anything.' };
+    const pool = list.filter(v => v.id !== newest.id).map(scoreOf).filter(v => v != null);
+    const rk = pjRank(pool, mine);
+    if (!rk) return { h: 'Too early to compare.', f: views,
+      p: '“' + title + '” has nothing to be measured against yet — the other posts need finished launches first.' };
+    const beats = Math.round(rk.pct);
+    const verdict = beats >= 80 ? 'It landed well.' : beats >= 50 ? 'It’s doing fine.' : beats >= 25 ? 'It’s under your usual.' : 'A quiet one.';
+    return { h: verdict, f: 'Beats ' + beats + '%',
+      p: '“' + title + '” is ahead of ' + beats + '% of your other ' + rk.n + ' posts, compared on reach — a finished post’s own total, or the projected first-48-hour total while one is still running.' +
+         (ageD < 2 ? ' It is still inside its launch window, so this will move.' : '') };
+  }
+
+  function answerEngagement() {
+    const list = videos.filter(v => (v.view_count || 0) > 0);
+    if (list.length < 3) return { h: 'Still loading.', f: '—',
+      p: 'Engagement is likes per view — the one quality measure TikTok gives that a post’s age does not distort. A few posts are needed first.' };
+    const rates = list.map(v => (v.like_count || 0) / v.view_count * 100).sort((a, b) => a - b);
+    const med = rates[rates.length >> 1];
+    const newest = list.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0))[0];
+    const mineRate = (newest.like_count || 0) / Math.max(1, newest.view_count) * 100;
+    const verdict = med >= 8 ? 'People really like these.' : med >= 4 ? 'They like these.' : med >= 1.5 ? 'A normal rate for the format.' : 'Quiet engagement.';
+    const vs = mineRate >= med * 1.15 ? ' Your newest is above that.'
+      : mineRate <= med * 0.85 ? ' Your newest is below it.' : ' Your newest is right on it.';
+    return { h: verdict, f: med.toFixed(1) + '% like rate',
+      p: 'Half your ' + list.length + ' posts sit above ' + med.toFixed(1) + '% and half below — that is what typical means here, not good or bad.' + vs +
+         ' TikTok gives no audience or retention data at all, so this is the closest thing to “how did they feel about it”.' };
+  }
+
+  function answerNext() {
+    const pubs = videos.map(v => (v.create_time || 0) * 1000).filter(Boolean).sort((a, b) => b - a);
+    if (!pubs.length) return { h: 'Nothing to go on yet.', f: '—', p: 'Once a few posts are tracked, this tells you when you are due.' };
+    const since = Math.round((Date.now() - pubs[0]) / 864e5);
+    const sinceTxt = since + ' day' + (since === 1 ? '' : 's');
+    if (pubs.length < 4) return { h: since <= 2 ? 'Just posted.' : 'Keep going.', f: sinceTxt,
+      p: 'Since your last post. A few more and this can say whether that is your usual gap.' };
+    const gaps = [];
+    for (let i = 1; i < Math.min(pubs.length, 10); i++) gaps.push((pubs[i - 1] - pubs[i]) / 864e5);
+    gaps.sort((a, b) => a - b);
+    const med = Math.max(1, Math.round(gaps[gaps.length >> 1]));
+    const verdict = since <= med ? 'You’re on schedule.' : since <= med * 2 ? 'You’re due.' : 'It’s been a while.';
+    return { h: verdict, f: sinceTxt,
+      p: 'Since your last post, against a usual gap of about ' + med + ' day' + (med === 1 ? '' : 's') + ' between the last ' + Math.min(pubs.length, 10) + '.' };
+  }
+
+  function renderAnswer() {
+    const card = $('answerCard'); if (!card || !videos.length) return;
+    card.style.display = 'block';
+    const chips = $('answerChips');
+    if (!chips.dataset.built) {
+      chips.dataset.built = '1';
+      chips.innerHTML = ANSWER_CHIPS.map((n, i) => '<button data-answer="' + i + '"' + (i ? '' : ' class="on"') + '>' + n + '</button>').join('');
+      chips.addEventListener('click', e => {
+        const b = e.target.closest('[data-answer]'); if (!b) return;
+        answerChip = +b.dataset.answer;
+        chips.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+        paintAnswer();
+      });
+    }
+    paintAnswer();
+  }
+  function paintAnswer() {
+    const el = $('answerBody'); if (!el) return;
+    let a;
+    try { a = [answerToday, answerNewest, answerEngagement, answerNext][answerChip](); }
+    catch (e) { a = { h: 'Couldn’t work that one out.', f: '—', p: 'The numbers behind this chip aren’t loaded yet.' }; }
+    el.innerHTML = '<div class="ah">' + esc(a.h) + '</div><div class="af">' + esc(a.f) + '</div><p class="ap">' + esc(a.p) + '</p>';
+    el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
   }
 
   /* ---------- breakdown + coaching ---------- */

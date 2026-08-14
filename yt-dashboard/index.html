@@ -340,6 +340,7 @@
   let channelPublished = '2005-01-01';
   let currentVideo = null, currentDays = 28, trendDays = 28, trendSeq = 0, latestVid = null, pollCount = 0;
   let slotVid = null, slotIdx = 0; // which recent upload the "Latest upload" card is currently showing
+  const SLOT_MAX = 10;               // how many recent uploads the ◀ ▶ arrows cycle through
   let chanId = '', raceMode = 'latest';
   const titleCache = {};
   const MAX_BARS = 60, VIDEO_CAP = 200;
@@ -2530,7 +2531,8 @@
   }
   // the last 5 uploads, newest first — what the ◀ ▶ cycler steps through
   function recentSlots() {
-    return videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, 5);
+    // 10, not 5 — two uploads a day means five slots is barely two days of back-cycling
+    return videoIds.slice().sort((a, b) => new Date(meta[b].publishedAt) - new Date(meta[a].publishedAt)).slice(0, SLOT_MAX);
   }
   function renderSlotHeader(vid) {
     $('latestTitle').textContent = meta[vid].title;
