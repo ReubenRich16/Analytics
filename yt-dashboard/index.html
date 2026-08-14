@@ -458,6 +458,10 @@
   // 2. a silent renewal runs ~5 min before expiry while the tab is open,
   // 3. if renewal is blocked, the error banner becomes a one-tap reconnect.
   let tokenExp = 0, refreshTimer = null, bootstrapped = false;
+  /* Set when Google declines to mint a token without showing UI. Recovery has to know:
+     retrying silently after a silent refusal is a no-op, and that no-op was the entire
+     "tap this message to reconnect" path. */
+  let silentRefused = false;
 
   function saveToken(resp) {
     accessToken = resp.access_token;
@@ -501,16 +505,38 @@
       client_id: cid,
       scope: SCOPES,
       callback: async resp => {
-        if (resp.error) return showError('Sign-in failed: ' + resp.error);
+        if (resp.error) {
+          silentRefused = true;
+          setStatus('sign-in needed');
+          return showError('Google declined the sign-in (' + resp.error + ') — tap here to try again with the account chooser.');
+        }
+        silentRefused = false;
         saveToken(resp);
         if (!bootstrapped) {
           try { await bootstrap(); bootstrapped = true; } catch (e) { showError(e.message); setStatus('error'); }
         } else { clearError(); poll(); }
       },
+      /* Google refused to issue a token without showing UI.
+
+         This used to be guarded on `bootstrapped`, so before the first successful load it
+         did nothing at all — no banner, no message, and the status left sitting on
+         "signing in…" forever. That is the single most likely thing a person means by
+         "it logged me out for no reason": the page simply never finishes, and the code
+         suppressed the one explanation it had.
+
+         The two states need different words. After a session has worked, this is a lapsed
+         renewal and one tap fixes it. Before, it means silent sign-in is not available on
+         this account or browser at all — a supervised/child Google account, or a browser
+         blocking third-party cookies — and the only way through is an interactive prompt. */
       error_callback: () => {
-        // silent renewal was refused (e.g. third-party cookies blocked) — null the token
-        // so the reconnect banner's !accessToken guard passes and the tap actually works
-        if (bootstrapped) { accessToken = null; showError('Your Google session needs a quick renew — tap this message to reconnect.'); }
+        accessToken = null; silentRefused = true;
+        if (bootstrapped) {
+          showError('Your Google session needs a quick renew — tap this message to reconnect.');
+        } else {
+          setStatus('sign-in needed');
+          showError('Google wouldn\u2019t sign you in silently — tap here to sign in properly. ' +
+            '(Common on a supervised or child account, or when a browser blocks third-party cookies.)');
+        }
       }
     });
   }
@@ -3981,8 +4007,17 @@
   });
   // Tapping the error banner is an explicit reconnect request — force an interactive
   // prompt so it works even if the token wasn't cleared and even if silent renew is blocked.
+  /* Tapping the banner has to be able to succeed.
+
+     It used to always request silently, so when the banner was shown BECAUSE a silent
+     request was refused, the fix was the failure. Nothing visible happened, however many
+     times it was tapped. Once silent has been refused, escalate to the account chooser —
+     which is also what a supervised account or a Brand-Account profile pick needs. */
   $('errorBox').addEventListener('click', () => {
-    if (tokenClient) { clearError(); setStatus('reconnecting…'); tokenClient.requestAccessToken({ prompt: '' }); }
+    if (!tokenClient) return;
+    clearError(); setStatus('reconnecting…');
+    if (silentRefused) initAuth('select_account');
+    else tokenClient.requestAccessToken({ prompt: '' });
   });
   // Export/import all saved data (caches, keyword research, minute-race history, theme) — never the session token
   $('exportBtn').addEventListener('click', () => {
@@ -4315,14 +4350,21 @@
   // Resume a still-valid saved token instantly (no network round-trip) within its ~1h life
   let savedTok = null;
   try { savedTok = JSON.parse(localStorage.getItem('cc_tok') || 'null'); } catch (e) {}
-  /* Resume only a token this Client ID actually issued. Checking the SHAPE of the field
-     was not enough: after switching Client IDs, the previous client's token was resumed
-     against the new one and every call 401'd until it expired. A token saved before tokens
-     carried `c` has no issuer to check, so it is not resumed — that costs one silent
-     sign-in, once, which autoSilentSignIn below already handles. */
+  /* Resume unless the token demonstrably belongs to a DIFFERENT Client ID.
+
+     The first version of this required savedTok.c === fieldCid, which reads as the safe
+     choice and is not: tokens saved before `c` existed carry no issuer, so the check threw
+     away every session that was already working and forced a silent re-auth on first load.
+     Silent re-auth is exactly the thing that fails on a supervised Google account or with
+     third-party cookies blocked, so the "safe" check logged those users out.
+
+     Refuse on a MISMATCH, not on absence. The case the check exists for — a token minted by
+     a previous Client ID — is already prevented at source: ensureTokenClient clears cc_tok
+     when it rebinds. This is the second line of defence, and a second line of defence that
+     locks people out is worse than the hole it covers. */
   const fieldCid = $('clientId').value.trim();
   const haveValidTok = savedTok && savedTok.e - Date.now() > 60000 &&
-    looksLikeClientId(fieldCid) && savedTok.c === fieldCid;
+    looksLikeClientId(fieldCid) && (savedTok.c == null || savedTok.c === fieldCid);
   if (haveValidTok) {
     accessToken = savedTok.t; tokenExp = savedTok.e;
     setStatus('resuming session…');
