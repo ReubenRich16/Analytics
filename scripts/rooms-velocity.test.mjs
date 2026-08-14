@@ -351,6 +351,42 @@ console.log('\nTikTok view velocity');
    over the original plan found that syncing the recorded curves would have caused
    cross-device DATA LOSS, so these checks are the fence around that. */
 /* ---------- 2f. the hashtag card ---------- */
+/* ---------- 2g. alerts and the acceleration badge ---------- */
+/* The YouTube page gets these from a robot that commits a file to the repo. That robot has
+   no TikTok credentials and cannot get any — the API only ever speaks to the signed-in
+   account — so this is computed in the browser from the Worker's own recordings. Zero KV
+   writes, zero D1 reads, nothing to schedule. */
+console.log('\nwhile you were away');
+{
+  const accel = TT.slice(TT.indexOf('function buildAccel()'), TT.indexOf('\n  }\n', TT.indexOf('function buildAccel()')));
+  const feed = TT.slice(TT.indexOf('function ttAlerts()'), TT.indexOf('\n  }\n', TT.indexOf('function ttAlerts()')));
+  check('the card exists and is revealed', /id="alertsCard"/.test(TT) && /'velocityPanel', 'alertsCard'/.test(TT));
+  check('it costs nothing — no request of its own',
+    !/api\(|fetch\(/.test(accel + feed), 'the whole point is that the recordings are already here');
+
+  /* The floor matters more than the ratio: three views yesterday and five today is a 67%
+     rise and means nothing, and a small account produces a great many of those. */
+  check('acceleration needs an absolute floor as well as a ratio',
+    /today >= ACCEL_MIN && today >= before \* ACCEL_RATIO/.test(accel));
+  check('and it compares a post against its own previous day, not against other posts',
+    /ATB\(arr, now - 864e5\), d2 = ATB\(arr, now - 2 \* 864e5\)/.test(accel));
+  check('a curve too short to have two days behind it is skipped', /arr\.length < 3/.test(accel));
+  check('the badge is on the table row, with a title that explains it',
+    /accelSet\.has\(v\.id\)/.test(TT) && /title="Accelerating/.test(TT));
+  check('and it is rebuilt before anything renders from it',
+    TT.indexOf('buildAccel();') < TT.indexOf('renderTable(); showSlot(slotIdx);'));
+
+  /* Only crossings that actually happened between two recorded samples. No "you are close
+     to", no rounding up to the nearest nice number — both would be the page inventing an
+     event that did not occur. */
+  check('the feed reports crossings between two real samples', /ladder\(f\[i - 1\]\[1\] \|\| 0, f\[i\]\[1\] \|\| 0\)/.test(feed));
+  check('it uses the same milestone ladder as the projection card', /nextMilestone\(/.test(feed));
+  check('the first hundred views on a post is not treated as news', /if \(m < 100\) continue;/.test(feed));
+  check('the feed is bounded in time and in length',
+    /ALERT_DAYS = 14/.test(TT) && /\.slice\(0, 8\)/.test(feed));
+  check('and a caption cannot inject markup into it', /esc\(cap\.slice\(0, 46\)/.test(feed));
+}
+
 console.log('\nhashtags ranked by what they returned');
 {
   const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));

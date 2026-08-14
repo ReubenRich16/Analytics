@@ -164,6 +164,12 @@
     <div class="session" id="sessionText"></div>
   </div>
 
+  <div class="card" id="alertsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
+    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open.</p>
+    <div id="alertsContent"><p class="dnote">checking…</p></div>
+  </div>
+
   <!-- LATEST POST -->
   <div class="card" id="latestCard" style="display:none">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1244,7 +1250,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'latestCard', 'tableCard', 'breakdownCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1352,7 +1358,8 @@
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); ttdRepaint();
+      buildAccel();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
@@ -1403,7 +1410,7 @@
       if (d.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
-        '<td class="title">' + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
+        '<td class="title">' + (accelSet.has(v.id) ? '<span title="Accelerating \u2014 gaining at least 1.5\u00d7 as fast as the day before">\u26a1 </span>' : '') + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
         '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
         '<td data-label="+tick">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
         '<td data-label="+session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
@@ -2840,6 +2847,98 @@
     { label: 'Evening (7pm–11pm)', t: h => h >= 19 && h < 23 },
     { label: 'Late night (11pm–5am)', t: h => h >= 23 || h < 5 }
   ];
+  /* ---------- what happened while nobody was watching ----------
+     The YouTube page gets this from a robot that commits a file to the repo. That robot
+     has no TikTok credentials and cannot get any — the API only ever speaks to the signed-
+     in account — so this is computed in the browser instead, from the recordings the
+     Worker made on its cron. That turns out to be the better place for it anyway: zero KV
+     writes, zero D1 reads, nothing to schedule, and it works the moment history loads.
+
+     Two things, from two sources. Crossings come from the account snapshot the Worker
+     takes every three hours; the acceleration badge comes from each post's own recorded
+     curve. */
+  const ACCEL_MIN = 50;          // views in the last day, below which a ratio is just noise
+  const ACCEL_RATIO = 1.5;       // and how much faster than the day before counts as accelerating
+  const ALERT_DAYS = 14;         // how far back the feed looks
+  let accelSet = new Set();
+
+  /* Accelerating: gaining meaningfully faster than it was a day ago. The absolute floor
+     matters more than the ratio — three views yesterday and five today is a 67% rise and
+     means nothing, and a small account produces a great many of those. */
+  function buildAccel() {
+    accelSet = new Set();
+    const vids = (hist && hist.videos) || {};
+    const now = Date.now();
+    for (const [id, rec] of Object.entries(vids)) {
+      const arr = (rec && rec.s) || [];
+      if (arr.length < 3) continue;
+      const nowS = arr[arr.length - 1];
+      const d1 = ATB(arr, now - 864e5), d2 = ATB(arr, now - 2 * 864e5);
+      if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
+      const today = nowS[1] - d1[1], before = d1[1] - d2[1];
+      if (today >= ACCEL_MIN && today >= before * ACCEL_RATIO) accelSet.add(id);
+    }
+  }
+
+  /* The feed. Only crossings that actually happened between two recorded samples — no
+     "you are close to" and no rounding up to the nearest nice number, both of which would
+     be the page inventing an event. Each line carries when it happened, because "you
+     passed 300 followers" is a different thing on Tuesday and this morning. */
+  function ttAlerts() {
+    const f = fseries();
+    const out = [];
+    const since = Date.now() - ALERT_DAYS * 864e5;
+    const ladder = (from, to) => {
+      const hits = [];
+      let m = nextMilestone(from);
+      while (m <= to && hits.length < 4) { hits.push(m); m = nextMilestone(m); }
+      return hits;
+    };
+    for (let i = 1; i < f.length; i++) {
+      if (f[i][0] < since) continue;
+      for (const m of ladder(f[i - 1][1] || 0, f[i][1] || 0)) out.push({ at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' followers</b>' });
+      for (const m of ladder(f[i - 1][2] || 0, f[i][2] || 0)) out.push({ at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' likes</b> on the account' });
+    }
+    const vids = (hist && hist.videos) || {};
+    for (const [id, rec] of Object.entries(vids)) {
+      const arr = (rec && rec.s) || [];
+      const cap = ((rec && rec.title) || '').trim() || (videos.find(x => x.id === id) ? capOf(videos.find(x => x.id === id)) : '');
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] < since) continue;
+        for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
+          if (m < 100) continue;   // the first hundred views is not news
+          out.push({ at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
+        }
+      }
+    }
+    return out.sort((a, b) => b.at - a.at).slice(0, 8);
+  }
+
+  function renderAlerts() {
+    const el = $('alertsContent');
+    if (!el) return;
+    const list = ttAlerts();
+    const accel = [...accelSet].map(id => videos.find(x => x.id === id)).filter(Boolean);
+    let html = '';
+    if (accel.length) {
+      html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
+        accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' accelerating</b> \u2014 gaining at least ' +
+        ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day.</p>' +
+        '<div class="chiprow" style="margin-bottom:10px">' +
+        accel.slice(0, 6).map(v => '<span class="chip">' + esc(capOf(v).slice(0, 34)) + '</span>').join('') + '</div>';
+    }
+    if (!list.length) {
+      html += '<p class="dnote">Nothing has crossed a round number in the last ' + ALERT_DAYS +
+        ' days. This fills itself in from your Worker\u2019s own recordings \u2014 it needs nothing open and nothing scheduled.</p>';
+      el.innerHTML = html;
+      return;
+    }
+    html += list.map(a => '<div class="hbar-row" style="grid-template-columns:1fr auto">' +
+      '<div class="hlabel" style="white-space:normal">' + a.t + '</div>' +
+      '<div class="hval">' + esc(fmtAgo(a.at)) + '</div></div>').join('');
+    el.innerHTML = html;
+  }
+
   /* ---------- hashtags, with the account's own record attached ----------
      Ranked by the average REACH of the posts carrying each tag, not by how often the tag
      was used. Frequency ranks your habits; this ranks your results, and a tag on two hits
