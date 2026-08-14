@@ -140,10 +140,10 @@
 
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid" style="display:none">
-    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div></div>
-    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div></div>
-    <div class="stat"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div></div>
-    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div></div>
+    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div><div class="sparkslot" id="ttViewsSpark"></div></div>
+    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="ttLikesSpark"></div></div>
+    <div class="stat"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div><div class="sparkslot" id="ttFollowersSpark"></div></div>
+    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="ttCommentsSpark"></div></div>
   </div>
 
   <div class="card velocity" id="velocityPanel">
@@ -744,6 +744,19 @@
     return out + '</svg>';
   }
 
+  // 12-point trend line for a stat tile — no axes, no labels, just the shape
+  function sparkHtml(pts, color) {
+    if (!pts || pts.length < 2) return '';
+    const w = 120, h = 26, hi = Math.max(...pts), lo = Math.min(...pts), span = Math.max(1e-9, hi - lo);
+    const xs = pts.map((_, i) => i * w / (pts.length - 1));
+    const ys = pts.map(v => h - 3 - (v - lo) / span * (h - 6));
+    let d = 'M' + xs[0].toFixed(1) + ',' + ys[0].toFixed(1);
+    for (let i = 1; i < pts.length; i++) d += ' L' + xs[i].toFixed(1) + ',' + ys[i].toFixed(1);
+    return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+      '<path d="' + d + '" style="fill:none;stroke:' + color + ';stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round"/>' +
+      '<circle cx="' + xs[xs.length - 1].toFixed(1) + '" cy="' + ys[ys.length - 1].toFixed(1) + '" r="2.6" style="fill:' + color + '"/></svg>';
+  }
+
   /* The tooltip engine, identical to index.html's and pinned that way by a test.
 
      What was here before resolved an index exactly one way — nearest point along x — which
@@ -1261,7 +1274,7 @@
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderCoaching(); renderAnswer(); renderTtSparks();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString());
@@ -2342,6 +2355,41 @@
     const verdict = since <= med ? 'You’re on schedule.' : since <= med * 2 ? 'You’re due.' : 'It’s been a while.';
     return { h: verdict, f: sinceTxt,
       p: 'Since your last post, against a usual gap of about ' + med + ' day' + (med === 1 ? '' : 's') + ' between the last ' + Math.min(pubs.length, 10) + '.' };
+  }
+
+  /* A trend line under two of the four headline numbers.
+
+     Two, not four, and the missing pair is the honest part. The Worker records the account
+     every three hours and keeps four hundred days of it, so FOLLOWERS and LIKES each have
+     a real cumulative series behind them — likes_count is the account's all-time total, so
+     it only ever climbs.
+
+     Views and Comments have no account-level series at all, and there is no honest way to
+     manufacture one. TikTok publishes no lifetime view total, so the number on that tile is
+     a sum over the at-most-sixty posts the API returns — it FALLS when an old post scrolls
+     out of that window. Drawing a line through it would show dips that are the API's list
+     changing size rather than anything that happened to the account. Summing the per-post
+     recordings has the same defect plus a worse one: the store keeps the twenty newest, so
+     the sum would step every time that set changed. An empty slot is the truthful answer. */
+  function renderTtSparks() {
+    const f = fseries();
+    const slots = ['ttViewsSpark', 'ttLikesSpark', 'ttFollowersSpark', 'ttCommentsSpark'];
+    const clear = () => slots.forEach(id => { const el = $(id); if (el) el.innerHTML = ''; });
+    if (f.length < 3) { clear(); return; }
+    const t1 = f[f.length - 1][0], t0 = Math.max(f[0][0], t1 - 12 * 864e5);
+    if (!(t1 > t0)) { clear(); return; }
+    const N = 12, times = [];
+    for (let i = 0; i < N; i++) times.push(t0 + (t1 - t0) * i / (N - 1));
+    const series = idx => times.map(t => { const x = fAtOrBefore(f, t); return x ? x[idx] : null; }).filter(v => v != null);
+    // a flat line says nothing and only adds ink — draw one only where something moved
+    const put = (id, pts, color) => {
+      const el = $(id); if (!el) return;
+      el.innerHTML = (pts.length >= 4 && Math.max(...pts) > Math.min(...pts)) ? sparkHtml(pts, color) : '';
+    };
+    put('ttViewsSpark', [], 'var(--live)');
+    put('ttCommentsSpark', [], 'var(--purple)');
+    put('ttLikesSpark', series(2), 'var(--accent)');
+    put('ttFollowersSpark', series(1), 'var(--up)');
   }
 
   function renderAnswer() {

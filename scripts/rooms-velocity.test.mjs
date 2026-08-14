@@ -206,6 +206,33 @@ console.log('\nlove per view is the same chart on both pages');
     /html \+= '<div class="dsection" id="rateWrap">'/.test(TT) && !/'rateWrap'/.test(TT.slice(TT.indexOf("['answerCard'"), TT.indexOf("].forEach(id =>"))));
 }
 
+/* ---------- 2d. tile sparklines, and the two that must stay empty ---------- */
+console.log('\ntile sparklines');
+{
+  check('sparkHtml is the same on both pages', (() => {
+    const strip = t => (t || '').split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n').replace(/\s+/g, ' ').trim();
+    const g = src => { const i = src.indexOf('  function sparkHtml(pts, color) {'); return i < 0 ? null : src.slice(i, src.indexOf('\n  }\n', i)); };
+    return g(TT) && strip(g(YT)) === strip(g(TT));
+  })());
+  check('all four TikTok tiles carry a slot', (TT.match(/class="sparkslot"/g) || []).length === 4,
+    (TT.match(/class="sparkslot"/g) || []).length + ' slots');
+
+  const body = TT.slice(TT.indexOf('function renderTtSparks()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTtSparks()')));
+  check('followers is drawn from the recorded account series', /put\('ttFollowersSpark', series\(1\)/.test(body));
+  check('and account likes, which only ever climbs', /put\('ttLikesSpark', series\(2\)/.test(body));
+  /* The two that stay empty, and why an empty slot is the honest answer rather than a
+     missing feature: TikTok publishes no lifetime view total, so the views tile sums the
+     at-most-sixty posts the API returns and FALLS when one scrolls out; a line through it
+     would show dips that are the list changing size. Comments has no account series at
+     all, and summing the twenty recorded posts steps every time that set changes. */
+  check('views is deliberately empty, not merely unimplemented', /put\('ttViewsSpark', \[\]/.test(body),
+    'if this ever gets a series, the falling-window problem has to be solved first');
+  check('and comments likewise', /put\('ttCommentsSpark', \[\]/.test(body));
+  check('a flat series draws nothing either', /Math\.max\(\.\.\.pts\) > Math\.min\(\.\.\.pts\)/.test(body));
+  check('and too few points draws nothing', /pts\.length >= 4/.test(body));
+  check('it repaints on the poll that refreshes the history', /renderAnswer\(\); renderTtSparks\(\);/.test(TT));
+}
+
 /* ---------- 3. TikTok velocity ---------- */
 console.log('\nTikTok view velocity');
 {
