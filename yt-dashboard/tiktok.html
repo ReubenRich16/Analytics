@@ -270,6 +270,7 @@
   <!-- Chrome, like the room bar and the drawer: it belongs to no room, and it works before
        sign-in on purpose so a fresh device can import a saved file before connecting. -->
   <div class="footer-tools">
+    <span id="syncStatus" title="Cross-device sync through your own Worker's storage, locked to your account"></span>
     <span id="ttDataNote" title="Everything this page has saved in this browser"></span>
     <button class="ghost" id="ttExportBtn">Export saved data</button>
     <button class="ghost" id="ttImportBtn">Import saved data</button>
@@ -907,7 +908,11 @@
      recorded so a reload can't replay them. */
   const CELEB_KEY = 'cc_celebrated';
   const celebrated = () => { try { return JSON.parse(localStorage.getItem(CELEB_KEY) || '{}'); } catch (e) { return {}; } };
-  const setCeleb = (key, val) => { try { const c = celebrated(); c[key] = val; localStorage.setItem(CELEB_KEY, JSON.stringify(c)); } catch (e) {} };
+  const setCeleb = (key, val) => {
+    try { const c = celebrated(); c[key] = val; localStorage.setItem(CELEB_KEY, JSON.stringify(c)); } catch (e) {}
+    // the ledger merges by value rather than by clock, so this deliberately does not stamp
+    if (typeof ttSyncSoon === 'function') ttSyncSoon(false);
+  };
 
   function partySound() {
     if (!soundOn) return;
@@ -1239,6 +1244,7 @@
     document.body.classList.add('signed-in');
     // the room restore ran before any of this existed, so its stagger was a no-op
     if (!reducedMotion) staggerCards(document.querySelector('.room-pane.on') || document);
+    await ttSyncPull();
     await pullHistory();
     await pullLaunches();
     intervalMs = +$('interval').value;
@@ -2949,6 +2955,119 @@
   $('ideaLatest').addEventListener('click', () => { const s = recent()[0]; if (s) $('ideaDesc').value = capOf(s); });
   $('errorBox').addEventListener('click', clearError);
 
+  /* ---------- cross-device sync ----------
+     The Worker route for this has existed since the TikTok page was built and has never
+     once been called. Wiring it up turned out to be mostly a question of deciding what
+     must NOT go through it.
+
+     THE RECORDED HISTORY DOES NOT SYNC, and that is the whole design decision. It looks
+     like the obvious payload and it is the one thing that would do damage:
+
+       · it does not need syncing. The samples live in the Worker's own D1 and every device
+         pulls the same ones from /tiktok/history and /tiktok/launches. Two devices already
+         agree because they read one source, not because they gossip.
+       · there is nothing to contribute. mergeHist prunes the local store to the twenty
+         newest posts, so no browser holds an archive the Worker lacks.
+       · it would destroy data. The route is a bare KV put with no server-side merge, so
+         the second device to write replaces whatever the first one stored.
+       · it would corrupt the store it wrote into. Curves would have to be re-timestamped
+         from ages, those timestamps would not coincide with the live minute samples the
+         hot window is still writing, and mergeHist unions on exact timestamp — so the two
+         sets would interleave rather than merge, the array would grow without bound, and
+         the series would stop being monotonic. The projection, the race and the launch
+         curves all read that array.
+
+     What DOES sync is the small amount of state that only exists in a browser: which
+     milestones have already been celebrated, and the four preferences. The ledger is the
+     one that actually matters — without it, hitting 500 followers throws confetti once per
+     device, which is the sort of thing that makes a dashboard feel broken.
+
+     Budget: the bundle is under a kilobyte and only written when something changed, with a
+     60-second trailing throttle behind that. Against a 1,000 writes/day KV allowance
+     currently running at about 220, this is a handful of writes on a busy day. */
+  const TT_SYNC_AT = 'tt_sync_at';
+  let ttSyncKnown = '', ttSyncTimer = null, ttSyncPulled = false;
+  const setSyncStatus = t => {
+    const e = $('syncStatus');
+    if (!e) return;
+    e.textContent = t === 'on' ? '\u2601 synced' : (t === 'busy' ? '\u2601 syncing\u2026' : '');
+    e.className = t === 'on' ? 'on' : '';
+  };
+  const ttSyncLocalAt = () => { try { return +localStorage.getItem(TT_SYNC_AT) || 0; } catch (e) { return 0; } };
+
+  // only this account's celebration rows — the ledger is shared with the YouTube page
+  function ttSyncCele() {
+    const out = {};
+    const id = me && me.open_id;
+    if (!id) return out;
+    const pre = 'tt:' + id + ':';
+    const c = celebrated();
+    for (const [k, v] of Object.entries(c || {})) if (k.startsWith(pre)) out[k] = v;
+    return out;
+  }
+  function ttSyncBundle() {
+    const prefs = {};
+    for (const k of TT_PREFS) { try { const v = localStorage.getItem(k); if (typeof v === 'string') prefs[k] = v; } catch (e) {} }
+    return { v: 1, at: ttSyncLocalAt(), cele: ttSyncCele(), prefs };
+  }
+  async function ttSyncPull() {
+    if (!session || !workerUrl || !(me && me.open_id)) return;
+    let d = null;
+    try { d = await api('/tiktok/sync'); } catch (e) { setSyncStatus(''); return; }
+    if (!d || typeof d !== 'object') { setSyncStatus(''); return; }
+    /* The ledger merges by taking the larger value for each row. Every value in it is a
+       follower/like/post count that only ever climbs, so "larger" is "more recent" without
+       needing a clock the two devices would have to agree on. */
+    if (d.cele && typeof d.cele === 'object') {
+      const c = celebrated() || {};
+      let changed = false;
+      for (const [k, v] of Object.entries(d.cele)) {
+        if (typeof v !== 'number') continue;
+        if (!(k in c) || v > c[k]) { c[k] = v; changed = true; }
+      }
+      if (changed) { try { localStorage.setItem(CELEB_KEY, JSON.stringify(c)); } catch (e) {} }
+    }
+    /* Preferences follow the device that changed one most recently, so opening a second
+       tab cannot silently undo a theme you picked ten seconds ago on this one. */
+    if (d.prefs && typeof d.prefs === 'object' && (+d.at || 0) > ttSyncLocalAt()) {
+      for (const k of TT_PREFS) {
+        if (typeof d.prefs[k] !== 'string') continue;
+        try { localStorage.setItem(k, d.prefs[k]); } catch (e) {}
+      }
+      try { localStorage.setItem(TT_SYNC_AT, String(+d.at || 0)); } catch (e) {}
+      applyTheme(d.prefs.cc_theme || savedTheme);
+      const box = $('onePage');
+      if (box) { box.checked = d.prefs.cc_onepage === '1'; document.body.classList.toggle('onepage-on', box.checked); }
+      soundOn = d.prefs.cc_sound !== 'off';
+      paintSound();
+    }
+    ttSyncPulled = true;
+    ttSyncKnown = JSON.stringify(ttSyncBundle());
+    setSyncStatus('on');
+  }
+  async function ttSyncPush() {
+    if (!session || !workerUrl || !(me && me.open_id) || !ttSyncPulled) return;
+    const bundle = ttSyncBundle();
+    const body = JSON.stringify(bundle);
+    if (body === ttSyncKnown) return;           // nothing moved, so nothing is written
+    ttSyncKnown = body;
+    setSyncStatus('busy');
+    try {
+      await fetch(workerUrl + '/tiktok/sync', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + session, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bundle })
+      });
+      setSyncStatus('on');
+    } catch (e) { setSyncStatus(''); }
+  }
+  // trailing, so a burst of theme clicks costs one KV write rather than one per click
+  function ttSyncSoon(stamp) {
+    if (stamp) { try { localStorage.setItem(TT_SYNC_AT, String(Date.now())); } catch (e) {} }
+    if (ttSyncTimer) clearTimeout(ttSyncTimer);
+    ttSyncTimer = setTimeout(() => { ttSyncTimer = null; ttSyncPush(); }, 60000);
+  }
+
   /* ---------- export and import everything this browser has saved ----------
      The YouTube page's pair, with TikTok's two identifier leaks closed.
 
@@ -3041,6 +3160,7 @@
     if (t === 'midnight') document.body.removeAttribute('data-theme');
     else document.body.dataset.theme = t;
     try { localStorage.setItem('cc_theme', t); } catch (e) {}
+    ttSyncSoon(true);
     $('themeSel').value = t;
   }
   $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
@@ -3071,6 +3191,7 @@
   $('soundBtn').addEventListener('click', () => {
     soundOn = !soundOn;
     try { localStorage.setItem('cc_sound', soundOn ? 'on' : 'off'); } catch (e) {}
+    ttSyncSoon(true);
     paintSound();
     // a preview, which doubles as the gesture browsers require before audio will play
     if (soundOn) { unlockAudio(); partySound(); }
@@ -3119,7 +3240,7 @@
        Adding rooms is a three-place edit (button, pane, ROOM_ORDER) and this is the one
        mismatch that fails silently instead of loudly, so it falls back rather than blanks. */
     if (!pane && k !== 'now') { showRoom('now', remember); return; }
-    if (remember !== false) { try { localStorage.setItem('cc_room_tt', k); } catch (e) {} }
+    if (remember !== false) { try { localStorage.setItem('cc_room_tt', k); } catch (e) {} ttSyncSoon(true); }
     if (pane && !reducedMotion) staggerCards(pane);
   }
   $('roomTabs').addEventListener('click', e => {
@@ -3142,6 +3263,7 @@
     const on = e.target.checked;
     document.body.classList.toggle('onepage-on', on);
     try { localStorage.setItem('cc_onepage', on ? '1' : '0'); } catch (e2) {}
+    ttSyncSoon(true);
     if (on && !reducedMotion) staggerCards(document);
   });
   (function restoreRoom() {

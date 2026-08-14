@@ -345,6 +345,58 @@ console.log('\nTikTok view velocity');
    And the history store's KEY is named after the account — tt_hist:<open_id> — so a
    filename, not a value, is the leak. Hence an allow-list rather than the deny-list the
    YouTube page can afford: its keys are a fixed set, this one has a key family. */
+/* ---------- 3a. cross-device sync, and the payload that must never travel ---------- */
+/* The Worker route for this has existed since the page was built and had never been
+   called. Most of the work was deciding what must NOT go through it — an adversarial pass
+   over the original plan found that syncing the recorded curves would have caused
+   cross-device DATA LOSS, so these checks are the fence around that. */
+console.log('\ncross-device sync');
+{
+  const pull = TT.slice(TT.indexOf('async function ttSyncPull()'), TT.indexOf('\n  }\n', TT.indexOf('async function ttSyncPull()')));
+  const bundle = TT.slice(TT.indexOf('function ttSyncBundle()'), TT.indexOf('\n  }\n', TT.indexOf('function ttSyncBundle()')));
+  check('the route is finally called', /api\('\/tiktok\/sync'\)/.test(TT));
+  check('and there is a status pill for it', /id="syncStatus"/.test(TT));
+
+  /* Four independent reasons, any one of which is sufficient: the Worker already serves
+     the recordings to every device from D1; mergeHist prunes the local store to twenty
+     posts so no browser holds an archive to contribute; the route is a bare whole-value
+     KV put with no server-side merge, so the second writer erases the first; and curves
+     re-timestamped from ages would not coincide with the live minute samples, so
+     mergeHist's union-by-timestamp would interleave them and the series would stop being
+     monotonic — which the projection, the race and the launch curves all read. */
+  check('the bundle carries no recorded samples', !/hist/.test(bundle), bundle.slice(0, 200));
+  check('nor does the pull path write any', !/hist\.videos/.test(pull));
+  check('the bundle is only the ledger and the preferences',
+    /return \{ v: 1, at: ttSyncLocalAt\(\), cele: ttSyncCele\(\), prefs \};/.test(bundle), bundle.slice(-160));
+
+  // and only this account's rows out of a ledger shared with the YouTube page
+  const cele = TT.slice(TT.indexOf('function ttSyncCele()'), TT.indexOf('\n  }\n', TT.indexOf('function ttSyncCele()')));
+  check('only this account\'s celebration rows are sent', /const pre = 'tt:' \+ id \+ ':';/.test(cele));
+  check('and nothing at all before an account is known', /if \(!id\) return out;/.test(cele));
+
+  /* The ledger merges by taking the LARGER value per row. Every value in it is a count
+     that only ever climbs, so "larger" means "more recent" without the two devices having
+     to agree on a clock. */
+  check('the ledger merges rather than being replaced', /if \(!\(k in c\) \|\| v > c\[k\]\)/.test(pull));
+  check('preferences follow the device that changed one most recently',
+    /\(\+d\.at \|\| 0\) > ttSyncLocalAt\(\)/.test(pull),
+    'otherwise a second tab silently undoes a theme picked ten seconds ago');
+
+  // KV budget: 1,000 writes/day, currently running around 220
+  check('a write only happens when something actually changed',
+    /if \(body === ttSyncKnown\) return;/.test(TT));
+  check('and a burst of clicks collapses into one write',
+    /if \(ttSyncTimer\) clearTimeout\(ttSyncTimer\);/.test(TT) && /\}, 60000\);/.test(TT));
+  check('nothing is pushed before the first pull, so an empty device cannot erase the store',
+    /!ttSyncPulled\) return;/.test(TT));
+  check('a celebration schedules a push', /if \(typeof ttSyncSoon === 'function'\) ttSyncSoon\(false\);/.test(TT));
+  check('and every synced preference does too',
+    (TT.match(/ttSyncSoon\(true\)/g) || []).length === 4,
+    (TT.match(/ttSyncSoon\(true\)/g) || []).length + ' of 4 preferences');
+  check('the pull runs before the first history pull, so a preference lands before paint',
+    TT.indexOf('await ttSyncPull();') < TT.indexOf('    await pullHistory();'));
+}
+
 console.log('\nexport and import');
 {
   const i = TT.indexOf('  function ttCollect() {');
