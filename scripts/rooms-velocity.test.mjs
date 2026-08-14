@@ -167,6 +167,45 @@ console.log('\nthe tooltip engine is the same on both pages');
     !/chartReg\.set\(/.test(TT.slice(TT.indexOf('function lineChart'))), 'a raw set is back');
 }
 
+/* ---------- 2c. love per view, on both pages ---------- */
+/* The two renderers are shared verbatim; only the prose around them differs (videos vs
+   posts). Pinning the renderers rather than re-testing their geometry is the point — the
+   geometry is already covered on the YouTube side, and what actually breaks is one copy
+   being fixed and the other not. */
+console.log('\nlove per view is the same chart on both pages');
+{
+  const strip = t => (t || '').split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n').replace(/\s+/g, ' ').trim();
+  const grab = (src, from) => {
+    const i = src.indexOf(from);
+    return i < 0 ? null : src.slice(i, src.indexOf('\n  }\n', i));
+  };
+  for (const f of ['function ratePlotHtml(points, tips, opts) {', 'function rankListHtml(points, tips, opts) {']) {
+    const a = grab(YT, '  ' + f), b2 = grab(TT, '  ' + f);
+    check(f.slice(9, f.indexOf('(')) + ' is on the TikTok page', !!b2);
+    check(f.slice(9, f.indexOf('(')) + ' is identical on both', !!b2 && strip(a) === strip(b2), 'they have drifted');
+  }
+  check('both pages default to the scatter and do not persist the choice',
+    /let rateView = 'scatter', rateState = null;/.test(YT) && /let rateView = 'scatter', rateState = null;/.test(TT));
+  check('and both switch views through the same delegated key',
+    (YT.match(/data-rv/g) || []).length >= 3 && (TT.match(/data-rv/g) || []).length >= 3);
+
+  /* Two gates on the TikTok side that the YouTube side does not need. A young TikTok
+     account can have real views and zero likes on every post; the like-rate axis is a log
+     ladder, so it would collapse to one decade and put every dot flat on the baseline —
+     a chart that looks like it said something and did not. And a zero-view post makes the
+     rate infinite, which reaches the path as NaN and silently blanks the whole SVG. */
+  const mount = TT.slice(TT.indexOf('const pts = videos.filter'), TT.indexOf("id=\"rateWrap\""));
+  check('a zero-view post never reaches the geometry',
+    /videos\.filter\(v => \(v\.view_count \|\| 0\) > 0\)/.test(mount), 'an infinite rate becomes NaN');
+  check('and an account with no likes at all draws nothing rather than a flat line',
+    /pts\.length >= 5 && pts\.some\(p => p\.rate > 0\)/.test(mount));
+  check('the tooltip carries shares per thousand, which only TikTok has', /shares\/1k/.test(mount));
+  check('and never carries a post id', !/p\.id/.test(TT.slice(TT.indexOf('const sTips = pts.map'), TT.indexOf('rateState = {'))));
+  check('the chart lives inside an already-revealed card, not the reveal array',
+    /html \+= '<div class="dsection" id="rateWrap">'/.test(TT) && !/'rateWrap'/.test(TT.slice(TT.indexOf("['answerCard'"), TT.indexOf("].forEach(id =>"))));
+}
+
 /* ---------- 3. TikTok velocity ---------- */
 console.log('\nTikTok view velocity');
 {

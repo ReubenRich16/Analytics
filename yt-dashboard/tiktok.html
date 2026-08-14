@@ -561,6 +561,189 @@
     return out + (keys.length > 1 ? legendHtml(keys.map(s2 => ({ name: s2.name, color: s2.color, opacity: s2.opacity }))) : '');
   }
 
+  // Scatter — the one form here that plots two measures against each other rather
+  // than one over time, so it can answer "which videos punch above their weight".
+  // Emphasis pattern: the newest upload is the accent, everything else recedes.
+  // Views across, LIKE RATE up a log axis — not likes up a linear one.
+  //
+  // The old form plotted views against likes, and its stated job was to surface videos
+  // that get few views but lots of love. It could not do that job: a 145-view video with
+  // an 8.28% like rate has twelve likes, so it landed at 5% across and 20% up — the most
+  // crowded corner of the plot, the hardest place to see anything. The chart put the very
+  // videos it existed to reveal where they could not be found. On these axes that video
+  // is the highest dot on the plot, 94% up, directly labelled.
+  //
+  // Two more measured reasons the old axes were wasteful. Views and likes correlate at
+  // r=0.60, so a third of the old vertical position merely restated the horizontal one;
+  // against log like rate that redundancy drops to a quarter. And "did this beat my
+  // usual?" changes from judging distance from a diagonal — genuinely hard — to whether a
+  // dot sits above a horizontal line.
+  //
+  // Log on y, linear on x, and the asymmetry is deliberate. Like rate is hard
+  // right-skewed (69 of 84 videos between 0.5% and 2.5%): on a linear axis it re-creates
+  // exactly the crush this change exists to remove. Views are not skewed — a modest left
+  // tail and a dense hump — so a log x would squeeze the busiest region and ADD overlaps.
+  function ratePlotHtml(points, tips, opts) {
+    opts = opts || {};
+    /* R was 16 and B was 56. The right margin mattered: the last x tick is centred on the
+       plot's right edge, so "2.5k" ran from 587 to 621 in a 620-wide frame and lost a pixel,
+       and a five-digit count would have lost a character. B was 32px of dead air between
+       the tick row and the axis title, which is height the dense middle can use. */
+    const g = { w: 620, h: 340, L: 52, R: 28, T: 26, B: 44 };
+    const PW = g.w - g.L - g.R, PH = g.h - g.T - g.B;
+    // target 5, not 4: niceScale(0, 2410, 4) rounds up to 3000 and throws away a fifth of
+    // the width on empty space — a bug the old chart shipped with
+    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 5);
+    // snap the rate axis to a fixed ladder so the labels are always numbers a person
+    // recognises, and so the axis does not silently rescale between visits
+    const LAD = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
+    const rates = points.map(p => p.rate).filter(v => v > 0);
+    const rlo = Math.min(...rates), rhi = Math.max(...rates);
+    let ylo = LAD[0], yhi = LAD[LAD.length - 1];
+    for (const v of LAD) if (v <= rlo) ylo = v;
+    for (let i = LAD.length - 1; i >= 0; i--) if (LAD[i] >= rhi) yhi = LAD[i];
+    if (yhi <= ylo) yhi = ylo * 10;
+    const lgLo = Math.log10(ylo), lgSpan = Math.log10(yhi) - lgLo;
+    const yTicks = LAD.filter(v => v >= ylo && v <= yhi);
+    const X = v => g.L + (v - sx.lo) / (sx.hi - sx.lo || 1) * PW;
+    const Y = v => g.h - g.B - (Math.log10(Math.min(yhi, Math.max(ylo, v))) - lgLo) / (lgSpan || 1) * PH;
+    const base = g.h - g.B;
+    let frame = '';
+    for (const t of yTicks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) frame += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc((t < 1 ? t : Math.round(t)) + '%') + '</text>';
+    }
+    for (const t of sx.ticks) frame += '<text class="ax" x="' + X(t).toFixed(1) + '" y="' + (base + 16) + '" text-anchor="middle">' + esc(axisNum(t)) + '</text>';
+    frame += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    if (opts.xLabel) frame += '<text class="ax" x="' + ((g.L + g.w - g.R) / 2).toFixed(1) + '" y="' + (g.h - 8) + '" text-anchor="middle">' + esc(opts.xLabel) + '</text>';
+    // Two thresholds, not gridlines, so dashed is right. Both are MEDIANS rather than
+    // averages, which is what lets the caption say "half your videos" and be literally
+    // true — an average would be dragged around by a single unusual video.
+    /* Both references are labelled where they sit.
+
+       The earlier version deliberately labelled neither, on the reasoning that the densest
+       band of videos sits ON the typical rate so any label lands on a dot. That reasoning
+       was right about the collision and wrong about the fix: it left two dashed lines on
+       the chart with nothing anywhere saying what the vertical one was, and a reference
+       nobody can name is furniture rather than information. A label with a surface halo
+       (see .chart .reft) survives landing on a dot, which is what makes naming them cheap. */
+    let ref = '';
+    if (opts.medRate > 0) {
+      const y = Y(opts.medRate);
+      ref += '<line class="refline" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>' +
+        '<text class="reft" x="' + (g.w - g.R) + '" y="' + (y - 6).toFixed(1) + '" text-anchor="end">typical ' + opts.medRate.toFixed(1) + '%</text>';
+    }
+    if (opts.medViews > 0) {
+      const x = X(opts.medViews);
+      ref += '<line class="refline" x1="' + x.toFixed(1) + '" y1="' + g.T + '" x2="' + x.toFixed(1) + '" y2="' + base + '"/>' +
+        '<text class="reft" x="' + (x + 6).toFixed(1) + '" y="' + (g.T + 10) + '">typical ' + fmt.format(Math.round(opts.medViews)) + ' views</text>';
+    }
+    const sxs = points.map(p => X(p.x)), sys = points.map(p => Y(p.rate));
+    const ci = chartPush({ tips, sxs, sys, w: g.w, h: g.h, scatter: true });
+    // Several themes are deliberately monochromatic, and the palette validator confirms
+    // --live against --muted falls below the normal-vision separation floor in a number
+    // of them — so the two callouts are carried by SIZE, a surface ring and a direct
+    // label. Lightness (--text vs --muted) is the one channel that survives every theme.
+    const r = Math.max(2.6, Math.min(5.2, 4.6 * Math.sqrt(84 / Math.max(1, points.length))));
+    let dots = '', marks = '';
+    /* A callout is a dot, a short leader, and a label held off the dot.
+
+       It used to place the label 8px above the mark with no leader, which put "newest"
+       straight onto the typical-rate dashed line — the newest video sits near the median
+       by definition, so that collision was not bad luck, it was the common case. Offsetting
+       further without a leader just orphans the label among 84 other dots. The leader is
+       what buys the distance; the halo on .val is what survives the dots it crosses. */
+    const callout = (i, cls, fill, mul, text) => {
+      const cx = sxs[i], cy = sys[i];
+      // flip to the left near the right edge, so a long label never runs off the plot
+      const flip = cx > g.w - g.R - 130;
+      const dx = flip ? -18 : 18;
+      /* Push the label AWAY from the typical-rate line rather than across it. Going up is
+         the default, but the newest video sits close to the median by definition — that is
+         what makes it typical — so up is exactly where the line usually is. The halo keeps
+         such a label readable; it should not have to. */
+      const medY = opts.medRate > 0 ? Y(opts.medRate) : null;
+      const clear = v => medY == null || Math.abs(cy + v - medY) >= 13;
+      let dy = cy < g.T + 40 ? 20 : -20;
+      if (!clear(dy)) dy = clear(-dy) ? -dy : (dy < 0 ? -32 : 32);
+      const lx = cx + dx, ly = Math.max(g.T + 10, Math.min(base - 6, cy + dy));
+      return '<line class="lead" x1="' + (cx + (flip ? -1 : 1) * (r * mul + 2)).toFixed(1) + '" y1="' + cy.toFixed(1) +
+        '" x2="' + (lx - (flip ? -3 : 3)).toFixed(1) + '" y2="' + (ly + 3).toFixed(1) + '"/>' +
+        '<circle class="pt ' + cls + '" data-i="' + i + '" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (r * mul).toFixed(1) +
+        '" style="fill:' + fill + ';stroke:var(--ink);stroke-width:2"/>' +
+        '<text class="val" x="' + lx.toFixed(1) + '" y="' + (ly + 4).toFixed(1) + '"' +
+        (flip ? ' text-anchor="end"' : '') + '>' + esc(text) + '</text>';
+    };
+    points.forEach((p, i) => {
+      if (p.hot || p.best) return;
+      // data-i, because DOM order is not data order here: the two callouts are skipped in
+      // this pass and appended afterwards, so every dot past the first callout sits at a
+      // different index than its point. See moveTip.
+      dots += '<circle class="pt" data-i="' + i + '" cx="' + sxs[i].toFixed(1) + '" cy="' + sys[i].toFixed(1) + '" r="' + r.toFixed(1) + '" style="fill:var(--muted);stroke:var(--ink);stroke-width:2;opacity:.7"/>';
+    });
+    // callouts draw last so nothing can cover them; best-loved under newest if they clash
+    points.forEach((p, i) => { if (p.best && !p.hot) marks += callout(i, 'best', 'var(--text)', 1.3, p.rate.toFixed(1) + '% — best-loved'); });
+    points.forEach((p, i) => { if (p.hot) marks += callout(i, 'hot', 'var(--live)', 1.5, 'newest'); });
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      frame + ref + dots + marks + '</svg>';
+  }
+
+  /* The same question, answered by reading instead of by hunting a corner.
+
+     The scatter shows all 85 videos at once and that overview is real information, but it
+     asks you to find the top-left corner and then work out which dot is which. This ranks
+     them, so "which punched above their weight" is the first row rather than a search. It
+     is the better of the two on a phone, where 85 dots in 620px never really worked.
+
+     Deliberately NOT a replacement. It shows eleven videos where the scatter shows all of
+     them, and it loses the shape of the cloud — so the two are a toggle, and the scatter
+     stays the default. Views ride along on the right because a 8.2% rate on 146 views and
+     the same rate on 2,000 are different achievements, and a ranking on rate alone hides
+     that. Identity here comes from row position and text rather than colour, which is why
+     this view is the one that is legible with any kind of colour vision. */
+  function rankListHtml(points, tips, opts) {
+    opts = opts || {};
+    const H = 26, PAD = 34;
+    const top = points.map((p, i) => ({ p, i })).sort((a, b) => b.p.rate - a.p.rate).slice(0, 10);
+    const hotIdx = points.findIndex(p => p.hot);
+    if (hotIdx >= 0 && !top.some(t => t.i === hotIdx)) top.push({ p: points[hotIdx], i: hotIdx, extra: true });
+    if (!top.length) return '';
+    const w = 620, L = 30, R = 116, h = PAD + top.length * H + 16;
+    /* The bar can only use part of the track. The value label sits after the dot, and at
+       full width the longest one ran into the views column. */
+    const track = (w - L - R) * 0.62;
+    const hi = Math.max(...top.map(t => t.p.rate), 0.0001);
+    const ci = chartPush({ tips, rows: true, rowIdx: top.map(t => t.i), w, h, H, top: PAD });
+    let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' +
+      esc(opts.label || 'Videos ranked by like rate') + '">' +
+      '<text class="ax hdr" x="' + (L + 20) + '" y="14" text-anchor="end">RANK</text>' +
+      '<text class="ax hdr" x="' + (L + 34) + '" y="14">LIKE RATE — share of viewers who liked it</text>' +
+      '<text class="ax hdr" x="' + (w - 8) + '" y="14" text-anchor="end">VIEWS</text>' +
+      '<line class="axis-line" x1="' + L + '" y1="20" x2="' + (w - 8) + '" y2="20"/>';
+    if (opts.medRate > 0) {
+      const mx = L + 34 + opts.medRate / hi * track;
+      out += '<line class="refline" x1="' + mx.toFixed(1) + '" y1="24" x2="' + mx.toFixed(1) + '" y2="' + (PAD + top.length * H - 6) + '"/>' +
+        '<text class="reft" x="' + (mx + 5).toFixed(1) + '" y="' + (PAD - 1) + '">typical ' + opts.medRate.toFixed(1) + '%</text>';
+    }
+    // a transparent band per row: the hit target has to be the row, not the 9px dot
+    top.forEach((t, n) => out += '<rect class="rowhit" x="' + L + '" y="' + (PAD + n * H + 1) +
+      '" width="' + (w - L - 8) + '" height="' + (H - 2) + '" rx="5"/>');
+    top.forEach((t, n) => {
+      const p = t.p, y = PAD + n * H + 14, bw = p.rate / hi * track;
+      const cls = p.hot ? 'hot' : p.best ? 'best' : '';
+      const fill = p.hot ? 'var(--live)' : p.best ? 'var(--text)' : 'var(--muted)';
+      out += '<text class="ax" x="' + (L + 20) + '" y="' + (y + 4) + '" text-anchor="end">' + (t.extra ? '·' : n + 1) + '</text>' +
+        '<line class="rowtrack" x1="' + (L + 34) + '" y1="' + y + '" x2="' + (L + 34 + bw).toFixed(1) + '" y2="' + y + '"/>' +
+        '<circle class="pt ' + cls + '" data-i="' + t.i + '" cx="' + (L + 34 + bw).toFixed(1) + '" cy="' + y +
+        '" r="' + (p.hot || p.best ? 6 : 4.4) + '" style="fill:' + fill + ';stroke:var(--ink);stroke-width:2"/>' +
+        '<text class="val" x="' + (L + 34 + bw + 11).toFixed(1) + '" y="' + (y + 4) + '">' + p.rate.toFixed(1) + '%' +
+        (p.hot ? ' · newest' : p.best ? ' · best-loved' : '') + '</text>' +
+        '<text class="ax vnum" x="' + (w - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + esc(fmt.format(p.x)) + '</text>';
+    });
+    return out + '</svg>';
+  }
+
   /* The tooltip engine, identical to index.html's and pinned that way by a test.
 
      What was here before resolved an index exactly one way — nearest point along x — which
@@ -2186,6 +2369,45 @@
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
   }
 
+  /* Two views of the same question, because neither one answers it alone.
+
+     The scatter shows every post at once and keeps the shape of the cloud, which is real
+     information. The ranking answers "which punched above their weight" by reading rather
+     than by hunting a corner, works on a phone, and stays legible with any colour vision
+     — but it shows eleven videos, not eighty-five. Scatter is the default; the toggle is
+     for when you want the list. Same numbers either way. */
+  let rateView = 'scatter', rateState = null;
+  function rateBodyHtml() {
+    const s = rateState;
+    if (!s) return '';
+    const common = { label: 'Like rate against views, one dot per post', xLabel: 'Views →',
+                     medRate: s.medRate, medViews: s.medViews };
+    return '<h4>Love per view — every post at once</h4>' +
+      '<div class="range-row pjtabs">' +
+        '<button class="ghost' + (rateView === 'scatter' ? ' active' : '') + '" data-rv="scatter">Scatter</button>' +
+        '<button class="ghost' + (rateView === 'rank' ? ' active' : '') + '" data-rv="rank">Ranked</button>' +
+      '</div>' +
+      (rateView === 'rank'
+        ? '<p class="explain">Your ten highest like rates, plus the newest wherever it lands. The dashed line is ' +
+          'your typical rate (' + s.medRate.toFixed(1) + '%). Views are on the right because the same rate on 150 ' +
+          'views and on 2,000 are different achievements — a ranking on rate alone would hide that.</p>' +
+          rankListHtml(s.pts, s.sTips, common)
+        : '<p class="explain">Each dot is a post: how many people found it across the bottom, and what share of them ' +
+          'liked it up the side. The horizontal line is your typical rate (' + s.medRate.toFixed(1) + '%), so ' +
+          s.above + ' of your ' + s.pts.length + ' posts sit on or above it — that is what "typical" means here, not ' +
+          'good or bad. <b>The top-left corner is the interesting one</b>: ' + s.quiet + ' posts that fewer people saw ' +
+          'but a bigger share of them loved. Your best-loved and your newest are labelled. Hover or tap any dot for ' +
+          'the full numbers.</p>' +
+          ratePlotHtml(s.pts, s.sTips, common));
+  }
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-rv]') : null;
+    if (!b) return;
+    rateView = b.dataset.rv;
+    const el = $('rateWrap');
+    if (el) el.innerHTML = rateBodyHtml();
+  });
+
   /* ---------- breakdown + coaching ---------- */
   function renderBreakdown() {
     const el = $('breakdownContent');
@@ -2216,6 +2438,40 @@
       mcell('Comments /1k', (t.views ? t.comments / t.views * 1000 : 0).toFixed(1)) +
       mcell('Share rate', (t.views ? t.shares / t.views * 100 : 0).toFixed(2) + '%') +
       '</div></div>';
+    /* Love per view — reach and reaction on one plot, so a post that few people saw but a
+       big share of them liked is visible instead of buried under a ranking by views. The
+       two renderers are the YouTube page's, verbatim; the numbers behind them are
+       TikTok's, and the tooltip carries shares per thousand, which YouTube has no field
+       for. */
+    const pts = videos.filter(v => (v.view_count || 0) > 0).map(v => ({
+      id: v.id, x: v.view_count || 0, y: v.like_count || 0,
+      rate: (v.like_count || 0) / v.view_count * 100,
+      cpk: (v.comment_count || 0) / v.view_count * 1000,
+      spk: (v.share_count || 0) / v.view_count * 1000,
+      cap: capOf(v), at: (v.create_time || 0) * 1000
+    }));
+    /* Two gates, not one. Five points is about the cloud being worth drawing at all, and
+       is the YouTube page's floor too. The second is TikTok's own: a young account can
+       have real views and zero likes on every post, and a like-rate axis has nothing to
+       say about that — the log ladder collapses to one decade and every dot lands flat on
+       the baseline. A chart that says nothing is worse than no chart, because it looks
+       like it said something. */
+    if (pts.length >= 5 && pts.some(p => p.rate > 0)) {
+      const newest = pts.reduce((a, b) => (b.at > a.at ? b : a));
+      const bestLoved = pts.reduce((a, b) => (b.rate > a.rate ? b : a));
+      for (const p of pts) { p.hot = p.id === newest.id; p.best = p.id === bestLoved.id; }
+      const med = arr => { const q = arr.slice().sort((a, b) => a - b), k = q.length;
+        return k ? (k % 2 ? q[(k - 1) / 2] : (q[k / 2 - 1] + q[k / 2]) / 2) : 0; };
+      const medRate = med(pts.map(p => p.rate)), medViews = med(pts.map(p => p.x));
+      const above = pts.filter(p => p.rate >= medRate).length;
+      const quiet = pts.filter(p => p.rate >= medRate && p.x < medViews).length;
+      const sTips = pts.map(p => p.cap + ' \u2014 ' + fmt.format(p.x) + ' views \u00b7 ' + fmt.format(p.y) + ' likes \u00b7 ' +
+        p.rate.toFixed(1) + '% like rate (' + (medRate ? (p.rate / medRate).toFixed(1) : '1.0') + '\u00d7 typical) \u00b7 ' +
+        p.cpk.toFixed(1) + ' comments/1k \u00b7 ' + p.spk.toFixed(1) + ' shares/1k \u00b7 ' +
+        new Date(p.at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }));
+      rateState = { pts, sTips, medRate, medViews, above, quiet };
+      html += '<div class="dsection" id="rateWrap">' + rateBodyHtml() + '</div>';
+    }
     const top = scored().sort((a, b) => scoreOf(b) - scoreOf(a));
     html += section('Top 5 posts', 'By total views \u2014 or the projected first-48-hour total while a launch is still running, so a new post can appear here on merit rather than on being new.',
       hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(scoreOf(v)), valText: fmt.format(Math.round(scoreOf(v))) + ' views' })), { color: 'var(--up)' }));
