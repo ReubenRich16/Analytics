@@ -19,7 +19,9 @@ whatever). The app never sees an email or password — TikTok just returns an
 done by *logging into her account*, not by typing an email.
 
 **What the data can and can't do.** TikTok's free Display API gives per-video
-**views, likes, comments, shares** (sometimes saves), plus caption, cover image,
+**views, likes, comments, shares** — not saves, despite what this line used to say;
+no save or favourite field is requested, or available under these scopes — plus
+caption, cover image,
 duration and post time — and profile-level **followers, following, total likes,
 video count**. It does **not** provide retention, average watch time, traffic
 sources, search terms, audience demographics, or impressions/CTR. Those live only
