@@ -375,12 +375,17 @@
   const flash = el => { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); };
   const section = (title, explainer, body) => body ? '<div class="dsection"><h4>' + title + '</h4><p class="explain">' + explainer + '</p>' + body + '</div>' : '';
   const mcell = (l, v, s) => '<div class="mcell"><div class="label">' + l + '</div><div class="val">' + v + '</div>' + (s ? '<div class="sub">' + s + '</div>' : '') + '</div>';
+  /* opts.color paints every bar; r.color paints one, and r.strong bolds it. The race needs
+     to say "this row is the post you are looking at" among ten rivals, and colour alone
+     would be doing that with hue on a page that ships fourteen themes. Existing callers
+     pass neither, so their output is unchanged byte for byte. */
   function hbarList(rows, opts) {
     const max = Math.max(1, ...rows.map(r => r.val));
     return rows.map(r => {
       const val = esc(r.valText || fmt.format(r.val));
-      return '<div class="hbar-row" title="' + esc(r.label) + '"><div class="hlabel">' + esc(r.label) + '</div>' +
-        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (opts && opts.color ? ';background:' + opts.color : '') + '"></div></div>' +
+      const col = r.color || (opts && opts.color);
+      return '<div class="hbar-row"' + (r.strong ? ' style="font-weight:700"' : '') + ' title="' + esc(r.label) + '"><div class="hlabel">' + esc(r.label) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (col ? ';background:' + col : '') + '"></div></div>' +
         '<div class="hval">' + val + '</div></div>';
     }).join('');
   }
@@ -868,7 +873,9 @@
         s: rec.s.map(p => [t0 + p[0] * 60000, p[1]])
       };
     }
-    if (Object.keys(conv.videos).length) mergeHist(conv);
+    // a curve that lands after the card was drawn would otherwise wait a whole poll to
+    // appear in the race — pullLaunches is deliberately not awaited inside poll()
+    if (Object.keys(conv.videos).length) { mergeHist(conv); if (ttRaceCur) renderTtRace(); }
   }
 
   /* ---------- auth ---------- */
@@ -1619,6 +1626,87 @@
     $('latestNext').disabled = slotIdx <= 0;
     renderLatest(v);
   }
+  /* ---------- the same-age race ----------
+     The YouTube page's renderLiveRace, off a different source. There the rival curves come
+     from a recorder that only runs while a browser is open, so its copy has to apologise
+     for thin history and ask you to leave the tab open. Here every sample was written by
+     the Worker on a cron with nothing open, so the honest limits are different ones:
+     /tiktok/history serves an absolute three-day window, /tiktok/launches serves the first
+     week of each FINISHED launch, and mergeHist keeps the twenty newest posts. Past a week
+     nothing is recorded at a comparable age on any post, which is where the cutoff comes
+     from — and TikTok has no official-stats race to hand over to, so it hands over to the
+     hour-by-hour life chart further down the same card. */
+  const TT_RACE_MAX_AGE = PJ_WEEK;   // minutes — as far as a reference curve is ever shipped
+  const TT_RACE_STALE = 30;          // minutes past the end of a recording before it is "last known"
+  let ttRaceMode = 'latest', ttRaceCur = null;
+  /* viewsAtAge, over a pjCurveOf curve instead of a snapshot array. pjAt already IS that
+     interpolation, including holding the last recorded value past the end; the only thing
+     missing is the flag that says the value is being held rather than measured. */
+  const ttRaceAt = (c, t) => {
+    if (!c || !c.length || t < c[0][0]) return null;
+    const v = pjAt(c, t);
+    return v == null ? null : { v: Math.round(v), stale: t - c[c.length - 1][0] > TT_RACE_STALE };
+  };
+  // the live post if the API still returns it, otherwise whatever the recording remembers —
+  // a post that scrolled out of the 60-post window keeps racing rather than vanishing
+  const ttRaceTitle = (id, rec) => {
+    const live = videos.find(x => x.id === id);
+    return live ? capOf(live) : (((rec && rec.title) || '').trim() || '(no caption)');
+  };
+  function renderTtRace(v) {
+    const el = $('ttRaceContent');
+    ttRaceCur = v || ttRaceCur;
+    v = ttRaceCur;
+    if (!el || !v || !v.create_time) return;
+    const t = Math.max(0, (Date.now() - v.create_time * 1000) / 60000);
+    const views = v.view_count || 0;
+    const pace = t > 0 ? views / t : 0;
+    const head = '<p class="explain" style="margin-bottom:10px"><b style="color:var(--text)">' + fmt.format(views) + ' views</b> at <b style="color:var(--text)">' + fmtAge(t) + '</b> old' +
+      (pace >= 0.05 ? ' · averaging ' + (pace >= 10 ? Math.round(pace) : pace.toFixed(1)) + ' views/min' : '') + '</p>';
+    if (t > TT_RACE_MAX_AGE) {
+      el.innerHTML = head + '<p class="dnote">Past a week old, so the minute race has retired — your Worker\u2019s recordings of the other posts do not reach this age either, and racing against their last known counts would not be a race. Every hour of this one\u2019s life is on the chart below.</p>';
+      return;
+    }
+    let rivals = [];
+    for (const [id, rec] of Object.entries((hist && hist.videos) || {})) {
+      if (id === v.id || !rec || !rec.create_time) continue;
+      // a post that has not lived this long yet has no answer to give about this age.
+      // The YouTube page has no such filter because its rivals are nearly always older;
+      // here the store holds the twenty newest, so without it an older slot would race a
+      // wall of "(last known)" — which is not a race, it is a list of current totals.
+      if ((Date.now() - rec.create_time * 1000) / 60000 < t) continue;
+      const at = ttRaceAt(pjCurveOf(id, rec.create_time, rec), t);
+      if (at) rivals.push({ id, rec, at });
+    }
+    if (!rivals.length) {
+      el.innerHTML = head + '<p class="dnote">Nothing to race against yet — no other post your Worker recorded had already reached ' + fmtAge(t) + ' old. Recording is automatic and needs nothing open, so this fills itself in as you publish.</p>';
+      return;
+    }
+    rivals = ttRaceMode === 'best'
+      ? rivals.sort((a, b) => b.at.v - a.at.v).slice(0, 10)
+      : rivals.sort((a, b) => b.rec.create_time - a.rec.create_time).slice(0, 10);
+    const rows = [
+      { label: '\u2605 ' + capOf(v), val: views, valText: fmt.format(views) + ' views', color: 'var(--live)', strong: true },
+      ...rivals.map(r => ({ label: ttRaceTitle(r.id, r.rec), val: r.at.v, valText: fmt.format(r.at.v) + ' views' + (r.at.stale ? ' (last known)' : '') }))
+    ].sort((a, b) => b.val - a.val);
+    const rank = rows.findIndex(r => r.strong) + 1;
+    el.innerHTML = head +
+      '<p class="explain" style="margin-bottom:10px"><b>#' + rank + ' of ' + rows.length + '</b> vs ' +
+      (ttRaceMode === 'best' ? 'your <b>10 best recorded openings</b>' : 'your <b>10 most recent recorded posts</b>') +
+      ' when they were exactly this old</p>' +
+      hbarList(rows, { color: 'var(--accent)' });
+  }
+  // delegated, for the same reason the projection tabs are: showSlot rebuilds this whole
+  // card on every poll, so a listener bound to the row would be thrown away with it
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-ttrace]') : null;
+    if (!b) return;
+    ttRaceMode = b.dataset.ttrace;
+    const row = b.parentNode;
+    if (row) row.querySelectorAll('button[data-ttrace]').forEach(x => x.classList.toggle('active', x === b));
+    renderTtRace();
+  });
+
   function renderLatest(v) {
     // filled by renderProjection() once the card is in the DOM — it is the first thing
     // on the card because "where is this heading" is the question the card exists to answer
@@ -1633,6 +1721,19 @@
       mcell('Length', (v.duration || 0) + 's') +
       mcell('Age', fmtAgo(v.create_time * 1000)) +
       '</div>';
+    /* Same-age race. A runtime id like pjWrap and lifeSection rather than static markup:
+       showSlot rebuilds this whole card on every poll, so there is nothing to mount into.
+       It sits directly above the raw recorded curve — comparison first, then this post's
+       own line, then the grade, then its whole life. */
+    html += '<div class="dsection"><h4>' + (slotIdx === 0 ? 'Live race' : 'Same-age race') + ' \u2014 minute by minute</h4>' +
+      '<p class="explain">' + (slotIdx === 0
+        ? 'Real time: this post right now against what your earlier posts had when they were exactly this old. Updates on every refresh.'
+        : 'This post at ' + fmtAge(Math.max(0, (Date.now() - v.create_time * 1000) / 60000)) + ' old against what your other posts had at that same age.') + '</p>' +
+      '<div class="range-row" id="ttRaceModes">' +
+      '<button class="ghost' + (ttRaceMode === 'latest' ? ' active' : '') + '" data-ttrace="latest">Latest 10</button>' +
+      '<button class="ghost' + (ttRaceMode === 'best' ? ' active' : '') + '" data-ttrace="best">Best 10 openings</button>' +
+      '</div>' +
+      '<div id="ttRaceContent"><p class="dnote">warming up\u2026</p></div></div>';
     // minute-by-minute, recorded by the Worker even with no browser open
     const rec = hist && hist.videos && hist.videos[v.id];
     if (rec && rec.s && rec.s.length > 1) {
@@ -1702,6 +1803,7 @@
       '<div class="dsection" id="lifeSection" style="display:none">' +
       '<h4>Every hour since it went up</h4><p class="explain" id="lifeExplain"></p><div id="lifeChart"></div></div>';
     renderProjection(v);
+    renderTtRace(v);
     loadLife(v.id);
   }
 
