@@ -233,6 +233,24 @@ console.log('\ntile sparklines');
   check('it repaints on the poll that refreshes the history', /renderAnswer\(\); renderTtSparks\(\);/.test(TT));
 }
 
+/* ---------- 2e. the sound toggle ---------- */
+console.log('\nthe sound toggle TikTok never had');
+{
+  check('the button is in the TikTok header', /id="soundBtn"/.test(TT));
+  check('and it starts with an aria state, not just a glyph', /id="soundBtn"[^>]*aria-pressed/.test(TT));
+  check('it writes the preference the YouTube page reads',
+    /localStorage\.setItem\('cc_sound', soundOn \? 'on' : 'off'\)/.test(TT));
+  check('both pages use the same key, so the choice follows the person',
+    /'cc_sound'/.test(YT) && /'cc_sound'/.test(TT));
+  check('the state is painted, not assumed', /function paintSound\(\)/.test(TT));
+  check('and the glyph changes as well as the class', /b\.textContent = soundOn \? /.test(TT));
+  /* No per-event chimes on this page, deliberately: the YouTube page rings on new likes
+     and subscribers, but TikTok polls every 30-120s and cannot tell one like from five,
+     so the only thing that makes a sound here is the milestone party. */
+  check('turning it on previews the one sound this page actually makes',
+    /if \(soundOn\) \{ unlockAudio\(\); partySound\(\); \}/.test(TT));
+}
+
 /* ---------- 3. TikTok velocity ---------- */
 console.log('\nTikTok view velocity');
 {

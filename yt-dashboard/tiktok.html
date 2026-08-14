@@ -99,6 +99,7 @@
         <option value="60000" selected>60s refresh</option>
         <option value="120000">2m refresh</option>
       </select>
+      <button class="ghost" id="soundBtn" title="Sound when a milestone lands" aria-pressed="true">🔊</button>
       <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
       <button class="ghost" id="pauseBtn">Pause</button>
       <button class="ghost" id="signOutBtn">Sign out</button>
@@ -2703,6 +2704,34 @@
   let savedTheme = 'midnight';
   try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
   applyTheme(savedTheme);
+
+  /* The mute button this page never had.
+
+     `cc_sound` is shared with the YouTube page on purpose — it is a choice about the
+     person, not the tab they happen to be on — and until now this page could only READ it.
+     Muting a TikTok milestone meant going to the YouTube dashboard to do it, which is the
+     kind of thing nobody guesses.
+
+     No per-event chimes to go with it, deliberately. The YouTube page rings on new likes
+     and subscribers; here the only sound is the milestone party, which is the once-in-a-
+     while event that earns one. A chime per like against a 30-second poll would be a
+     machine gun on a good day, and the page cannot tell one like from five. */
+  function paintSound() {
+    const b = $('soundBtn');
+    if (!b) return;
+    b.textContent = soundOn ? '\ud83d\udd0a' : '\ud83d\udd07';
+    b.classList.toggle('on', soundOn);
+    b.setAttribute('aria-pressed', String(soundOn));
+    b.title = soundOn ? 'Sound when a milestone lands \u2014 tap to mute' : 'Muted \u2014 tap to turn sound back on';
+  }
+  paintSound();
+  $('soundBtn').addEventListener('click', () => {
+    soundOn = !soundOn;
+    try { localStorage.setItem('cc_sound', soundOn ? 'on' : 'off'); } catch (e) {}
+    paintSound();
+    // a preview, which doubles as the gesture browsers require before audio will play
+    if (soundOn) { unlockAudio(); partySound(); }
+  });
 
   /* ---------- rooms ----------
      The same mechanism as the YouTube page, against the same shared CSS: the cards never
