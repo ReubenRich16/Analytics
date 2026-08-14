@@ -337,6 +337,91 @@ console.log('\nTikTok view velocity');
   check('a short strip does not render as two slabs', /\.bars \.bar \{[^}]*max-width:16px/.test(CSS));
 }
 
+/* ---------- 3b. export / import, and the two things that must never leave ---------- */
+/* This is the one add-on where a mistake is a privacy bug rather than a broken chart, so
+   it is tested by RUNNING the collector against a seeded store rather than by reading it.
+
+   Two identifiers live in this browser. tt_sess is a live Bearer token for the account.
+   And the history store's KEY is named after the account — tt_hist:<open_id> — so a
+   filename, not a value, is the leak. Hence an allow-list rather than the deny-list the
+   YouTube page can afford: its keys are a fixed set, this one has a key family. */
+console.log('\nexport and import');
+{
+  const i = TT.indexOf('  function ttCollect() {');
+  check('ttCollect exists', i > 0);
+  const body = TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n';
+
+  const store = {
+    tt_sess: 'SECRET-BEARER-TOKEN',
+    'tt_hist:aBcOpEnId12345': JSON.stringify({ videos: { p1: { s: [[1, 2]] } } }),
+    tt_worker: 'https://mine.workers.dev',
+    cc_theme: 'midnight', cc_room_tt: 'posts', cc_onepage: '1', cc_sound: 'off',
+    cc_celebrated: JSON.stringify({ 'tt:aBcOpEnId12345:follower_count:seen': 300,
+                                    'yt:UC123:subs:seen': 4900 }),
+    'cc:launch:v1:xyz': 'a youtube cache entry',
+    tt_hist: 'the legacy device-wide store'
+  };
+  const keys = Object.keys(store);
+  const localStorage = {
+    get length() { return keys.length; },
+    key: n => keys[n],
+    getItem: k => (k in store ? store[k] : null)
+  };
+  const mk = (ls, dflt) => new Function('localStorage', 'CELEB_KEY', 'DEFAULT_WORKER', 'TT_PREFS', 'TT_STAGE', '$',
+    body + '\nreturn ttCollect;')(ls, 'cc_celebrated', dflt,
+      ['cc_theme', 'cc_room_tt', 'cc_onepage', 'cc_sound'], 'tt_hist:@import', () => null);
+  const collect = mk(localStorage, 'https://default.workers.dev');
+  const out = collect();
+  const json = JSON.stringify(out);
+
+  check('the session token is not in the file', !/SECRET-BEARER-TOKEN/.test(json), json.slice(0, 200));
+  check('and tt_sess is not even a key in it', !('tt_sess' in out), Object.keys(out).join(','));
+  /* The subtle one: the value is fine to carry, the KEY names the account. */
+  check('the account id is nowhere in the file, not even in a key name',
+    !/aBcOpEnId12345/.test(json), (json.match(/.{0,40}aBcOpEnId12345.{0,20}/) || [''])[0]);
+  check('the recorded samples still travel, under a placeholder name',
+    out['tt_hist:@import'] && /"p1"/.test(out['tt_hist:@import']), Object.keys(out).join(','));
+  check('the four shared preferences travel', ['cc_theme', 'cc_room_tt', 'cc_onepage', 'cc_sound'].every(k => out[k]));
+  check('the YouTube page\'s celebration rows survive a whole-browser migration',
+    /yt:UC123/.test(out.cc_celebrated || ''), out.cc_celebrated);
+  check('but the TikTok ones, which are named after the account, do not',
+    !/tt:aBcOpEnId12345/.test(out.cc_celebrated || ''), out.cc_celebrated);
+  check('the legacy device-wide store is not resurrected', !('tt_hist' in out));
+  check('and the YouTube page\'s own caches are left to the YouTube page\'s export',
+    !Object.keys(out).some(k => k.startsWith('cc:')), Object.keys(out).join(','));
+
+  // a Worker URL is carried only when it is not the one already in the page
+  const dflt = mk({ length: 1, key: () => 'tt_worker',
+                    getItem: k => (k === 'tt_worker' ? 'https://default.workers.dev' : null) },
+                  'https://default.workers.dev');
+  check('a default Worker URL is not written into the file', !dflt().tt_worker,
+    'it is already hardcoded in a public repo; a custom one names the user\'s deployment');
+  check('a custom one is', out.tt_worker === 'https://mine.workers.dev', String(out.tt_worker));
+
+  // and the import side refuses a token even if a hand-edited file carries one
+  const imp = TT.slice(TT.indexOf("$('ttImportFile').addEventListener"), TT.indexOf('rd.readAsText(f);'));
+  check('the importer refuses a session token outright', /if \(k === 'tt_sess'\) continue;/.test(imp),
+    'a hostile or hand-edited file must not be able to inject a session');
+  check('and only accepts keys it recognises', /const ok = TT_PREFS\.includes\(k\)/.test(imp));
+  check('an imported store is staged, not written straight onto an account',
+    /localStorage\.setItem\(k\.startsWith\('tt_hist:'\) \? TT_STAGE : k, v\)/.test(imp),
+    'import can run before sign-in, so the account is not known yet');
+  check('and is adopted only into an account with nothing recorded',
+    /if \(!hist\.videos \|\| !Object\.keys\(hist\.videos\)\.length\) \{[\s\S]{0,400}TT_STAGE/.test(TT),
+    'an import must never overwrite history genuinely recorded on this device');
+  check('the placeholder cannot collide with a real account key',
+    /TT_STAGE = 'tt_hist:@import'/.test(TT), 'an open_id cannot contain @');
+
+  // the bar itself is chrome
+  check('the preference list the test injects is the page\'s own',
+    /const TT_PREFS = \['cc_theme', 'cc_room_tt', 'cc_onepage', 'cc_sound'\];/.test(TT),
+    'if the page adds a key here, this test stops covering it');
+  check('the footer bar belongs to no room', /<div class="footer-tools">/.test(TT) &&
+    !/<div class="(card|grid)[^"]*" id="tt(Export|Import|Data)/.test(TT));
+  check('and works before sign-in, so a fresh device can import first',
+    !/'ttExportBtn'|'ttImportBtn'/.test(TT.slice(TT.indexOf("['answerCard'"), TT.indexOf("].forEach(id =>"))));
+}
+
 /* ---------- 4. compare: length ---------- */
 console.log('\ncompare page — video length');
 {

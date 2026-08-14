@@ -267,6 +267,15 @@
 
   </div>
 
+  <!-- Chrome, like the room bar and the drawer: it belongs to no room, and it works before
+       sign-in on purpose so a fresh device can import a saved file before connecting. -->
+  <div class="footer-tools">
+    <span id="ttDataNote" title="Everything this page has saved in this browser"></span>
+    <button class="ghost" id="ttExportBtn">Export saved data</button>
+    <button class="ghost" id="ttImportBtn">Import saved data</button>
+    <input type="file" id="ttImportFile" accept="application/json" style="display:none">
+  </div>
+
 </div>
 
 <!-- PER-POST DETAIL DRAWER — the same deep dive the latest card gives, for any post in
@@ -1087,6 +1096,23 @@
     // the old device-wide key cannot be attributed to an account, so it goes rather than
     // being adopted by whoever happens to sign in first. The Worker re-serves this window.
     try { localStorage.removeItem('tt_hist'); } catch (e) {}
+    /* An imported store arrives before the page knows whose it is — import can run before
+       sign-in — so it waits under a staging key with a placeholder name, and is adopted
+       here into the first account that has nothing recorded yet. The emptiness guard means
+       an import can never overwrite history that was genuinely recorded on this device. */
+    if (!hist.videos || !Object.keys(hist.videos).length) {
+      try {
+        const st = localStorage.getItem(TT_STAGE);
+        if (st) {
+          const h2 = JSON.parse(st);
+          if (h2 && h2.videos) {
+            hist = h2; histSince = newestTs(h2);
+            localStorage.setItem(histKey(openId), st);
+          }
+          localStorage.removeItem(TT_STAGE);
+        }
+      } catch (e) { try { localStorage.removeItem(TT_STAGE); } catch (e2) {} }
+    }
   }
   function mergeHist(b) {
     if (!b) return;
@@ -2922,6 +2948,89 @@
   $('ideaBtn').addEventListener('click', runIdeas);
   $('ideaLatest').addEventListener('click', () => { const s = recent()[0]; if (s) $('ideaDesc').value = capOf(s); });
   $('errorBox').addEventListener('click', clearError);
+
+  /* ---------- export and import everything this browser has saved ----------
+     The YouTube page's pair, with TikTok's two identifier leaks closed.
+
+     An ALLOW-LIST, not a deny-list. index.html can get away with "everything except the
+     token" because its keys are a known fixed set; here the history store is a key FAMILY
+     named after the account (tt_hist:<open_id>), so anything swept in by prefix would
+     carry the account id in the filename. Two things are therefore handled by name rather
+     than by rule: tt_sess is the live Bearer token and is never read on the way out nor
+     accepted on the way in, and the history store is renamed to a placeholder so the
+     open_id never reaches the file at all. */
+  const TT_STAGE = 'tt_hist:@import';
+  const TT_PREFS = ['cc_theme', 'cc_room_tt', 'cc_onepage', 'cc_sound'];
+  const ttNote = t => { const e = $('ttDataNote'); if (e) e.textContent = t; };
+  function ttCollect() {
+    const out = {};
+    for (const k of TT_PREFS) {
+      try { const v = localStorage.getItem(k); if (typeof v === 'string') out[k] = v; } catch (e) {}
+    }
+    /* The celebration ledger is shared with the YouTube page and its TikTok rows are named
+       after the account. They are dropped rather than redacted, which costs nothing:
+       checkMilestones treats a missing row as first sight and records the current value
+       without celebrating, so a fresh device replays no confetti either way. The YouTube
+       rows are kept, so a whole-browser migration does not lose that page's ledger. */
+    try {
+      const c = JSON.parse(localStorage.getItem(CELEB_KEY) || 'null');
+      if (c && typeof c === 'object') {
+        const keep = {};
+        for (const [k, v] of Object.entries(c)) if (!k.startsWith('tt:')) keep[k] = v;
+        if (Object.keys(keep).length) out[CELEB_KEY] = JSON.stringify(keep);
+      }
+    } catch (e) {}
+    // only a Worker the user actually changed is worth carrying — the default is in the page
+    try {
+      const w = localStorage.getItem('tt_worker');
+      if (w && w !== DEFAULT_WORKER) out.tt_worker = w;
+    } catch (e) {}
+    // the recorded samples, under a placeholder so the open_id never reaches the file
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('tt_hist:') && k !== TT_STAGE) { out[TT_STAGE] = localStorage.getItem(k); break; }
+      }
+    } catch (e) {}
+    return out;
+  }
+  $('ttExportBtn').addEventListener('click', () => {
+    const out = ttCollect();
+    const n = Object.keys(out).length;
+    if (!n) { ttNote('nothing saved yet'); return; }
+    const blob = new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tiktok-command-data.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    ttNote('exported ' + n + ' item' + (n === 1 ? '' : 's'));
+  });
+  $('ttImportBtn').addEventListener('click', () => $('ttImportFile').click());
+  $('ttImportFile').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const obj = JSON.parse(rd.result);
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('not a saved-data file');
+        let n = 0;
+        for (const [k, v] of Object.entries(obj)) {
+          if (typeof v !== 'string') continue;
+          if (k === 'tt_sess') continue;            // never, even if the file carries one
+          const ok = TT_PREFS.includes(k) || k === CELEB_KEY || k === 'tt_worker' ||
+            (k.startsWith('tt_hist:') && k !== 'tt_hist');
+          if (!ok) continue;
+          try { localStorage.setItem(k.startsWith('tt_hist:') ? TT_STAGE : k, v); n++; } catch (e2) {}
+        }
+        ttNote('imported ' + n + ' item' + (n === 1 ? '' : 's'));
+        alert('Imported ' + n + ' saved items. Reload the page to use them.');
+      } catch (err) { showError('That file didn\u2019t look right: ' + err.message); }
+    };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
   document.addEventListener('visibilitychange', () => {
     hiddenPaused = document.hidden;
     if (!document.hidden && !paused && session) poll();
