@@ -2481,7 +2481,7 @@
      reads those fields OUTSIDE its try/catch, so a builder that returned null would throw
      uncaught and freeze the whole card rather than one chip — that exact bug shipped on the
      YouTube side once, and scripts/answer-card.test.mjs exists because of it. */
-  const ANSWER_CHIPS = ['Today', 'Newest', 'Engagement', 'Next'];
+  const ANSWER_CHIPS = ['Today', 'Mover', 'Newest', 'Hit rate', 'Engagement', 'Milestone', 'Next'];
   let answerChip = 0;
 
   // the follower history the Worker records every ~3h: [ts, followers, likes, videoCount]
@@ -2673,6 +2673,61 @@
     put('ttFollowersSpark', series(1), 'var(--up)');
   }
 
+  /* Mover — which post did the work in the last day, from the Worker's own recordings.
+     Same rules as the YouTube page: gains scaled to a 24-hour rate because the sampling
+     windows are elastic, a count that went backwards is skipped, and a post not sampled
+     in the last six hours doesn't get to claim "today". A post that has scrolled out of
+     TikTok's 60-post window abstains — there is no caption left to name it by. */
+  function answerMover() {
+    const rec = (hist && hist.videos) || {};
+    const now = Date.now();
+    let total = 0, best = null;
+    for (const [id, r] of Object.entries(rec)) {
+      const arr = r && r.s;
+      if (!arr || arr.length < 2) continue;
+      const v = videos.find(x => x.id === id);
+      if (!v) continue;
+      const latest = arr[arr.length - 1];
+      if (now - latest[0] > 6 * 3600e3) continue;
+      const a = ATB(arr, now - 864e5);
+      if (!a || a === latest) continue;
+      const spanH = (latest[0] - a[0]) / 3600e3;
+      if (spanH < 12 || spanH > 36) continue;
+      const gain = Math.round((latest[1] - a[1]) / spanH * 24);
+      if (gain < 0) continue;
+      total += gain;
+      if (gain > 0 && (!best || gain > best.gain)) best = { id, gain, v };
+    }
+    if (!best || !total) return { h: 'A quiet day so far.', f: '—', p: 'No recorded view movement across your posts in the last day — or your Worker hasn’t reported recently enough to say.' };
+    const share = Math.round(best.gain / total * 100);
+    const verdict = share >= 60 ? 'One post is doing the lifting.' : share >= 35 ? 'A clear front-runner.' : 'The gains are spread out.';
+    return { h: verdict, f: '+' + fmt.format(best.gain) + ' today',
+      p: '“' + capOf(best.v).slice(0, 60) + '” gained ' + fmt.format(best.gain) + ' views in the last day — ' + share + '% of the ' + fmt.format(total) + ' recorded across your posts, scaled to a 24-hour rate.' };
+  }
+  /* Hit rate — run or cold patch, from the same fair scores as every ranking: totals
+     over a comparable stretch, so a still-running launch counts by its projection and
+     an unscoreable one abstains instead of dragging the run down. */
+  function answerHitRate() {
+    const rows = scored().map(v => ({ score: scoreOf(v), pub: (v.create_time || 0) * 1000 })).sort((a, b) => b.pub - a.pub);
+    const recent = rows.slice(0, 5), older = rows.slice(5).map(r => r.score).sort((a, b) => a - b);
+    if (recent.length < 3 || older.length < 4) return { h: 'Too early to call a run.', f: '—', p: 'Once a handful of posts can be scored — and there are enough older ones to set the bar — this says how many of your last five beat your typical post.' };
+    const med = older.length % 2 ? older[older.length >> 1] : (older[older.length / 2 - 1] + older[older.length / 2]) / 2;
+    const above = recent.filter(r => r.score > med).length;
+    const verdict = above >= 4 ? 'You’re on a run.' : above >= 2 ? 'A steady patch.' : above === 1 ? 'A slow patch.' : 'A cold patch.';
+    return { h: verdict, f: above + ' of ' + recent.length,
+      p: 'Of your newest ' + recent.length + ' posts that can be scored, ' + above + ' beat your typical post — the median of everything before them, ' + fmt.format(Math.round(med)) + ' views over a comparable stretch of each one’s life.' };
+  }
+  // Milestone — the Coach room's projection, surfaced where you actually look.
+  // p.text arrives carrying <b> tags for the card that renders HTML; this chip paints
+  // through esc(), so the tags are stripped rather than shown to the reader.
+  function answerMilestone() {
+    const fh = hist && Array.isArray(hist.followers) ? hist.followers : [];
+    const p = fh.length > 3 ? projectMilestone(fh.map(x => [x[0], x[1]]), 'followers') : null;
+    if (!p) return { h: 'Watching for the next round number.', f: fmt.format((me && me.follower_count) || 0) + ' followers', p: 'Once your Worker has a few days of follower history, this projects when you cross the next milestone.' };
+    const pct = Math.max(0, Math.min(100, Math.round(p.cur / p.target * 100)));
+    return { h: p.daysOut != null ? fmt.format(p.target) + ' is in reach.' : 'Next stop: ' + fmt.format(p.target) + '.',
+      f: pct + '% there', p: p.text.replace(/<[^>]*>/g, '') };
+  }
   function renderAnswer() {
     const card = $('answerCard'); if (!card || !videos.length) return;
     card.style.display = 'block';
@@ -2692,7 +2747,7 @@
   function paintAnswer() {
     const el = $('answerBody'); if (!el) return;
     let a;
-    try { a = [answerToday, answerNewest, answerEngagement, answerNext][answerChip](); }
+    try { a = [answerToday, answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip](); }
     catch (e) { a = { h: 'Couldn’t work that one out.', f: '—', p: 'The numbers behind this chip aren’t loaded yet.' }; }
     el.innerHTML = '<div class="ah">' + esc(a.h) + '</div><div class="af">' + esc(a.f) + '</div><p class="ap">' + esc(a.p) + '</p>';
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
@@ -2832,7 +2887,9 @@
     const daysOut = need / perDay, eta = new Date(now + daysOut * 864e5);
     const when = daysOut < 1 ? 'today' : daysOut < 2 ? 'tomorrow' :
       eta.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', ...(eta.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
-    return { cur, target, text: 'At <b>+' + (perDay >= 10 ? fmt.format(Math.round(perDay)) : perDay.toFixed(1)) + ' ' + label +
+    // daysOut travels with it, matching the YouTube page's shape — the answer chip
+    // uses it to tell a dated projection apart from the flat-growth sentence above
+    return { cur, target, daysOut, text: 'At <b>+' + (perDay >= 10 ? fmt.format(Math.round(perDay)) : perDay.toFixed(1)) + ' ' + label +
       '/day</b> you should reach <b>' + fmt.format(target) + '</b> around <b>' + when + '</b>' + (daysOut > 1.5 ? ' (' + Math.round(daysOut) + ' days)' : '') + '.' };
   }
   function milestoneHtml(p) {
