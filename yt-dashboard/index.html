@@ -1008,7 +1008,7 @@
       prevTotals = totals;
       clearError();
       $('liveDot').classList.add('on');
-      setStatus('live · ' + new Date().toLocaleTimeString());
+      setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
       const st = $('statusText');
       st.classList.add('tick');
       requestAnimationFrame(() => requestAnimationFrame(() => st.classList.remove('tick')));
@@ -1071,7 +1071,7 @@
     };
     dislikesOk = M.includes('dislikes');
     savesOk = M.includes('videosAddedToPlaylists');
-    const d = (c.fetchedAt || '').slice(0, 10);
+    const d = c.fetchedAt ? localDay(c.fetchedAt) : '';   // the viewer's day, not UTC's
     let note = '† = YouTube’s official stats, last 28 days' + (d ? ' (fetched ' + d + ')' : '') + ' — they lag 24–48h and won’t match the live columns.';
     if (c.rows && c.rows.length && !dislikesOk) note += ' Dislikes: YouTube didn’t return this metric, so that column is blank — it retries automatically.';
     else if (dislikesOk) {
@@ -1156,7 +1156,20 @@
   }
 
   /* ---------- shared formatting & charts ---------- */
+  /* Two date helpers, and the difference matters.
+
+     `iso` is for TALKING TO YOUTUBE. Its dates stay UTC deliberately: the Analytics API
+     reckons a day in Pacific time, and from Australia UTC tracks that far better than the
+     viewer's own clock does — at 8am in Melbourne it is still yesterday both in UTC and in
+     LA, while the local date has already rolled over and would ask YouTube for a day it has
+     no concept of yet. Both ends of a range shift together either way, so a "28 days"
+     window is always exactly 28 days. Don't "fix" this to local time.
+
+     `localDay` is for SHOWING A HUMAN A DATE. Anything a person reads against their own
+     calendar has to be their own day, so a stamp rendered before 10am in Melbourne doesn't
+     claim yesterday. */
   const iso = d => d.toISOString().slice(0, 10);
+  const localDay = d => new Date(d).toLocaleDateString('en-CA');   // YYYY-MM-DD, viewer's timezone
   function rangeDates(days) {
     const end = new Date();
     const start = days === 0 ? new Date(channelPublished) : new Date(Date.now() - days * 864e5);
@@ -1867,34 +1880,13 @@
         hbarList(pl.rows.map(r => ({ label: plNames[r[0]] || r[0], val: r[1], valText: fmt.format(r[1]) + ' · ' + fmt.format(r[3]) + ' started' })), { color: 'var(--purple)' }));
     }
 
-    // best time to post — from your own uploads' pace (no API for "viewers online", so this is your history)
-    const cand = videoIds.filter(id => meta[id] && perVideo[id]).map(id => {
-      const ageD = (Date.now() - new Date(meta[id].publishedAt)) / 864e5;
-      return { d: new Date(meta[id].publishedAt), rate: perVideo[id].views / Math.max(1, ageD), ok: ageD >= 3 };
-    }).filter(x => x.ok);
-    if (cand.length >= 4) {
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const parts = [
-        { n: 'Morning (6am–12pm)', f: h2 => h2 >= 6 && h2 < 12 },
-        { n: 'Afternoon (12–5pm)', f: h2 => h2 >= 12 && h2 < 17 },
-        { n: 'Evening (5–9pm)', f: h2 => h2 >= 17 && h2 < 21 },
-        { n: 'Night (9pm–6am)', f: h2 => h2 >= 21 || h2 < 6 }
-      ];
-      const dayAgg = {}, partAgg = {};
-      for (const c of cand) {
-        const dn = days[c.d.getDay()];
-        (dayAgg[dn] = dayAgg[dn] || { t: 0, n: 0 }); dayAgg[dn].t += c.rate; dayAgg[dn].n++;
-        const pn = parts.find(p2 => p2.f(c.d.getHours())).n;
-        (partAgg[pn] = partAgg[pn] || { t: 0, n: 0 }); partAgg[pn].t += c.rate; partAgg[pn].n++;
-      }
-      const toRows = agg => Object.entries(agg)
-        .map(([k, v]) => ({ label: k, val: v.t / v.n, valText: fmt.format(Math.round(v.t / v.n)) + ' views/day avg · ' + v.n + ' vid' + (v.n > 1 ? 's' : '') }))
-        .sort((a, b) => b.val - a.val);
-      aud += section('Best time to post — based on your uploads', 'Videos grouped by when you posted them, ranked by how fast they collect views per day since. Your history, not a guarantee — YouTube only shows “when your viewers are online” inside Studio; the API doesn’t share it. The Coach room answers the same question from whole-launch totals instead of pace, so the two can name different slots.',
-        hbarList(toRows(dayAgg), { color: 'var(--gold)' }) +
-        '<p class="explain" style="margin:10px 0 6px">By time of day posted:</p>' +
-        hbarList(toRows(partAgg), { color: 'var(--accent)' }));
-    }
+    /* "Best day/time to post" deliberately lives in the Coach room ONLY. There used to be a
+       second copy here that answered the identical question from views-per-day averages,
+       with its own day-part boundaries — so the two cards could name different slots, and
+       the one here was ranking on the age-inverted metric every other ranking dropped. Two
+       answers to one question is worse than one answer, and this was the wrong one. The
+       section below stays because it asks something genuinely different: not when you
+       should publish, but what hour of the day the views actually land. */
 
     // when views arrive — from the app's own minute-history recordings
     const hourBuckets = new Array(24).fill(0);
@@ -1909,7 +1901,7 @@
     }
     if (hourBuckets.some(v => v > 0)) {
       const hTips = hourBuckets.map((v, h2) => fmt.format(v) + ' views recorded — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm'));
-      aud += section('When views actually arrive (recorded by the app)', 'Views gained per hour of the day, from the minute-history recorded on recent uploads — by this page while it’s open, and around the clock by your Worker if one is connected. It fills in over time — YouTube’s API has no official hour-by-hour data.',
+      aud += section('When views actually arrive (recorded by the app)', 'Views gained per hour of the day, in <b>your own local time</b>, from the minute-history recorded on recent uploads — by this page while it’s open, and around the clock by your Worker if one is connected. It fills in over time — YouTube’s API has no official hour-by-hour data.',
         barChartHtml(hourBuckets, hTips, 'Views by hour of day', { color: 'var(--gold)', x0: '12am', xMid: '12pm', x1: '11pm' }));
     }
 
@@ -1922,7 +1914,7 @@
         // `at`, because the robot's channel history is not evenly spaced either — it writes
         // every ~5 minutes around a launch and hourly otherwise, so index-spacing stretched
         // the busy days and squeezed the quiet ones
-        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', zoom: true, at: chn.map(s2 => s2[0]), x0: shortDate(new Date(chn[0][0]).toISOString().slice(0, 10)), x1: 'now' }));
+        lineChartHtml(sPts, sTips, 'var(--up)', { label: 'Subscriber history', zoom: true, at: chn.map(s2 => s2[0]), x0: shortDate(localDay(chn[0][0])), x1: 'now' }));
       const bIds = Object.keys(hist.bench || {});
       if (bIds.length) {
         const cut = Date.now() - 30 * 864e5;
@@ -2805,7 +2797,10 @@
       } else {
         html += liveRaceHtml;
         const hasD = s.length > 9, dsl = s[9] || 0;
-        html += '<div class="metric-grid ' + (hasD ? 'm9' : 'm8') + '">' +
+        // say the range: the drawer shows an identical-looking grid over the selected date
+        // range, so for anything older than that the two disagree by design
+        html += '<p class="explain" style="margin:14px 0 8px">Official stats <b>since this went up</b> — they lag 24–48h behind the live counters above.</p>' +
+          '<div class="metric-grid ' + (hasD ? 'm9' : 'm8') + '">' +
           mcell('Views', fmt.format(s[0])) +
           mcell('Watch time', fmtHours(s[1]), 'total time people spent watching') +
           mcell('Avg watched', fmtDur(s[2]), 'how long a typical viewer stays') +
@@ -3226,7 +3221,7 @@
     const bandRows = [];
     for (const b of HOUR_BANDS) { const a = rows.filter(r => b.test(r.hour) && r.score != null).map(r => r.score); if (a.length >= 2) bandRows.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length), valText: fmt.format(Math.round(a.reduce((x, y) => x + y, 0) / a.length)) + ' views avg' }); }
     bandRows.sort((a, b) => b.val - a.val);
-    if (bandRows.length >= 2) html += section('Best time to post', 'When your uploads go live, by average total views.', hbarList(bandRows, { color: 'var(--accent)' }));
+    if (bandRows.length >= 2) html += section('Best time to post', 'When your uploads go live, by average total views — in <b>your own local time</b>, which is the clock you actually publish by. Your history, not a guarantee: YouTube only shows “when your viewers are online” inside Studio and the API doesn’t share it.', hbarList(bandRows, { color: 'var(--accent)' }));
     const pubs = rows.map(r => r.pub).sort((a, b) => a - b), gaps = [];
     for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
     if (gaps.length >= 3) {
@@ -3340,7 +3335,7 @@
       const quiet = pts.filter(p => p.rate >= medRate && p.x < medViews).length;
       const sTips = pts.map(p => videoTitle(p.id) + ' — ' + fmt.format(p.x) + ' views · ' + fmt.format(p.y) + ' likes · ' +
         p.rate.toFixed(1) + '% like rate (' + (medRate ? (p.rate / medRate).toFixed(1) : '1.0') + '× typical) · ' +
-        p.cpk.toFixed(1) + ' comments/1k · ' + new Date(p.at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }));
+        p.cpk.toFixed(1) + ' comments/1k · ' + new Date(p.at).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }));
       // kept so the toggle below can redraw this block without re-running the whole card
       rateState = { pts, sTips, medRate, medViews, above, quiet };
       html += '<div class="dsection" id="rateWrap">' + rateBodyHtml() + '</div>';
@@ -3983,7 +3978,11 @@
     const hasDis = s.length > 9, dislikes = s[9] || 0;
     let html = '';
 
-    html += '<div class="metric-grid ' + (hasDis ? 'm9' : 'm8') + '">' +
+    // the range this grid covers, because the latest-upload card carries the same cells
+    // measured since publication — same layout, different question
+    html += '<p class="explain" style="margin-bottom:8px">Official stats for <b>' +
+      (currentDays === 0 ? 'this video’s whole life' : 'the last ' + currentDays + ' days') + '</b>.</p>' +
+      '<div class="metric-grid ' + (hasDis ? 'm9' : 'm8') + '">' +
       mcell('Views', fmt.format(views)) +
       mcell('Watch time', fmtHours(minsWatched), 'total time people spent watching') +
       mcell('Avg watched', fmtDur(avgDur), 'how long a typical viewer stays') +
@@ -4035,7 +4034,7 @@
       if (hPts.length > 1) html += '<div class="dsection"><h4>Views per hour — recorded history</h4>' +
         '<p class="explain">From the snapshot robot, which records even when nobody has the dashboard open — the over-time view YouTube never provides. Hover for exact times.</p>' +
         lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views per hour', at: hAt,
-          x0: shortDate(new Date(hAt[0]).toISOString().slice(0, 10)), x1: 'now' }) + '</div>';
+          x0: shortDate(localDay(hAt[0])), x1: 'now' }) + '</div>';
     }
 
     if (r.daily && r.daily.rows && r.daily.rows.length > 1) {

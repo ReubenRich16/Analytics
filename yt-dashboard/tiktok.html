@@ -1361,7 +1361,7 @@
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
-      setStatus('live · ' + new Date().toLocaleTimeString());
+      setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
     } catch (e) {
       $('liveDot').classList.remove('on');
       setStatus('error'); showError(e.message);
@@ -2797,7 +2797,7 @@
       const sTips = pts.map(p => p.cap + ' \u2014 ' + fmt.format(p.x) + ' views \u00b7 ' + fmt.format(p.y) + ' likes \u00b7 ' +
         p.rate.toFixed(1) + '% like rate (' + (medRate ? (p.rate / medRate).toFixed(1) : '1.0') + '\u00d7 typical) \u00b7 ' +
         p.cpk.toFixed(1) + ' comments/1k \u00b7 ' + p.spk.toFixed(1) + ' shares/1k \u00b7 ' +
-        new Date(p.at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }));
+        new Date(p.at).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }));
       rateState = { pts, sTips, medRate, medViews, above, quiet };
       html += '<div class="dsection" id="rateWrap">' + rateBodyHtml() + '</div>';
     }
@@ -3032,7 +3032,7 @@
       if (a.length >= 2) bands.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length) });
     }
     bands.sort((a, b) => b.val - a.val);
-    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average total views.', hbarList(bands.map(x => ({ ...x, valText: fmt.format(x.val) + ' views avg' })), { color: 'var(--accent)' }));
+    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average total views — in <b>your own local time</b>, which is the clock you actually publish by.', hbarList(bands.map(x => ({ ...x, valText: fmt.format(x.val) + ' views avg' })), { color: 'var(--accent)' }));
     /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
        of their own with the figures attached — saying the same thing twice, once without
        the numbers, was the weaker half winning by being higher up the page. */

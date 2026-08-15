@@ -443,8 +443,8 @@
   // so agreeing on caption similarity only re-states what the machine guessed. The
   // thumbnail and the date are the independent evidence a person can actually judge.
   const dstamp = ms => !ms ? 'date unknown'
-    : new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
-      ' · ' + new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    : new Date(ms).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) +
+      ' · ' + new Date(ms).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
   /* Length, as a person writes it. Seconds for a short, m:ss up to an hour, h:mm:ss past it.
      Zero means "not reported" rather than "zero seconds long" — TikTok returns 0 for some
      posts and the YouTube parser returns 0 for a live stream with no duration — so those
@@ -606,8 +606,8 @@
 
     $('cmpContent').innerHTML =
       '<p class="explain" style="margin-bottom:12px">' + esc(y.title) + ' · posted ' +
-        new Date(y.pub).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) +
-        ' on YouTube and ' + new Date(t.pub).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' on TikTok.</p>' +
+        new Date(y.pub).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) +
+        ' on YouTube and ' + new Date(t.pub).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' on TikTok.</p>' +
       '<div class="vs">' +
         col('y', 'YouTube', y, ytExtra, yp, 'Against your own YouTube catalogue', 'var(--live)') +
         col('t', 'TikTok', t, ttExtra, tp, 'Against your own TikTok posts', 'var(--accent)') +
