@@ -94,7 +94,7 @@ console.log('\n4. "Time to a thousand" only counts crossings somebody watched');
 
 console.log('\n5. Placing best on the channel is not "Top 0%"');
 {
-  const pctSrc = grab('  const perDay = v =>', '\n  /* ---------- render');
+  const pctSrc = grab('  const LAUNCH_MS =', '\n  /* ---------- render');
   const percentile = new Function(pctSrc + '\nreturn percentile;')();
   const DAY = 864e5, now = Date.now();
   const mk = (id, perDay) => ({ id, views: perDay * 10, pub: now - 10 * DAY });
@@ -124,6 +124,13 @@ console.log('\n5. Placing best on the channel is not "Top 0%"');
   check('and is in the top 100%, which is at least true', worst.top === 100, worst.top);
   check('no rank can ever be 0%', [...many.keys()].every(i => percentile(many, many[i]).top >= 1));
   check('too few posts still declines to rank', percentile(five.slice(0, 3), five[0]) === null);
+
+  // totals over a comparable stretch: a post still inside its launch window abstains,
+  // and posts inside theirs drop out of the pool, instead of either being ranked by a clock
+  const fresh = { id: 'new', views: 999999, pub: now - 6 * 3600e3 };
+  check('a post still in its launch window abstains from the ranking', percentile(five.concat([fresh]), fresh) === null);
+  const withFresh = percentile(five.concat([fresh]), five[4]);
+  check('and it does not sit in anyone else\'s pool either', withFresh.beat === 100, withFresh.beat);
 
   // and the page must consume the two fields for what they are
   check('the bar is filled from the beaten share', /width:' \+ pct\.beat \+ '%/.test(src));

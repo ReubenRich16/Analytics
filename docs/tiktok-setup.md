@@ -1,8 +1,8 @@
 # TikTok dashboard — setup guide
 
-Everything **you** need to do to create the TikTok app. Once these steps are done,
-the code side (OAuth exchange in the Cloudflare Worker + the dashboard page) can
-be built and connected.
+Everything **you** need to do to create the TikTok app. The code side — the
+Worker's OAuth exchange and the dashboard page — is already built (see *What's
+built* below); once these steps are done it connects.
 
 Budget about **20–30 minutes**. It's free — no card, no app review needed
 (we use Sandbox mode).
@@ -19,15 +19,14 @@ whatever). The app never sees an email or password — TikTok just returns an
 done by *logging into her account*, not by typing an email.
 
 **What the data can and can't do.** TikTok's free Display API gives per-video
-**views, likes, comments, shares** — not saves, despite what this line used to say;
-no save or favourite field is requested, or available under these scopes — plus
-caption, cover image,
-duration and post time — and profile-level **followers, following, total likes,
-video count**. It does **not** provide retention, average watch time, traffic
-sources, search terms, audience demographics, or impressions/CTR. Those live only
-in TikTok's Research API (academics) or Business API (business account +
-approval). So the TikTok dashboard will be strong on live counters, trends,
-grading and coaching, but will have no retention/audience/traffic sections.
+**views, likes, comments and shares** (no saves — no save or favourite field
+exists under these scopes), plus caption, cover image, duration and post time —
+and profile-level **followers, following, total likes, video count**. It does
+**not** provide retention, average watch time, traffic sources, search terms,
+audience demographics, or impressions/CTR. Those live only in TikTok's Research
+API (academics) or Business API (business account + approval). So the TikTok
+dashboard is strong on live counters, trends, grading and coaching, but has no
+retention/audience/traffic sections.
 
 ---
 
@@ -54,7 +53,7 @@ published from this repo, so paste these:
 
 | Field | Value |
 |---|---|
-| App name | `AnalyticsTikTok` (anything) |
+| App name | whatever you called it in Step 2 (anything works) |
 | Category | Anything sensible, e.g. *Productivity* / *Tools* |
 | Description | `A private dashboard showing my own TikTok video stats (views, likes, comments) to help me improve my content.` |
 | Terms of Service URL | `https://reubenrich16.github.io/Analytics/terms.html` |
@@ -143,12 +142,16 @@ rationale.
 
 ## Step 8 — Store the secret (same pattern as the Gemini key)
 
-Add both as **GitHub repository secrets** (Settings → Secrets and variables →
-Actions → New repository secret), and the deploy workflow will push them into the
+Add **one** GitHub repository secret (Settings → Secrets and variables →
+Actions → New repository secret), and the deploy workflow will push it into the
 Worker automatically:
 
-- `TIKTOK_CLIENT_KEY`
 - `TIKTOK_CLIENT_SECRET`
+
+The client **key** is *not* a repo secret — it isn't sensitive (the browser sends
+it in the OAuth URL) and it lives in `worker/wrangler.toml` under `[vars]`.
+Deliberately so: Cloudflare rejects the same name existing as both a var and a
+secret, so pushing it as a secret would break the deploy.
 
 The Worker performs the OAuth code exchange server-side, so the secret is never
 exposed in the public page — the same approach used for the Gemini key.
@@ -179,12 +182,15 @@ can sign in, so it stays private to the two of you.
 | `/tiktok/history` | the Worker's own minute-by-minute recordings |
 | `/tiktok/sync` | cross-device store, locked to the signed-in account |
 | `/tiktok/ai` | Idea Studio, using the existing Gemini key |
+| `/tiktok/launches` | the recorded launches, age-indexed — the projection's reference curves |
+| `/tiktok/life` | one post's whole recorded life, hour by hour |
+| `/tiktok/disconnect` | sign an account out and stop the cron polling it |
 
 The client secret never leaves the Worker — the browser only ever holds a random
 session id. Access tokens are refreshed automatically (TikTok's last ~24h, with
 refresh tokens good for ~1 year), which is what allows the one-minute cron to
-keep sampling a new post **with no browser open** — something the YouTube side
-can't do without a browser session.
+keep sampling a new post **with no browser open**. (The YouTube tracker does the
+same, but with a plain API key — TikTok is the side that needs stored tokens.)
 
 **Dashboard** (`yt-dashboard/tiktok.html`) — live counters, sortable post table
 (cards on mobile), latest-post cycler with the minute-by-minute chart, Report
@@ -224,20 +230,11 @@ exactly one thing: **the account signing in is not a registered Sandbox target u
 It is not a scope problem, not a token problem, and nothing to do with the Worker. While
 the app is in Sandbox mode only accounts on the target-user list may sign in at all.
 
-To fix it:
-
-1. Open the app in the [TikTok developer portal](https://developers.tiktok.com/).
-2. Go to **Sandbox** → open your sandbox → **Target users** → **Add account**.
-3. You will be redirected to a TikTok login. **Log in as the account you are adding** —
-   not as the app owner — and accept the Developer Terms.
-4. Check the account now appears in Target users *and* shows as authorised.
-
-Step 3 is the one that gets missed. Adding an account creates an invitation; it does not
-take effect until someone signs in as that account and accepts. An account sitting in the
-list unaccepted produces this same error.
-
-Easiest done on the phone or laptop already logged into that account, or in a private
-window so it doesn't clash with your own session.
+To fix it: repeat **Step 6** for that account — Sandbox → Target users → Add account,
+then **log in as the account being added** (not as the app owner) and accept the
+Developer Terms. That login is the part that gets missed: adding an account creates an
+invitation, and it does not take effect until someone signs in as that account and
+accepts. An account sitting in the list unaccepted produces this same error.
 
 ### When the profile reports posts but the list is empty
 

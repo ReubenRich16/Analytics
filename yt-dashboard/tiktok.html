@@ -181,7 +181,7 @@
   <!-- LATEST POST -->
   <div class="card" id="latestCard" style="display:none">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Latest post — how it's doing since it went live</div>
+      <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Recent posts — how each one has done since it went live</div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
         <button class="ghost" id="latestPrev" title="Older post" style="padding:6px 11px">◀</button>
         <span id="latestPos" style="font-size:11px;color:var(--muted);min-width:30px;text-align:center"></span>
@@ -237,7 +237,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to any third-party app. +tick and +session are counted live in this tab and reset when you reload; a post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
+    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session are counted live in this tab and reset when you reload; a post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
   </div>
   </div>
 
@@ -266,7 +266,7 @@
   <!-- COACHING -->
   <div class="card" id="coachCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Coaching — what's working &amp; what to try</div>
-    <p class="explain" style="margin-top:8px">Patterns from your own posts: your best day and time to post, your strongest hashtags, and how your hits compare.</p>
+    <p class="explain" style="margin-top:8px">Patterns from your own posts: your next follower milestone, your best day and time to post, and your posting rhythm. Hashtags have their own card above.</p>
     <div id="coachContent"><p class="dnote">crunching…</p></div>
   </div>
   </div>
@@ -1409,7 +1409,7 @@
       if (d.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
-        '<td class="title">' + (accelSet.has(v.id) ? '<span title="Accelerating \u2014 gaining at least 1.5\u00d7 as fast as the day before">\u26a1 </span>' : '') + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
+        '<td class="title">' + (accelSet.has(v.id) ? '<span title="Accelerating \u2014 gaining at least ' + ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day">\u26a1 </span>' : '') + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
         '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
         '<td data-label="+tick">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
         '<td data-label="+session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
@@ -1636,7 +1636,8 @@
     const lo = Math.max(views, Math.round(Math.min(views / Math.max(...sh), mid - fl)));
     const hi = Math.round(Math.max(views / Math.min(...sh), mid + fl, lo + 1));
     return {
-      med, mid: Math.round(mid), lo, hi, refs: use, n: wrefs.length, span: PJ_WEEK,
+      // n is the count the median actually rests on at this age, not everything recorded
+      med, mid: Math.round(mid), lo, hi, refs: use, n: sh.length, span: PJ_WEEK,
       pct: Math.max(0, Math.min(1, views / mid)), rest: Math.max(0, pjSettle(use, PJ_WEEK) - age)
     };
   }
@@ -1758,7 +1759,7 @@
       '<div class="pjwaitn">' + have + ' of ' + PJ_MIN_REFS + '</div>' +
       '<div><b>Not enough finished launches to compare this one against yet.</b><br>' +
       (when != null
-        ? 'Ready in about <b>' + pjDur(when) + '</b> — it turns itself on, nothing to press.'
+        ? 'Ready in about <b>' + (pjDur(when) === 'hour' ? 'an hour' : pjDur(when)) + '</b> — it turns itself on, nothing to press.'
         : p.onTrack
           ? 'One is still recording. Two are needed, so the next thing you publish starts the other.'
           : 'Nothing is on track yet — the next thing you publish starts one, and it counts 48 hours later.') +
@@ -1902,7 +1903,7 @@
         '<button class="ghost' + (pjView === 'curve' ? '' : ' active') + '" data-pj="bar">Progress</button>' +
         '<button class="ghost' + (pjView === 'curve' ? ' active' : '') + '" data-pj="curve">Curve</button>' +
       '</div>';
-    const scrub = '<p class="dnote" style="margin-top:6px">Solid is what was recorded. Dashed is where it is heading, and the shaded band is the range — it narrows as the post matures, because the projection is recomputed on every sample. Run the pointer across it to read any moment.</p>';
+    const scrub = '<p class="dnote" style="margin-top:6px">Solid is what was recorded. Dashed is where it is heading, and the shaded cone is the range — wider further out, because the uncertainty is in what is still to come. Run the pointer across it to read any moment.</p>';
     /* Two days to a week. The launch is over, so there is nothing left to project toward
        48 hours — but the recording continues, the week is still open, and the card used to
        answer all of that with one grey sentence and no chart. That is the "data stopped"
@@ -1927,9 +1928,12 @@
     }
     return tabs +
       (pjView === 'curve'
-        ? pjCurveHtml(curve, p.refs, p, age, views) + scrub
-        : pjBarHtml(p, views)) +
-      pjSentenceHtml(p) + (p.week ? pjWeekHtml(p.week) : '');
+        ? pjCurveHtml(curve, p.refs, p, age, views) + scrub + pjSentenceHtml(p)
+        // the bar already says the total, the target and the countdown — repeating them in
+        // a sentence directly underneath said everything twice; only the range is new here
+        : pjBarHtml(p, views) +
+          '<p class="pjline">Likely <b>' + fmt.format(p.lo) + '</b> to <b>' + fmt.format(p.hi) + ' views</b> in its first 48 hours.</p>') +
+      (p.week ? pjWeekHtml(p.week) : '');
   }
   function renderProjection(v, mount) {
     /* `mount` is the drawer asking for the same panel in a second place. Without it these
@@ -2150,7 +2154,7 @@
         ' of your posts had been recorded that long — one surviving curve is an anecdote, not a typical launch. ' +
         'A break in any line is a break in the recording, never a flat stretch.</p>';
     holder.innerHTML = '<div class="dsection"><h4>Launch curves \u2014 every post\u2019s first 48 hours, aligned by age</h4>' +
-      '<p class="explain">Grey lines are your previous launches, each measured from its own posting moment. Gold is your typical launch, red is this post. Red above gold means it is beating your usual start.</p>' +
+      '<p class="explain">Grey lines are your previous launches, each measured from its own posting moment. Gold is your typical launch, and the bright line is this post — above gold means it is beating your usual start.</p>' +
       multiLineHtml(series, tips, { label: 'Launch curves', x0: 'posted', xMid: '24h', x1: '48h',
         nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null }) + thin + '</div>';
   }
@@ -2363,7 +2367,7 @@
       return '<span class="chip">' + esc(t) + (idx != null ? ' <b>' + idx + '%</b>' : '') + '</span>';
     }).join('');
     return section('Hashtags in this caption',
-      'The figure is the average first-48-hour total of your posts carrying that tag, against your typical post \u2014 shown only for a tag you have used at least twice.',
+      'The figure is the average total views of your posts carrying that tag \u2014 or the projected 48-hour total for one still launching \u2014 against your typical post. Shown only for a tag you have used at least twice.',
       '<div class="chiprow">' + chips + '</div>');
   }
 
@@ -2396,7 +2400,7 @@
     if (rec && rec.s && rec.s.length > 1) {
       const pts = rec.s.map(s => s[1]);
       html += '<div class="dsection"><h4>Views since it went live — recorded minute by minute</h4>' +
-        '<p class="explain">Captured by your Worker in the background, even when nobody had this page open. TikTok itself provides no history — this is built from your own recordings.</p>' +
+        '<p class="explain">Captured by your Worker in the background, even when nobody had this page open.</p>' +
         lineChart(pts, 'var(--live)', 'Views over time', {
           at: rec.s.map(s => s[0]),
           tips: rec.s.map(s => fmt.format(s[1]) + ' views — ' + fmtAgo(s[0])),
@@ -2439,10 +2443,12 @@
     const others = videos.filter(x => x.id !== v.id);
     if (others.length >= 3) {
       const mine = scoreOf(v);
-      const pool = videos.map(scoreOf).filter(x => x != null);
+      // rank against the OTHER posts only — the answer card already does this, and a pool
+      // that includes the graded post itself shifts every percentage by the self-tie
+      const pool = others.map(scoreOf).filter(x => x != null);
       const rank = pool.length >= 4 ? pjRank(pool, mine) : null;
       const engs = others.map(engOf).sort((a, b) => a - b);
-      const engRank = pjRank(videos.map(engOf), engOf(v));
+      const engRank = pjRank(others.map(engOf), engOf(v));
       const engBeats = Math.round(engRank ? engRank.pct : 0);
       const beats = rank ? Math.round(rank.pct) : engBeats;
       const grade = beats >= 95 ? 'A+' : beats >= 85 ? 'A' : beats >= 72 ? 'A-' : beats >= 58 ? 'B+' : beats >= 45 ? 'B' : beats >= 30 ? 'C' : beats >= 15 ? 'D' : 'F';
@@ -2539,8 +2545,9 @@
               : (d > 0 ? d + '% above' : Math.abs(d) + '% below') + ' yesterday, which came to ' + fmt.format(yv) + '.';
           })();
     const wk = !week.length ? ''
-      : ' Of the last ' + week.length + ' recorded day' + (week.length === 1 ? '' : 's') + ', it places ' +
-        (rank === 1 ? 'first' : ordinal(rank)) + '.';
+      // the pool is those days PLUS today, so say so — rank can be week.length + 1
+      : ' Against the last ' + week.length + ' recorded day' + (week.length === 1 ? '' : 's') + ', today places ' +
+        (rank === 1 ? 'first' : ordinal(rank) + ' of ' + (week.length + 1)) + '.';
     // stated, not hidden: a window that was not 24 hours long has been scaled to one
     const note = Math.abs(today.spanH - 24) > 2
       ? ' Measured over ' + Math.round(today.spanH) + ' hours and scaled to a day, because that is when the samples fell.'
@@ -2559,7 +2566,7 @@
     const b = dayBuckets(f, 1, 8);
     const latest = f[f.length - 1];
     if (!b[0] || !b[0].ok) return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
-      p: 'Not a full day sampled at both ends yet, or the follower count came back lower than it was — check back after the next few samples and this compares today with your usual.' };
+      p: 'Today doesn’t have a full day of numbers yet, or the follower count came back lower than it was — so there is nothing honest to compare. It fills in later today.' };
     const ans = weekPlace(b, 'followers');
     /* Followers rather than views, and this is why: the view total on this page is a sum
        over the posts TikTok will return — at most 60 — so it FALLS as older posts scroll
@@ -2752,7 +2759,7 @@
       '</div></div>';
     html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">The bar any new post should beat.</p><div class="metric-grid m8">' +
       mcell('Avg views', fmt.format(Math.round(t.views / n))) +
-      mcell('Median views/day', fmt.format(Math.round(paces[paces.length >> 1] || 0))) +
+      mcell('Median views', fmt.format(Math.round(paces[paces.length >> 1] || 0)), 'typical post, whole run') +
       mcell('Avg likes', fmt.format(Math.round(t.likes / n))) +
       mcell('Avg comments', fmt.format(Math.round(t.comments / n))) +
       mcell('Avg shares', fmt.format(Math.round(t.shares / n))) +
@@ -3017,15 +3024,15 @@
     const fh = hist && Array.isArray(hist.followers) ? hist.followers : [];
     if (fh.length > 3) html += milestoneHtml(projectMilestone(fh.map(x => [x[0], x[1]]), 'followers'));
     const byDay = avgBy(r => r.d.getDay()).sort((a, b) => b.avg - a.avg);
-    if (byDay.length >= 2) html += section('Best day to post', 'Average views/day of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
-      hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg) })), { color: 'var(--up)' }));
+    if (byDay.length >= 2) html += section('Best day to post', 'Average total views of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
+      hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg), valText: fmt.format(Math.round(x.avg)) + ' views avg' })), { color: 'var(--up)' }));
     const bands = [];
     for (const b of BANDS) {
       const a = rows.filter(r => b.t(r.d.getHours())).map(r => r.pace);
       if (a.length >= 2) bands.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length) });
     }
     bands.sort((a, b) => b.val - a.val);
-    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average views/day.', hbarList(bands, { color: 'var(--accent)' }));
+    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average total views.', hbarList(bands.map(x => ({ ...x, valText: fmt.format(x.val) + ' views avg' })), { color: 'var(--accent)' }));
     /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
        of their own with the figures attached — saying the same thing twice, once without
        the numbers, was the weaker half winning by being higher up the page. */
@@ -3049,7 +3056,7 @@
     const tagMap = {};
     for (const v of scored()) for (const t of hashtagsOf(v)) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += scoreOf(v); }
     const tags = Object.entries(tagMap).map(([t, e]) => ({ t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 20);
-    if (tags.length) L.push('Best hashtags by average views/day: ' + tags.map(x => x.t).join(', ') + '.');
+    if (tags.length) L.push('Best hashtags by average total views: ' + tags.map(x => x.t).join(', ') + '.');
     const avgLen = caps.length ? Math.round(caps.reduce((a, c) => a + c.length, 0) / caps.length) : 0;
     if (avgLen) L.push('Typical caption length: about ' + avgLen + ' characters.');
     return L.join('\n');

@@ -232,11 +232,14 @@
     if (t && t.t && t.e && t.e - 90000 > Date.now()) { accessToken = t.t; tokenExp = t.e; }
   } catch (e) {}
 
+  // true only after a /pairs round-trip actually succeeds — having a Worker URL and a
+  // token is not the same thing as being synced, and the pill used to claim it was
+  let pairsSynced = false;
   function renderConn() {
     const rows = [
       ['YouTube', !!accessToken, accessToken ? 'signed in' : 'not signed in'],
       ['TikTok', !!(workerUrl && ttSession), (workerUrl && ttSession) ? 'connected' : (workerUrl ? 'not signed in' : 'no Worker URL')],
-      ['Pairs', !!(workerUrl && accessToken), (workerUrl && accessToken) ? 'synced to your Worker' : 'saved on this device only']
+      ['Pairs', pairsSynced, pairsSynced ? 'synced to your Worker' : 'saved on this device only']
     ];
     $('connRow').innerHTML = rows.map(([n, ok, note]) =>
       '<span class="pill ' + (ok ? 'ok' : 'bad') + '"><i></i>' + esc(n) + ' · ' + esc(note) + '</span>').join('');
@@ -321,20 +324,23 @@
     if (workerUrl && accessToken) {
       try {
         const r = await fetch(workerUrl.replace(/\/$/, '') + '/pairs', { headers: { Authorization: 'Bearer ' + accessToken } });
-        if (r.ok) { const j = await r.json(); if (Array.isArray(j)) { pairs = j; return; } }
+        if (r.ok) { const j = await r.json(); if (Array.isArray(j)) { pairs = j; pairsSynced = true; return; } }
       } catch (e) {}
     }
+    pairsSynced = false;
     try { pairs = JSON.parse(localStorage.getItem('cc_pairs') || '[]'); } catch (e) { pairs = []; }
   }
   async function savePairs() {
     try { localStorage.setItem('cc_pairs', JSON.stringify(pairs)); } catch (e) {}
     if (!workerUrl || !accessToken) return;
     try {
-      await fetch(workerUrl.replace(/\/$/, '') + '/pairs', {
+      const r = await fetch(workerUrl.replace(/\/$/, '') + '/pairs', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
         body: JSON.stringify({ pairs })
       });
-    } catch (e) {}
+      pairsSynced = r.ok;
+    } catch (e) { pairsSynced = false; }
+    renderConn();
   }
 
   /* ---------- load both catalogues ---------- */
@@ -408,13 +414,22 @@
 
      (The bottom of the range needs no fix. The worst post gets beat=0 → "Top 100%", which
      is vacuously true rather than wrong.) */
-  const perDay = v => v.views / Math.max(1, (Date.now() - v.pub) / 864e5);
+  /* Ranked on TOTALS over a comparable stretch, not views/day. Dividing by age does not
+     remove age from a count — it inverts it: the same post reads thousands a day on its
+     first morning and a trickle two months later on identical performance, which is why
+     both dashboards dropped views/day from every ranking. Past its launch window a post's
+     own view count IS the comparable figure (the launch is almost all of it); inside the
+     window the total is still climbing, so a brand-new post abstains from the ranking
+     rather than being scored by either ruler. */
+  const LAUNCH_MS = 48 * 3600e3;
+  const settled = v => Date.now() - v.pub >= LAUNCH_MS;
   function percentile(list, one) {
-    const others = list.filter(x => x.id !== one.id);
+    if (!settled(one)) return null;
+    const others = list.filter(x => x.id !== one.id && settled(x));
     if (others.length < 3) return null;
-    const me = perDay(one);
-    const beats = others.filter(o => perDay(o) < me).length;
-    const rank = others.filter(o => perDay(o) >= me).length + 1;   // 1 = best on the channel
+    const me = one.views;
+    const beats = others.filter(o => o.views < me).length;
+    const rank = others.filter(o => o.views >= me).length + 1;   // 1 = best on the channel
     return {
       beat: Math.round(beats / others.length * 100),
       top: Math.max(1, Math.round(rank / (others.length + 1) * 100))
@@ -494,7 +509,7 @@
         '<div class="why">' + whyText(c.s) + gapNote(c.y.pub, c.t.pub) + '</div>' +
         '<div class="acts"><button class="ghost link-yes">Yes, link</button>' +
         '<button class="ghost link-no">Not the same</button></div></div>').join('')
-      : '<p class="dnote">No confident matches right now. Captions that differ a lot, or posts more than a week apart, won’t be suggested — link those by hand below.</p>';
+      : '<p class="dnote">No confident matches right now. Captions that differ a lot won’t be suggested — link those by hand below. (A strong caption match can be suggested however far apart the two were posted, so check the dates before confirming.)</p>';
 
     $('linkedList').innerHTML = pairs.length ? '<p class="dnote" style="margin-bottom:8px">Linked (' + pairs.length + '):</p>' +
       pairs.map((p, i) => {
@@ -565,7 +580,7 @@
        ['Views', fmt.format(v.views)], ['Likes', fmt.format(v.likes)], ['Comments', fmt.format(v.comments)]]
         .concat(extra)
         .map(([k, val]) => '<div class="mrow"><span class="k">' + k + '</span><span class="v">' + val + '</span></div>').join('') +
-      (pct == null ? '<div class="pctbox"><div class="pl">Not enough posts on this platform to rank it yet</div></div>'
+      (pct == null ? '<div class="pctbox"><div class="pl">Not ranked — still in its launch window, or too few settled posts on this platform</div></div>'
         : '<div class="pctbox"><div class="pl">' + pctLabel + '</div>' +
           '<div class="track"><div class="fill" style="width:' + pct.beat + '%;background:' + colour + '"></div></div>' +
           '<div class="big">Top ' + pct.top + '%</div></div>') + '</div>';
@@ -599,8 +614,8 @@
       '</div>' + verdict +
       '<div class="caveat"><b>Why the view counts aren’t the comparison.</b> TikTok counts a view the moment ' +
       'the video starts; YouTube long-form wants a real watch first. Putting ' + fmt.format(t.views) + ' next to ' +
-      fmt.format(y.views) + ' is two different rulers. The percentile and the rates are the honest read — each ' +
-      'measures a video against its own platform.</div>';
+      fmt.format(y.views) + ' is two different rulers. The honest read is the percentile — total views ranked ' +
+      'within each platform’s own settled posts — and the per-view rates, which age does not touch.</div>';
   }
   $('pairPick').addEventListener('change', () => { activePair = +$('pairPick').value || 0; renderAll(); });
 
@@ -708,7 +723,7 @@
     $('raceExplain').innerHTML = 'Recorded by the snapshot robot on YouTube and by your Worker on TikTok. ' +
       (bothSides
         ? 'This pair overlaps for <b>' + dur + '</b>' +
-          (covered && covered < 47 ? ' — the Worker records TikTok’s first 48 hours, and this post hasn’t run that long yet.' : '.')
+          (covered && covered < 47 ? ' — that is as much of the TikTok side as has been recorded so far.' : '.')
         : 'Only the ' + (yEnd ? 'YouTube' : 'TikTok') + ' side was being recorded when this went up, so there is nothing ' +
           'to race it against — this is its own first <b>' + dur + '</b> on its own.');
     $('raceContent').innerHTML = raceChart(pts, series, span) +
@@ -853,7 +868,9 @@
     }
     $('t1kContent').innerHTML =
       row('TikTok', th, 'var(--accent)') + row('YouTube', yh, 'var(--live)') +
-      (usual != null ? row('Your usual', usual, 'var(--muted)', true) : '') +
+      // the median is computed over YouTube launches only — the bare "Your usual" label
+      // sat under the TikTok bar inviting a comparison the number doesn't support
+      (usual != null ? row('Your usual (YouTube)', usual, 'var(--muted)', true) : '') +
       (note ? '<p class="dnote" style="margin-top:4px">' + note + '</p>' : '') +
       ((yh == null || th == null) ? '<p class="dnote" style="margin-top:6px">A blank row means nothing was recorded for that side while the post was new — the robots can only measure what they were watching at the time.</p>' : '');
   }
@@ -887,8 +904,11 @@
     if (!ttVideos.length) {
       setStatus('YouTube only');
       $('pairCard').style.display = 'block';
-      $('suggestions').innerHTML = '<p class="dnote">TikTok isn’t connected on this device yet, so there’s nothing to pair against. ' +
-        'Sign in on the <a href="./tiktok.html">TikTok dashboard</a> first — everything else here works the moment you do.</p>';
+      // a connected device whose load failed is not "not connected" — say which it was
+      $('suggestions').innerHTML = (workerUrl && ttSession)
+        ? '<p class="dnote">TikTok is connected, but no posts came back this time — the Worker or TikTok may be having a moment. Reload in a minute; everything YouTube-side still works.</p>'
+        : '<p class="dnote">TikTok isn’t connected on this device yet, so there’s nothing to pair against. ' +
+          'Sign in on the <a href="./tiktok.html">TikTok dashboard</a> first — everything else here works the moment you do.</p>';
       $('linkedList').innerHTML = '';
       return;
     }

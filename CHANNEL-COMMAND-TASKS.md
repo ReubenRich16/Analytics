@@ -1,8 +1,16 @@
 # Channel Command — Build Instructions for Claude Code
 
-Drop this into the repo (as its own file, or append to `CLAUDE.md`). It describes changes to the existing single-file dashboard (`channel-command.html` / `index.html`). Implement against whatever the current file looks like — verify each feature exists, add the missing ones. Do not rewrite working code you don't need to touch.
+> **⚠️ Historical document — this brief is complete.** Every feature below shipped in
+> `yt-dashboard/index.html` (the acceptance boxes at the bottom are ticked with where each
+> landed), and two of its "hard constraints" were later superseded on purpose: the project
+> now has a backend (the Cloudflare Worker in `worker/`, with KV + D1 + OAuth + cron), and
+> the dashboard requests a third scope (`youtube.force-ssl`, required for reading
+> comments). It is kept as a record of the original plan — do **not** implement against it,
+> and do not treat its constraints as current. The README is the living description.
 
-## Context & hard constraints
+Drop this into the repo (as its own file, or append to `CLAUDE.md`). It describes changes to the existing single-file dashboard (`index.html`). Implement against whatever the current file looks like — verify each feature exists, add the missing ones. Do not rewrite working code you don't need to touch.
+
+## Context & hard constraints *(as of the original brief — see the note above)*
 
 - The app is a **single static HTML file** served from GitHub Pages. No backend, no build step. Keep it that way.
 - Auth is already handled: Google OAuth token grants `youtube.readonly` + `yt-analytics.readonly`. Reuse the existing `accessToken` and the `dataApi()` / `analyticsApi()` helpers. Do not add new scopes.
@@ -154,23 +162,22 @@ Goal: for a given video, compare its own tags/hashtags against the videos that r
 ```
 Reset `searchListCalls` to 0 whenever `date` != today (Pacific). `rangeKey` = the range button value (e.g. `28`, `90`, `lifetime`).
 
-### Cross-device note (important)
+### Cross-device note (superseded)
 
-`localStorage` is per-browser/per-device, so the "once per video" cache is per device — each of your 2–3 devices would seed its own copy. To keep it truly once and share it:
+`localStorage` is per-browser/per-device, so the "once per video" cache is per device — each of your 2–3 devices would seed its own copy. Export/Import shipped as described below, and the "pragmatic substitute for a shared backend" was later replaced by an actual one: the Worker's owner-locked `/sync` store now keeps devices in sync.
 
 - Add **Export cache** (download all `cc:*` keys as one JSON) and **Import cache** (merge an uploaded JSON back into localStorage) buttons.
-- Seed research on one device, export, import on the others (or commit the JSON to the repo and auto-load it on start if present). This is the pragmatic substitute for a shared backend. Implement export/import; wire repo auto-load only if trivial.
 
 ---
 
-## Acceptance criteria
+## Acceptance criteria — all shipped (see `yt-dashboard/index.html`)
 
-- [ ] Live loop unchanged: `videos.list?part=statistics`, batched, visibility auto-pause intact. No new per-tick calls.
-- [ ] Drawer shows all of: retention (1), avg %/duration (2), real search terms (3), traffic sources (4), subs gained/lost (5), daily trend (6), age+gender+geo (7), shares (8).
-- [ ] Main table gains analytics columns for avg %, subs gained, shares from ONE rollup call, clearly labelled as lagged.
-- [ ] "Research keywords" runs exactly one `search.list` per video, then serves from cache forever unless "Re-run (100 units)" is clicked.
-- [ ] Daily budget guard blocks `search.list` past the cap and shows remaining count.
-- [ ] Keyword Lab shows own vs shared tags/hashtags, the missing-tag gap list, and similar-video views vs this video + median.
-- [ ] Export/Import cache buttons work; all state is JSON-portable.
-- [ ] Every analytics-derived number carries a "to <date>" / lagged label.
-- [ ] Still a single static file; opens from the GitHub Pages URL with no console errors.
+- [x] Live loop unchanged: `videos.list?part=statistics`, batched, visibility auto-pause intact. No new per-tick calls.
+- [x] Drawer shows all of: retention (1), avg %/duration (2), real search terms (3), traffic sources (4), subs gained/lost (5), daily trend (6), age+gender+geo (7), shares (8).
+- [x] Main table gains analytics columns for avg %, subs gained, shares from ONE rollup call (`cc:rollup`), clearly labelled as lagged.
+- [x] "Research keywords" runs exactly one `search.list` per video (`cc:kwcache:v1`), then serves from cache unless "Re-run (100 units)" is clicked.
+- [x] Daily budget guard (`KW_CAP = 20`, Pacific reset) blocks `search.list` past the cap and shows remaining count.
+- [x] Keyword Lab shows own vs shared tags/hashtags, the missing-tag gap list, and similar-video views vs this video + median.
+- [x] Export/Import cache buttons work; all state is JSON-portable.
+- [x] Every analytics-derived number carries a "to <date>" / lagged label.
+- [x] ~~Still a single static file~~ — superseded: the dashboard pages are still static on GitHub Pages, but the project gained the Worker backend (see the note at the top).

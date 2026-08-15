@@ -42,10 +42,11 @@ jobs:
       # succeeded; that was a misreading — continue-on-error makes a failed step's
       # conclusion read "success" in the step list, and only the warning step below tells
       # the truth. The live schema is currently correct because it was applied out-of-band
-      # through the Cloudflare connector. To make this step real: edit the token at
-      # dash.cloudflare.com/profile/api-tokens, add "Account / D1 / Edit", and update the
-      # repo secret. Non-blocking stays right either way — a schema step must never turn
-      # a deploy into an outage.
+      # through the Cloudflare connector. To make this step real: EDIT the existing token
+      # at dash.cloudflare.com/profile/api-tokens and add "Account / D1 / Edit" — editing
+      # keeps the same token value, so the repo secret does not need touching (see the
+      # warning step below). Non-blocking stays right either way — a schema step must
+      # never turn a deploy into an outage.
       - name: Apply D1 schema
         continue-on-error: true
         id: d1schema

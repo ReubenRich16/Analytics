@@ -56,6 +56,9 @@
       post dates, and counts of views, likes, comments and shares.</li>
     <li><strong>Analytics reports for your own content</strong> (YouTube only) &mdash; such as watch time,
       retention and traffic sources, as provided by the platform to the account owner.</li>
+    <li><strong>Comments on your own videos</strong> (YouTube only) &mdash; read-only, to show recent
+      comments and find patterns in them. The Google permission that covers reading comments
+      is technically broader, but the app only ever reads.</li>
   </ul>
 
   <h2>What the app never does</h2>
@@ -74,13 +77,17 @@
       storage so the dashboard loads quickly. You can erase it at any time by
       clearing your browser data, or by using the app's Export/Import controls.</li>
     <li><strong>On a private server.</strong> To record statistics over time (and to keep
-      several of the owner's devices in sync), public video statistics are stored in a
-      private Cloudflare Workers KV namespace controlled solely by the app's owner.
-      This is limited to the accounts described above, and access requires being
-      signed in as the owner of that account.</li>
-    <li><strong>Access tokens.</strong> Sign-in tokens are short-lived. Where a refresh token
-      is used to keep recording statistics in the background, it is held as an
-      encrypted server-side secret and is never exposed in the web page.</li>
+      several of the owner's devices in sync), public video statistics are stored in
+      private Cloudflare storage (a D1 database with a KV mirror) controlled solely by the
+      app's owner, and limited to the accounts described above. The recorded statistics are
+      of public counts only; some aggregate routes serving them are readable without
+      sign-in, while anything personal &mdash; sync data, AI requests, TikTok data and
+      video pairings &mdash; requires being signed in as the owner of the account.</li>
+    <li><strong>Access tokens.</strong> Platform access tokens are short-lived. Where a refresh
+      token is used to keep recording statistics in the background, it is stored server-side
+      (encrypted at rest by Cloudflare) and is never exposed in the web page. The TikTok
+      session id the browser holds is an opaque random token that identifies the session,
+      not a platform credential; it is long-lived so you stay signed in.</li>
   </ul>
 
   <h2>Retention</h2>

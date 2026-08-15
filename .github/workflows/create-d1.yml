@@ -7,9 +7,11 @@ name: Create the D1 database (one-off)
 # exists, creation is skipped and the existing id is printed instead.
 #
 # Running this also proves whether CLOUDFLARE_API_TOKEN has D1 permission — the token
-# was originally made with the "Edit Cloudflare Workers" template, which on older
-# tokens predates D1. If this job fails on permissions, re-issue the token with the
-# same template and the D1 permission will be included.
+# was made with the "Edit Cloudflare Workers" template, which does not include D1
+# (deploy-worker.yml's schema step has failed on every run for exactly this reason).
+# If this job fails on permissions, EDIT the existing token at
+# dash.cloudflare.com/profile/api-tokens and add "Account / D1 / Edit" — editing keeps
+# the same token value, so the repo secret does not need updating.
 on:
   workflow_dispatch:
 
@@ -37,8 +39,9 @@ jobs:
           npx wrangler@latest d1 list || {
             echo ""
             echo "::error::Could not list D1 databases. The API token most likely lacks the"
-            echo "::error::D1 permission. Re-create CLOUDFLARE_API_TOKEN with the"
-            echo "::error::'Edit Cloudflare Workers' template and update the repo secret."
+            echo "::error::D1 permission. EDIT the existing token at"
+            echo "::error::dash.cloudflare.com/profile/api-tokens and add Account -> D1 -> Edit."
+            echo "::error::Editing keeps the same token value, so the repo secret needs no update."
             exit 1
           }
 
