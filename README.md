@@ -67,11 +67,23 @@ data/             recorded history, committed by the robots
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
+- **Same-age race** — this upload right now against what your earlier ones had when they
+  were exactly this old, plus a **launch-curves overlay** putting every recent opening on
+  one chart aligned by age
+- **Love per view** — every post on one plot, reach across the bottom and reaction up the
+  side, with a **Ranked** alternative that reads as a list
+- **Per-post drawer** — the full breakdown for any post in the table, not just the recent
+  ones the arrows reach
+- **While you were away** — round numbers your account and posts crossed since you last
+  looked, and a ⚡ on anything gaining faster than it was yesterday
+- **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
   TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for
   a reason rather than for want of building them: its API exposes no audience data of any
   kind, so an Audience room could only ever be empty, and it publishes no daily series of
-  its own, so a Trends room would hold nothing the Now room does not already show. Both
+  its own, so a Trends room would hold nothing the Now room does not already show.
+  **Everything TikTok's API can support is now built on both pages** — what separates them
+  is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card
   exactly as it was before, so nothing is ever out of reach
 - An **answer card** at the top: four chips that say in a sentence how today went — against
