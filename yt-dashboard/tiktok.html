@@ -1060,15 +1060,6 @@
       }
     });
   }
-  function nextMilestone(cur) {
-    const mags = [1, 2.5, 5, 7.5];
-    let p = Math.max(2, Math.floor(Math.log10(Math.max(10, cur))));
-    for (let e = p - 1; e <= p + 2; e++) for (const m of mags) {
-      const v = m * Math.pow(10, e);
-      if (v > cur) return Math.round(v);
-    }
-    return Math.round(cur * 2);
-  }
 
   /* ---------- recorded history: merge, never replace ----------
      A /tiktok/history response is not the whole truth and must not be treated as it.
