@@ -64,8 +64,9 @@ data/             recorded history, committed by the robots
   comparison pool is, and grades on engagement alone until four other posts can be scored
   that way. See *Why not views per day* below
 - **Account breakdown** — lifetime totals and per-post averages
-- **Coaching** — best day and time to post (in your own local time, and answered here
-  only — the Audience room reports when views *arrive*, which is a different question),
+- **Coaching** — best day and best **hour** to post (all 24 hours scored separately, in
+  your own local time, each row carrying how many posts it rests on; answered here only —
+  the Audience room reports when views *arrive*, which is a different question),
   posting rhythm, strongest tags, and a
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,

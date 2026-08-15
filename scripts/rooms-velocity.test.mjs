@@ -612,6 +612,21 @@ console.log('\nbest time to post is answered in exactly one place');
     /hour: d\.getHours\(\)/.test(YT) && !/getUTCHours/.test(YT));
   // "when views arrive" asks a different question and stays
   check('the arrival-by-hour chart is still there', /When views actually arrive/.test(YT));
+
+  /* Hour by hour, not day-part bands. The 3–4 hour bands ("Afternoon (3pm–7pm)")
+     averaged away the answer; the card now scores each of the 24 hours separately,
+     says how many posts each hour rests on, and names the hours never posted in
+     rather than dropping them silently. */
+  for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
+    check(page + ' — the day-part bands are gone', !/Midday \(11am–3pm\)/.test(src) && !/HOUR_BANDS|const BANDS/.test(src));
+    check(page + ' — it buckets all 24 hours', /for \(let h = 0; h < 24; h\+\+\)/.test(src));
+    check(page + ' — every row carries its evidence count', /' avg · ' \+ a\.length/.test(src));
+    check(page + ' — a single-' + (page === 'YouTube' ? 'video' : 'post') + ' hour is called an anecdote', /is an anecdote/.test(src));
+    check(page + ' — hours never posted in are stated, not dropped', /Never posted at/.test(src));
+    const hourLabel = new Function(src.slice(src.indexOf('const hName'), src.indexOf('\n', src.indexOf('const hourLabel'))) + '\nreturn hourLabel;')();
+    check(page + ' — hour labels read as a clock', hourLabel(0) === '12am–1am' && hourLabel(15) === '3pm–4pm' && hourLabel(23) === '11pm–12am',
+      [hourLabel(0), hourLabel(15), hourLabel(23)].join(' / '));
+  }
 }
 
 /* Two grids of the same cells, over different stretches of a video's life. */

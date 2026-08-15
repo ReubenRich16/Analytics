@@ -2846,13 +2846,13 @@
   }
 
   const DAYFULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const BANDS = [
-    { label: 'Morning (5am–11am)', t: h => h >= 5 && h < 11 },
-    { label: 'Midday (11am–3pm)', t: h => h >= 11 && h < 15 },
-    { label: 'Afternoon (3pm–7pm)', t: h => h >= 15 && h < 19 },
-    { label: 'Evening (7pm–11pm)', t: h => h >= 19 && h < 23 },
-    { label: 'Late night (11pm–5am)', t: h => h >= 23 || h < 5 }
-  ];
+  /* Hour by hour, not day-part bands. "Post between 3pm and 4pm" is an answer;
+     "post in the afternoon" was a shrug wearing one. The catalogue is thin at this
+     resolution — many hours rest on one or two posts — so every row carries its
+     count, and the copy says an hour with a single post is an anecdote. Hours are
+     the viewer's own clock, because that is the clock you actually publish by. */
+  const hName = h => (h % 12 || 12) + (h < 12 ? 'am' : 'pm');
+  const hourLabel = h => hName(h) + '–' + hName((h + 1) % 24);
   /* ---------- what happened while nobody was watching ----------
      The YouTube page gets this from a robot that commits a file to the repo. That robot
      has no TikTok credentials and cannot get any — the API only ever speaks to the signed-
@@ -3026,13 +3026,30 @@
     const byDay = avgBy(r => r.d.getDay()).sort((a, b) => b.avg - a.avg);
     if (byDay.length >= 2) html += section('Best day to post', 'Average total views of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
       hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg), valText: fmt.format(Math.round(x.avg)) + ' views avg' })), { color: 'var(--up)' }));
-    const bands = [];
-    for (const b of BANDS) {
-      const a = rows.filter(r => b.t(r.d.getHours())).map(r => r.pace);
-      if (a.length >= 2) bands.push({ label: b.label, val: Math.round(a.reduce((x, y) => x + y, 0) / a.length) });
+    const byHour = [];
+    for (let h = 0; h < 24; h++) {
+      const a = rows.filter(r => r.d.getHours() === h && r.pace != null).map(r => r.pace);
+      if (!a.length) continue;
+      const avg = Math.round(a.reduce((x, y) => x + y, 0) / a.length);
+      byHour.push({ h, n: a.length, label: hourLabel(h), val: avg,
+        valText: fmt.format(avg) + ' avg · ' + a.length + (a.length === 1 ? ' post' : ' posts') });
     }
-    bands.sort((a, b) => b.val - a.val);
-    if (bands.length >= 2) html += section('Best time to post', 'When your posts go live, by average total views — in <b>your own local time</b>, which is the clock you actually publish by.', hbarList(bands.map(x => ({ ...x, valText: fmt.format(x.val) + ' views avg' })), { color: 'var(--accent)' }));
+    byHour.sort((a, b) => b.val - a.val);
+    // the hours never posted in are stated rather than silently absent, compressed
+    // into ranges so fifteen of them read as one clause instead of a list
+    const posted = new Set(byHour.map(r => r.h)), quiet = [];
+    for (let h = 0; h < 24; h++) {
+      if (posted.has(h)) continue;
+      const start = h;
+      while (h + 1 < 24 && !posted.has(h + 1)) h++;
+      quiet.push(start === h ? hName(start) : hName(start) + '–' + hName((h + 1) % 24));
+    }
+    if (byHour.length >= 2) html += section('Best time to post — hour by hour',
+      'When your posts go live, by average total views — in <b>your own local time</b>, which is the clock you actually publish by. Your strongest so far is <b>' + esc(byHour[0].label) + '</b>' +
+      (byHour[0].n === 1 ? ' (resting on a single post, so treat it as a lead, not a pattern)' : ' (' + byHour[0].n + ' posts)') +
+      '. The count on each row says how much it rests on — an hour with one post is an anecdote.',
+      hbarList(byHour, { color: 'var(--accent)' }) +
+      (quiet.length ? '<p class="dnote" style="margin-top:8px">Never posted at ' + quiet.join(', ') + ' — those hours can’t score until something goes out then.</p>' : ''));
     /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
        of their own with the figures attached — saying the same thing twice, once without
        the numbers, was the weaker half winning by being higher up the page. */
