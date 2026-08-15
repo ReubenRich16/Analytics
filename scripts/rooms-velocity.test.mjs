@@ -385,6 +385,13 @@ console.log('\nwhile you were away');
   check('the feed is bounded in time and in length',
     /ALERT_DAYS = 14/.test(TT) && /\.slice\(0, 8\)/.test(feed));
   check('and a caption cannot inject markup into it', /esc\(cap\.slice\(0, 46\)/.test(feed));
+  /* One line per subject. A post that climbed three rungs inside the window reported all
+     three and pushed everything else off the list — and "passed 100 views" is not news
+     once "passed 500 views" is sitting above it. */
+  check('one line per subject, not one per milestone crossed',
+    /const best = new Map\(\);[\s\S]{0,200}if \(!best\.has\(a\.k\)\) best\.set\(a\.k, a\);/.test(feed));
+  check('every entry carries the subject it is about', (feed.match(/out\.push\(\{ k: /g) || []).length === 3,
+    (feed.match(/out\.push\(\{ k: /g) || []).length + ' of 3');
 }
 
 console.log('\nhashtags ranked by what they returned');

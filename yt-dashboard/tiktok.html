@@ -16,6 +16,14 @@
   .switcher .on { background:var(--panel-2); border-color:var(--muted); color:var(--text); }
   .cover { width:64px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); display:block; }
   td.covercell { padding:6px 0 6px 14px; width:78px; }
+  /* the alerts feed: .hbar-row has a fixed 148px label column, which turns a caption into
+     a three-line sliver, so these rows are their own thing */
+  #alertsContent .alert { display:flex; align-items:baseline; gap:12px; padding:6px 6px;
+    margin:0 -6px; border-top:1px solid var(--line); font-size:12.5px; line-height:1.5; }
+  #alertsContent .alert:first-child { border-top:0; }
+  #alertsContent .alert .txt { min-width:0; }
+  #alertsContent .alert .at { margin-left:auto; flex:none; font-family:var(--f-mono);
+    font-size:11px; color:var(--muted); white-space:nowrap; }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
@@ -2887,8 +2895,8 @@
     };
     for (let i = 1; i < f.length; i++) {
       if (f[i][0] < since) continue;
-      for (const m of ladder(f[i - 1][1] || 0, f[i][1] || 0)) out.push({ at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' followers</b>' });
-      for (const m of ladder(f[i - 1][2] || 0, f[i][2] || 0)) out.push({ at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' likes</b> on the account' });
+      for (const m of ladder(f[i - 1][1] || 0, f[i][1] || 0)) out.push({ k: 'followers', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' followers</b>' });
+      for (const m of ladder(f[i - 1][2] || 0, f[i][2] || 0)) out.push({ k: 'likes', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' likes</b> on the account' });
     }
     const vids = (hist && hist.videos) || {};
     for (const [id, rec] of Object.entries(vids)) {
@@ -2898,11 +2906,17 @@
         if (arr[i][0] < since) continue;
         for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
           if (m < 100) continue;   // the first hundred views is not news
-          out.push({ at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
+          out.push({ k: 'v:' + id, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
         }
       }
     }
-    return out.sort((a, b) => b.at - a.at).slice(0, 8);
+    /* One line per thing, not one per rung. A post that climbed three milestones inside the
+       window reported all three and pushed everything else off the list — and "passed 100
+       views" is not news once "passed 500 views" is sitting above it. Keyed on the subject,
+       keeping the most recent, which is also the highest since these only ever climb. */
+    const best = new Map();
+    for (const a of out.sort((x, y) => y.at - x.at)) if (!best.has(a.k)) best.set(a.k, a);
+    return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
   function renderAlerts() {
@@ -2924,9 +2938,8 @@
       el.innerHTML = html;
       return;
     }
-    html += list.map(a => '<div class="hbar-row" style="grid-template-columns:1fr auto">' +
-      '<div class="hlabel" style="white-space:normal">' + a.t + '</div>' +
-      '<div class="hval">' + esc(fmtAgo(a.at)) + '</div></div>').join('');
+    html += list.map(a => '<div class="alert"><div class="txt">' + a.t + '</div>' +
+      '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>').join('');
     el.innerHTML = html;
   }
 
