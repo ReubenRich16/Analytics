@@ -27,16 +27,24 @@ function contract(src, page, chips) {
       objs.filter(o => !(/\bh:/.test(o) && /\bf:/.test(o) && /\bp:/.test(o))).map(o=>o.slice(0,40)).join(' | '));
   }
 }
-contract(YT, 'YouTube', ['answerToday','answerNewest','answerAudience','answerNext']);
-contract(TT, 'TikTok',  ['answerToday','answerNewest','answerEngagement','answerNext']);
+contract(YT, 'YouTube', ['answerToday','answerSubs','answerMover','answerNewest','answerHitRate','answerAudience','answerMilestone','answerNext']);
+contract(TT, 'TikTok',  ['answerToday','answerMover','answerNewest','answerHitRate','answerEngagement','answerMilestone','answerNext']);
 
 console.log('\nboth cards are wired the same way');
+// the dispatcher array and ANSWER_CHIPS must agree, chip for chip — a mismatch paints
+// one chip's answer under another chip's name
+const WIRING = {
+  YouTube: '[answerToday, answerSubs, answerMover, answerNewest, answerHitRate, answerAudience, answerMilestone, answerNext][answerChip]',
+  TikTok:  '[answerToday, answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip]'
+};
+const CHIP_COUNT = { YouTube: 8, TikTok: 7 };
 for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
   check(page + ' has the card markup', /id="answerCard"/.test(src) && /id="answerChips"/.test(src) && /id="answerBody"/.test(src));
-  check(page + ' paints through one dispatcher', /\[answerToday, answerNewest, answer(Audience|Engagement), answerNext\]\[answerChip\]/.test(src));
+  check(page + ' paints through one dispatcher, in chip order', src.includes(WIRING[page]));
   check(page + ' falls back rather than throwing', /catch \(e\) \{ a = \{ h: /.test(src));
   check(page + ' builds its chips once', /chips\.dataset\.built/.test(src));
-  check(page + ' names four chips', (src.match(/const ANSWER_CHIPS = \[[^\]]+\]/) || [''])[0].split(',').length === 4,
+  check(page + ' names ' + CHIP_COUNT[page] + ' chips',
+    (src.match(/const ANSWER_CHIPS = \[[^\]]+\]/) || [''])[0].split(',').length === CHIP_COUNT[page],
     (src.match(/const ANSWER_CHIPS = \[[^\]]+\]/) || [''])[0]);
 }
 
@@ -148,6 +156,75 @@ for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'follo
   check(page + ' — a scaled window admits it was scaled', /scaled to a day/.test(odd.p), odd.p);
   check(page + ' — every answer is still a paintable {h,f,p}',
     [best, mid, tiny, gone, odd].every(a => a && a.h && a.f && a.p));
+}
+
+/* The four chips added in August 2026: Subs (YT), Mover, Hit rate and Milestone.
+   Same contract as everything above, plus the arithmetic that makes each honest. */
+console.log('\nMover — the post that did the work today');
+{
+  const NOW = 1786000000000, H = 3600e3;
+  const atb = (arr, t) => { let v = null; for (const x of arr) { if (x[0] <= t) v = x; else break; } return v; };
+  const fmtUS = new Intl.NumberFormat('en-US');
+  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  // two samples: one just inside the 24h lookback, one `staleH` hours ago
+  const series = (gain, opts = {}) => {
+    const last = NOW - (opts.staleH != null ? opts.staleH : 0.5) * H;
+    return [[last - (opts.spanH || 24) * H, 1000], [last, 1000 + gain]];
+  };
+
+  const ytMover = new Function('hist', 'meta', 'videoTitle', 'fmt', 'ATB', 'NOW',
+    'const Date = { now: () => NOW };\n' + grab(YT, 'answerMover') + '\nreturn answerMover;');
+  const run = hist => ytMover(hist, { a: 1, b: 1, c: 1, d: 1 }, id => 'vid ' + id, fmtUS, atb, NOW)();
+  const res = run({ videos: { a: series(300), b: series(100), c: series(-50), d: series(500, { staleH: 8 }) } });
+  check('the biggest mover wins; the flapping counter and the stale series do not vote', res.f === '+300 today', res.f);
+  check('its share is of the recorded total, so 300 of 400 is 75%', /75%/.test(res.p), res.p);
+  check('nothing recorded still answers with a sentence', !!run(null).h && !!run(null).p);
+  check('a lopsided day is called out', /doing the lifting/.test(res.h), res.h);
+
+  const ttMover = new Function('hist', 'videos', 'capOf', 'fmt', 'ATB', 'NOW',
+    'const Date = { now: () => NOW };\n' + grab(TT, 'answerMover') + '\nreturn answerMover;');
+  const tt = ttMover({ videos: { a: { s: series(80) }, b: { s: series(20) }, gone: { s: series(999) } } },
+    [{ id: 'a', title: 'post a' }, { id: 'b', title: 'post b' }], v => v.title, fmtUS, atb, NOW)();
+  check('TikTok — same rules, and a post outside the 60-post window abstains', tt.f === '+80 today', tt.f);
+}
+
+console.log('\nHit rate — run or cold patch');
+{
+  const fmtUS = new Intl.NumberFormat('en-US');
+  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const mkRows = scores => scores.map((s, i) => ({ score: s, pub: 100000 - i }));
+  const ytHit = new Function('catalogueMetrics', 'fmt', grab(YT, 'answerHitRate') + '\nreturn answerHitRate;');
+  // last five: 200/90/300/400/80 · older six: median 95 → three of five beat it
+  const res = ytHit(() => mkRows([200, 90, 300, 400, 80, 100, 120, 90, 80, 110, 60]), fmtUS)();
+  check('counts the last five against the median of everything before them', res.f === '3 of 5', res.f);
+  check('and names that median in the sentence', /95 views/.test(res.p), res.p);
+  check('a thin catalogue declines to call a run', /Too early/.test(ytHit(() => mkRows([200, 90, 300]), fmtUS)().h));
+  check('TikTok carries the same chip against its posts', /function answerHitRate/.test(TT) && /typical post/.test(TT));
+}
+
+console.log('\nMilestone — the Coach projection, made chip-safe');
+{
+  const fmtUS = new Intl.NumberFormat('en-US');
+  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const ms = new Function('hist', 'chanId', 'projectMilestone', 'fmt', 'lastTotals',
+    grab(YT, 'answerMilestone') + '\nreturn answerMilestone;');
+  const res = ms({ channels: { c: [[1, 1], [2, 2], [3, 3], [4, 4]] } }, 'c',
+    () => ({ cur: 9800, target: 10000, daysOut: 6, text: 'At <b>+34 subs/day</b> you should reach <b>10,000</b> around <b>Friday</b> (6 days).' }),
+    fmtUS, { subs: 9800 })();
+  // projectMilestone writes <b> tags for the Coach card's innerHTML; the chip paints
+  // through esc(), so serving them unstripped would print literal angle brackets
+  check('the coach card\'s HTML is stripped for the chip', !/[<>]/.test(res.p), res.p);
+  check('progress reads as a share of the target', res.f === '98% there', res.f);
+  check('no history still answers', !!ms(null, 'c', () => null, fmtUS, null)().p);
+  check('both pages\' projections now carry daysOut, so the chip can tell a dated one from a flat one',
+    /cur, target, perDay, daysOut, label/.test(YT) && /cur, target, daysOut, text/.test(TT));
+}
+
+console.log('\nSubs — Today\'s sibling on the other axis');
+{
+  check('YouTube — it reads column 1 of the channel history, not the views column', /dayBuckets\(chn, 1, 8\)/.test(YT));
+  check('and the views chip still reads column 2', /dayBuckets\(chn, 2, 8\)/.test(YT));
+  check('a refused bucket explains the rounding of public subscriber counts', /rounded public subscriber counts/.test(YT));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

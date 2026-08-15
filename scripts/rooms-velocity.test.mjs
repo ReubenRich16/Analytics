@@ -566,5 +566,76 @@ console.log('\ncompare page — video length');
   check('and so are TikTok covers', /\.pthumb\.t \{ width:62px; height:110px; \}/.test(CMP));
 }
 
+/* Dates a person reads must be THEIR day, not UTC's.
+
+   From Australia the two disagree every morning: at 8am in Melbourne it is still the
+   previous day in UTC, so anything stamped from toISOString() claimed yesterday until
+   10am. The request dates going to YouTube are the deliberate exception — the Analytics
+   API reckons days in Pacific time, which UTC tracks far more closely than an Australian
+   clock does — so `iso` stays UTC and `localDay` exists for everything shown. */
+console.log('\ndates a human reads are the viewer\'s own day');
+{
+  check('there is a local-day helper, and it is not toISOString',
+    /const localDay = d => new Date\(d\)\.toLocaleDateString\('en-CA'\)/.test(YT));
+  check('the "fetched" stamp under the table uses it',
+    /const d = c\.fetchedAt \? localDay\(c\.fetchedAt\) : ''/.test(YT));
+  check('and no chart axis is still labelled from a UTC slice',
+    !/shortDate\(new Date\([^)]*\)\.toISOString\(\)/.test(YT));
+
+  // the exception, stated so nobody "fixes" it into a bug
+  check('request dates to YouTube stay UTC on purpose',
+    /const iso = d => d\.toISOString\(\)\.slice\(0, 10\)/.test(YT) &&
+    /Don't "fix" this to local time/.test(YT));
+  check('and the daily keyword budget still resets on Pacific, which is YouTube\'s clock',
+    /timeZone: 'America\/Los_Angeles'/.test(YT));
+
+  // a date or time shown to a human should not fall back to the device's locale
+  for (const [page, src] of [['YouTube', YT], ['TikTok', TT], ['Compare', CMP]])
+    check(page + ' — no toLocale*String(undefined, …) left', !/toLocale\w*String\(undefined/.test(src), page);
+}
+
+/* One question, one answer. The Audience room used to carry a second "best time to post"
+   ranked on views-per-day, with different day-part boundaries from the Coach room's — so
+   the two cards could name different slots, and the extra one used the age-inverted metric
+   every other ranking dropped. */
+console.log('\nbest time to post is answered in exactly one place');
+{
+  for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
+    const n = (src.match(/section\('Best time to post/g) || []).length;
+    check(page + ' — exactly one "Best time to post" card', n === 1, 'found ' + n);
+    const d = (src.match(/section\('Best day to post/g) || []).length;
+    check(page + ' — exactly one "Best day to post" card', d === 1, 'found ' + d);
+  }
+  check('YouTube — it says which clock the hours are in', /in <b>your own local time<\/b>/.test(YT));
+  check('TikTok — likewise', /in <b>your own local time<\/b>/.test(TT));
+  check('the hour it buckets by is the viewer\'s, not UTC\'s',
+    /hour: d\.getHours\(\)/.test(YT) && !/getUTCHours/.test(YT));
+  // "when views arrive" asks a different question and stays
+  check('the arrival-by-hour chart is still there', /When views actually arrive/.test(YT));
+
+  /* Hour by hour, not day-part bands. The 3–4 hour bands ("Afternoon (3pm–7pm)")
+     averaged away the answer; the card now scores each of the 24 hours separately,
+     says how many posts each hour rests on, and names the hours never posted in
+     rather than dropping them silently. */
+  for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
+    check(page + ' — the day-part bands are gone', !/Midday \(11am–3pm\)/.test(src) && !/HOUR_BANDS|const BANDS/.test(src));
+    check(page + ' — it buckets all 24 hours', /for \(let h = 0; h < 24; h\+\+\)/.test(src));
+    check(page + ' — every row carries its evidence count', /' avg · ' \+ a\.length/.test(src));
+    check(page + ' — a single-' + (page === 'YouTube' ? 'video' : 'post') + ' hour is called an anecdote', /is an anecdote/.test(src));
+    check(page + ' — hours never posted in are stated, not dropped', /Never posted at/.test(src));
+    const hourLabel = new Function(src.slice(src.indexOf('const hName'), src.indexOf('\n', src.indexOf('const hourLabel'))) + '\nreturn hourLabel;')();
+    check(page + ' — hour labels read as a clock', hourLabel(0) === '12am–1am' && hourLabel(15) === '3pm–4pm' && hourLabel(23) === '11pm–12am',
+      [hourLabel(0), hourLabel(15), hourLabel(23)].join(' / '));
+  }
+}
+
+/* Two grids of the same cells, over different stretches of a video's life. */
+console.log('\nthe two metric grids say which stretch they cover');
+{
+  check('the latest-upload card says since publication', /Official stats <b>since this went up<\/b>/.test(YT));
+  check('the drawer names its selected range',
+    /Official stats for <b>' \+\s*\(currentDays === 0 \? 'this video’s whole life' : 'the last ' \+ currentDays \+ ' days'\)/.test(YT));
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

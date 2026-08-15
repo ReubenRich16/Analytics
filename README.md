@@ -47,8 +47,8 @@ data/             recorded history, committed by the robots
   (click any column header; it becomes readable cards on a phone)
 - **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
   running session total. On TikTok this accumulates each post's own movement rather than
-  differencing the account total, because the API returns at most 60 posts and that total
-  *falls* when an older one scrolls out of the window
+  differencing the account total, because the app fetches at most the 60 newest posts and
+  that total *falls* when an older one scrolls out of the window
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
   the newest upload, so nine slots out of ten showed nothing where a chart belongs
@@ -58,12 +58,16 @@ data/             recorded history, committed by the robots
   A progress bar toward the launch's own likely finish, a plain-English sentence with
   the range, and a **Curve** toggle that carries the recorded line forward as a dashed
   projection inside a cone. See *How the projection works* below
-- **Report Card** — an A+…F grade versus your own back catalogue, graded on each launch's
-  **first-48-hour total** so a new upload and an old one are measured over the same stretch
-  of their own lives. Says how big the comparison pool is, and grades on engagement alone
-  until four launches have been recorded end to end. See *Why not views per day* below
+- **Report Card** — an A+…F grade versus your own back catalogue, graded on **totals over a
+  comparable stretch of each video's life**: the video's own view count once its launch is
+  over, and the projected first-48-hour total while one is still running. Says how big the
+  comparison pool is, and grades on engagement alone until four other posts can be scored
+  that way. See *Why not views per day* below
 - **Account breakdown** — lifetime totals and per-post averages
-- **Coaching** — best day and time to post, posting rhythm, strongest tags, and a
+- **Coaching** — best day and best **hour** to post (all 24 hours scored separately, in
+  your own local time, each row carrying how many posts it rests on; answered here only —
+  the Audience room reports when views *arrive*, which is a different question),
+  posting rhythm, strongest tags, and a
   **next-milestone projection** ("at +12 subs/day you'll hit 7,500 around 30 October")
 - **Idea Studio** — titles/captions, on-screen text, tags and next-video ideas,
   grounded in your own naming style (free) plus optional AI variations
@@ -74,8 +78,9 @@ data/             recorded history, committed by the robots
   side, with a **Ranked** alternative that reads as a list
 - **Per-post drawer** — the full breakdown for any post in the table, not just the recent
   ones the arrows reach
-- **While you were away** — round numbers your account and posts crossed since you last
-  looked, and a ⚡ on anything gaining faster than it was yesterday
+- **While you were away** (TikTok) — round numbers your account and posts crossed since you
+  last looked, and a ⚡ on anything gaining faster than it was yesterday. The YouTube page's
+  equivalents are its Recent milestones card and the table's ⚡ badge
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
   TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for
@@ -133,7 +138,8 @@ matters. So instead, the launches already recorded say what share of a post's 48
 total had usually arrived by hour X. Today's count divided by that share is the estimate.
 
 The margin is measured rather than assumed. Each recorded launch is left out in turn and
-predicted from the others, and the worst miss becomes the band — so an account whose posts
+predicted from the others, and the worst miss — padded by a ×1.6 safety factor, because
+leave-one-out flatters itself — becomes the band. So an account whose posts
 behave alike gets a tight range and one whose posts vary gets a wide one, from its own
 data. Four rules keep it honest:
 
@@ -174,11 +180,14 @@ count is the honest number. Every chart on the curve view answers a pointer with
 reading at that moment.
 
 Measured by running the shipped model over the launches actually recorded, one held out at
-a time: worst miss 20% at five hours, 17% at six, 10% at twelve, 3% by eighteen, and every
-held-out curve lands inside its own band from five hours on. Past about a day the residual
-misses are YouTube revising a count downward after the fact, which nothing predicts.
-`node scripts/plateau.test.mjs` lifts the model straight out of the page — so the test
-cannot drift from what ships — and pins these properties.
+a time: the worst miss shrinks from roughly 20% at five hours to 3% by eighteen — the floor
+constants shipped in the page (19% at six hours, 11% at twelve, 3% at eighteen) *are* that
+measurement — and every held-out curve lands inside its own band from five hours on. Past
+about a day the residual misses are YouTube revising a count downward after the fact, which
+nothing predicts. `node scripts/plateau.test.mjs` lifts the model straight out of the page —
+so the test cannot drift from what ships — and pins the properties (coverage from five hours
+on, error shrinking with age) on synthetic curves; the one-off measurement above is not
+something the test re-runs.
 
 **Why not views per day**
 
@@ -232,8 +241,8 @@ manual picker for anything the suggester misses. Confirmed pairs are stored on t
   playback starts, YouTube long-form wants a real watch, so the raw counts are two different
   rulers. The page says so, on the page.
 - **The launch race** — both curves indexed to each platform's own typical launch (100 =
-  normal). Only covers the window both sides recorded; the Worker keeps each post's first 48
-  hours, and the page tells you the actual overlap.
+  normal). Only covers the window both sides recorded, and the page tells you the actual
+  overlap.
 - **Time to a thousand** — a clock, so no units problem, with your usual YouTube pace as a
   third bar.
 
@@ -307,9 +316,11 @@ of TikTok. Free, no card.
    `GEMINI_KEY` (optional, for AI) and `TIKTOK_CLIENT_SECRET` (optional, for
    TikTok).
 3. Run **Deploy per-minute Worker to Cloudflare** from the Actions tab. It
-   applies [`worker/schema.sql`](worker/schema.sql) to D1, deploys the code with
-   the KV + D1 bindings and the one-minute cron from
-   [`worker/wrangler.toml`](worker/wrangler.toml), and uploads the secrets.
+   deploys the code with the KV + D1 bindings and the one-minute cron from
+   [`worker/wrangler.toml`](worker/wrangler.toml), uploads the secrets, and
+   *attempts* to apply [`worker/schema.sql`](worker/schema.sql) to D1 — a step
+   that fails unless the API token carries **Account → D1 → Edit** (the live
+   schema was applied out-of-band; see the note in the workflow).
 4. Open the dashboard once with `?worker=https://…workers.dev` appended.
 
 > Adding a repo secret does **not** re-run the workflow — trigger it manually,
@@ -320,14 +331,15 @@ of TikTok. Free, no card.
 | Route | Purpose |
 |---|---|
 | `/` | the recorded YouTube minute bundle |
-| `/run` | run both trackers now (handy for testing). Rate limited to once a minute — it is unauthenticated and each call spends a KV write, so a crawler hitting it in a loop could burn the day's 1,000 and stop sampling until midnight UTC. A 429 is not a fault: the cron runs every minute anyway |
+| `/run` | run both trackers now (handy for testing). Rate limited to once a minute — it is unauthenticated and each call runs the trackers (API calls, D1 writes, and sometimes a KV write), so a crawler hitting it in a loop would spend real allowances for nothing. A 429 is not a fault: the cron runs every minute anyway |
 | `/d1diff` | compares the D1 and KV copies field by field (expect disagreement now: KV is deliberately coarser since the write gate — this was the phase-2 verification tool) |
 | `/models` | which Gemini models your key can actually call |
 | `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
-| `/launches`, `/tiktok/launches` | the first 48 hours of finished launches, age-indexed — the projection's reference curves |
-| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour. The only route that reads past the three-day bundle — see below |
+| `/launches`, `/tiktok/launches` | the first **week** of finished launches (48 hours is what makes one *finished*), age-indexed — the projection's reference curves |
+| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour — see below |
+| `/tiktok/disconnect` | sign a TikTok account out and stop the cron polling it |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
 
 **The long tail, and how to see it**
@@ -378,13 +390,13 @@ the table row *and* one for every index on it, and `samples` keeps one, so that 
 **~38,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
 would be **over 400,000 samples a day** — more than 800,000 row-writes, eight times the
 entire allowance — which is why the cadence tapers rather than staying flat. TikTok costs
-nothing extra at all: the cron already fetched the post list every five minutes and was
+nothing extra at all: the cron already fetched the post list on every pass and was
 discarding every row outside the launch window.
 
 One caveat on that figure: the live database still carries a second, redundant index on
 `samples`, which makes the real bill ~58,000 until it goes. `schema.sql` drops it, but the
-deploy's schema step has been failing since the API token lost its **Account → D1 → Edit**
-permission, so the drop is queued rather than applied. Both numbers fit the allowance.
+deploy's schema step has never succeeded — the API token has never carried **Account → D1 →
+Edit** — so the drop is queued rather than applied. Both numbers fit the allowance.
 
 Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
 back only the minutes it hasn't seen, because re-shipping a 48-hour window every three
@@ -405,28 +417,29 @@ Eligibility and span are two separate constants there, and keeping them separate
 made the seven-day horizon possible without breaking the two-day one. `PJ_WINDOW` (48h)
 decides when a launch has *finished* and may be a reference; `PJ_SPAN` (7d) decides how
 much of its recording travels with it. Widening the span costs about 480 extra points per
-curve — ~165 KB instead of ~90 KB, and 40,332 rows read per rebuild instead of 34,572,
-against a 5,000,000/day allowance. Raising the eligibility bar instead would have cost
-every reference on the account.
+curve — ~165 KB instead of ~90 KB, and 40,332 rows read per rebuild instead of 34,572.
+Raising the eligibility bar instead would have cost every reference on the account.
 
 They are cached on **what the answer depends on, not on a clock**. A finished launch never
 changes again — that is the point of only serving finished ones — so the only thing that
 can move is *which* launches have finished, which happens once or twice a day when a video
 crosses 48 hours old. So every request runs a cheap roster query (**22 rows**, measured)
-and the curves are rebuilt only when the roster differs (**~48,000 rows**, once or twice a
-day), plus one forced rebuild every 24 hours for anything the roster cannot see. That comes
-to roughly **97,000 rows a day** — less than a six-hour timer would have cost, while a
-finished launch now appears the moment it is asked for instead of up to six hours later.
-An hourly timer, for comparison, would have burned 1.15 million rows a day on YouTube alone
-to notice a once-a-day change.
+and the curves are rebuilt only when the roster differs (the ~40,000-row rebuild above,
+once or twice a day), plus one forced rebuild every 24 hours for anything the roster cannot
+see. That comes to under **100,000 rows a day** — less than a six-hour timer would have
+cost, while a finished launch now appears the moment it is asked for instead of up to six
+hours later. An hourly timer, for comparison, would have burned nearly a million rows a day
+on YouTube alone to notice a once-a-day change.
 
 The ages are emitted per point rather than as a dense array, deliberately: a hole in the
 recording has to survive the downsampling, because the model throws away reference curves
 with a hole where the prediction gets made.
 
-Both stores are still written every tick. D1 answers reads; if it fails *or comes back
-empty while KV has data*, KV answers instead and the page never notices — the JSON is
-identical either way. The `X-CC-Source` response header names whichever one answered.
+D1 is written every tick; the KV mirror follows on the 15-minute gate above. D1 answers
+reads; if it fails *or comes back empty while KV has data*, KV answers instead and the page
+never notices — the JSON has the same shape either way, though the mirror is deliberately
+coarser (that is what `/d1diff` shows). The `X-CC-Source` response header names whichever
+one answered.
 
 **Keeping both is the settled decision, not an unfinished migration.** The plan once had a
 final step that retired KV after D1 had proved itself; it was dropped on purpose. The
@@ -462,8 +475,9 @@ it in the OAuth URL). Only `TIKTOK_CLIENT_SECRET` is a secret.
 - **Impressions & CTR** — no API provides these. YouTube Studio → Analytics →
   Advanced mode → Export CSV, then **Import Studio CSV** at the bottom of the
   dashboard.
-- **Search keywords** — edit [`data/keywords.json`](data/keywords.json)
-  (each costs 100 quota units per week).
+- **Search keywords** — edit [`data/keywords.json`](data/keywords.json). Each search page
+  costs 100 quota units and a keyword can page up to 8 deep, so the weekly run works from a
+  shared page budget and rotates keywords when it can't cover them all (see `rank.mjs`).
 
 ---
 
@@ -500,10 +514,13 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ## Repo layout
 
 ```
-yt-dashboard/   index.html · tiktok.html · compare.html · style.css · privacy.html · terms.html
-worker/         worker.js · wrangler.toml
-scripts/        snapshot.mjs · rank.mjs
+yt-dashboard/   index.html · tiktok.html · compare.html · style.css · privacy.html · terms.html · publish.sh
+worker/         worker.js · wrangler.toml · schema.sql · *.test.mjs
+scripts/        snapshot.mjs · rank.mjs · test-all.mjs · *.test.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json
 docs/           tiktok-setup.md · youtube-ideas.md
 brand/          icon.svg + PNG renders · PHILOSOPHY.md
 ```
+
+Run the tests with `node scripts/test-all.mjs` — they lift code straight out of the pages
+and the Worker, so they cannot drift from what ships.

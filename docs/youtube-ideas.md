@@ -6,7 +6,8 @@ the YouTube API offers that we don't currently request) and **new features**
 
 Current metrics in use: `views`, `estimatedMinutesWatched`, `averageViewDuration`,
 `averageViewPercentage`, `likes`, `dislikes`, `comments`, `shares`,
-`subscribersGained`, `subscribersLost`, `audienceWatchRatio`, `viewerPercentage`,
+`subscribersGained`, `subscribersLost`, `audienceWatchRatio`,
+`relativeRetentionPerformance`, `videosAddedToPlaylists`, `viewerPercentage`,
 `cardImpressions`, `cardClicks`, `cardClickRate`, `playlistStarts`.
 
 ---
@@ -15,6 +16,8 @@ Current metrics in use: `views`, `estimatedMinutesWatched`, `averageViewDuration
 
 - **A1 relativeRetentionPerformance** — shipped, in each video's deep-dive.
 - **A2 saves (videosAddedToPlaylists)** — shipped: table column, drawer tile, account total.
+- **B1 two-channel comparison** — shipped as `compare.html` (growth side by side from
+  `history.json`), linked from the dashboard header.
 - **B2 milestone projections** — shipped on both dashboards (subscribers / followers).
 - **Chart overhaul** — human-number axes with every gridline labelled, crosshair
   hover, selective direct labels, legends, thinner marks, phone-legible axis text.
@@ -25,7 +28,9 @@ Current metrics in use: `views`, `estimatedMinutesWatched`, `averageViewDuration
 
 ## A. New data we're not pulling yet
 
-### A1. `relativeRetentionPerformance` — the standout ⭐
+*(A1 and A2 have since shipped — see **Built** above. Kept here for the rationale.)*
+
+### A1. `relativeRetentionPerformance` — the standout ⭐ *(shipped)*
 How well a video holds viewers **compared with other YouTube videos of a similar
 length**, across all of YouTube. 0.5 = average; above = better than typical.
 
@@ -33,10 +38,10 @@ Why it matters: every retention number we show today is only relative to *her ow
 catalogue. This is the one metric that answers "is this actually good?" in absolute
 terms — a genuine outside benchmark, and it feeds the Report Card grade nicely.
 
-### A2. `videosAddedToPlaylists` / `videosRemovedFromPlaylists` — the save signal ⭐
+### A2. `videosAddedToPlaylists` / `videosRemovedFromPlaylists` — the save signal ⭐ *(shipped)*
 How often people save a video to a playlist (incl. Watch Later). Saves are a strong
 quality signal and a good early indicator, especially for sleep/ASMR content that
-people deliberately come back to. Not visible anywhere in the dashboard today.
+people deliberately come back to.
 
 ### A3. End-screen metrics
 `endScreenElementImpressions`, `endScreenElementClicks`, `endScreenElementClickRate`
@@ -59,13 +64,12 @@ channel level shows whether growth is coming from existing fans or new audience.
 
 ## B. New features from data we already have (no extra quota)
 
-### B1. Two-channel comparison ⭐
-The history robot already records **both** channels, but the dashboard only ever
-shows whichever one is signed in. A comparison view (growth curves side by side,
-who's gaining faster, whose videos land better) is free — the data is already in
-`history.json`.
+### B1. Two-channel comparison ⭐ *(shipped as `compare.html`)*
+The history robot already records **both** channels. A comparison view (growth
+curves side by side, who's gaining faster, whose videos land better) is free —
+the data is already in `history.json`.
 
-### B2. Milestone projections / ETA ⭐
+### B2. Milestone projections / ETA ⭐ *(shipped)*
 "At the current pace you'll hit 10,000 subscribers around 15 September."
 Straightforward from the recorded subscriber history, and much more motivating
 than a raw count.
@@ -94,12 +98,10 @@ record-keeping.
 
 ---
 
-## Suggested order
+## Suggested order (of what remains)
 
-1. **A1 relativeRetentionPerformance** — biggest insight per unit of work, and
-   plugs straight into the existing Report Card.
-2. **A2 saves** — a genuinely new and meaningful signal for this niche.
-3. **B1 two-channel comparison** — free, uses data already recorded, and it's the
-   thing two creators in one household actually want.
-4. **B2 milestone projections** — small, motivating, cheap.
-5. Everything else as appetite allows.
+The original top four (A1, A2, B1, B2) have all shipped. Of what's left:
+
+1. **A3 end-screen metrics** — the drawer already shows the info-card equivalent.
+2. **B3 evergreen vs spike** — the cold-tail recording now exists to power it.
+3. Everything else as appetite allows.

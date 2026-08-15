@@ -75,8 +75,9 @@ const HOT_HOURS   = 48;
    carried a second index, and undercounted the whole thing by a third — the arithmetic is
    checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And the
    live database still has that second index: schema.sql drops it, but the deploy's schema
-   step has been failing since the API token lost its D1 permission, so until that is fixed
-   the real bill is ~58,000. Both numbers fit; only one of them is the plan.
+   step has never succeeded — the API token has never carried the D1 permission (see
+   deploy-worker.yml) — so until that is fixed the real bill is ~58,000. Both numbers fit;
+   only one of them is the plan.
 
    Reading the roster to decide who is due costs under 200 rows every 15 minutes. The
    extra YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
@@ -1586,10 +1587,10 @@ async function route(request, env) {
 
        Rate-limited, because it is unauthenticated and expensive. The Worker URL is in the
        dashboard's own source and this repo is public, so anyone — or any crawler that
-       follows a link — can call it, and every call spends the scarcest budget here: a KV
-       write against a free tier of 1,000 a day, plus YouTube quota and D1 rows. A few
-       hundred requests, which is a rounding error for a crawler, would exhaust the day's
-       KV writes and stop sampling until midnight UTC.
+       follows a link — can call it, and every call runs the trackers: YouTube quota, D1
+       row-writes, and sometimes a KV write (the 15-minute write gate means most calls no
+       longer spend one, but roster changes and backfills still do). A crawler in a loop
+       would spend real allowances for nothing.
 
        A cooldown rather than a secret, deliberately. The cron already runs this every
        minute, so /run is only ever a convenience for seeing the result immediately, and
