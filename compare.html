@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Channel Command — Compare</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* Compare-only styles. Kept in this file rather than style.css so nothing here
+     can reach the YouTube or TikTok pages. */
+  .yt { color:var(--live); } .tt { color:var(--accent); }
+  .switcher { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .switcher a { text-decoration:none; }
+  .switcher .on { background:var(--panel-2); border-color:var(--muted); color:var(--text); }
+
+  .conn { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .conn .pill { display:flex; align-items:center; gap:7px; font-size:12px; padding:8px 13px;
+    border:1px solid var(--line); border-radius:999px; color:var(--muted); background:var(--panel); }
+  .conn .pill i { width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none; display:block; }
+  .conn .pill.ok i { background:var(--up); } .conn .pill.ok { color:var(--text); }
+  .conn .pill.bad i { background:var(--down); }
+
+  .pair-row { display:flex; gap:12px; align-items:center; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:12px; padding:11px 13px; flex-wrap:wrap; margin-bottom:8px; }
+  .pair-row .who { flex:1 1 300px; min-width:0; display:flex; flex-direction:column; gap:8px; }
+  .pair-row.linked { opacity:.8; }
+  /* the two sides sit as rows so the frames stack vertically and line up with each other,
+     which is what makes "same video or not?" answerable at a glance */
+  .pside { display:flex; gap:11px; align-items:center; min-width:0; }
+  .pmeta { min-width:0; flex:1; }
+  .pshot { position:relative; flex:none; line-height:0; }
+  .pthumb { border-radius:8px; border:1px solid var(--line); background:var(--panel-2);
+            object-fit:cover; display:block; }
+  /* YouTube frames are 16:9, TikTok covers are 9:16 — matching their real shapes is a
+     cue in itself, and forcing one aspect on both would crop the subject out of one.
+     Sized so the subject of the frame is actually recognisable: at the old 72×41 / 32×57
+     these were icons rather than pictures, and the frame is half the evidence for
+     "is this the same video?" — the other half being the date. */
+  .pthumb.y { width:124px; height:70px; }
+  .pthumb.t { width:62px; height:110px; }
+  .pthumb.none { opacity:.35; }
+  /* the length, worn the way a video player wears it — over the bottom-right of the
+     frame, so it costs no row height and reads as a property of that picture */
+  .plen { position:absolute; right:4px; bottom:4px; font:600 10.5px/1 var(--f-mono);
+          padding:3px 5px; border-radius:4px; background:rgba(0,0,0,.78); color:#fff;
+          letter-spacing:.02em; pointer-events:none; }
+  .gap { margin-top:4px; font-size:11px; color:var(--muted); }
+  .gap.far { color:var(--text); font-weight:600; }
+  .pair-row .who b { display:block; font-size:13px; font-weight:700; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .pair-row .who small { color:var(--muted); font-size:11.5px; }
+  .pair-row .why { flex:1 1 200px; font-size:11.5px; color:var(--muted); line-height:1.5; }
+  .pair-row .why em { font-style:normal; color:var(--text); font-weight:600; }
+  .pair-row .acts { display:flex; gap:6px; flex:none; }
+  .pf { display:inline-block; font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; margin-right:5px; }
+  .pf.y { background:color-mix(in srgb, var(--live) 20%, transparent); color:var(--live); }
+  .pf.t { background:color-mix(in srgb, var(--accent) 20%, transparent); color:var(--accent); }
+  .manual { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px;
+    font-size:12px; color:var(--muted); }
+  .manual select { width:auto; flex:1 1 220px; min-width:0; font-size:12px; padding:8px 10px; }
+
+  .vs { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:700px) { .vs { grid-template-columns:1fr; } }
+  .vs .col { background:var(--panel-2); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .vs .col.y { box-shadow:inset 3px 0 0 var(--live); }
+  .vs .col.t { box-shadow:inset 3px 0 0 var(--accent); }
+  .vs .cap { font-size:11.5px; font-weight:700; margin-bottom:9px; display:flex; align-items:center; gap:6px; }
+  .vs .cap .d { width:8px; height:8px; border-radius:50%; flex:none; }
+  .mrow { display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:5px 0;
+    border-bottom:1px solid var(--line); font-size:12.5px; }
+  .mrow:last-of-type { border-bottom:0; }
+  .mrow .k { color:var(--muted); } .mrow .v { font-family:var(--f-num); font-weight:600; font-size:14px; }
+  .pctbox { margin-top:12px; }
+  .pctbox .pl { font-size:11px; color:var(--muted); margin-bottom:5px; }
+  .pctbox .track { height:9px; border-radius:999px; background:var(--line); overflow:hidden; }
+  .pctbox .fill { height:100%; border-radius:999px; }
+  .pctbox .big { font-family:var(--f-num); font-weight:800; font-size:clamp(20px,4vw,29px);
+    letter-spacing:-.03em; margin-top:7px; line-height:1.1; }
+  .verdict { margin-top:12px; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:12px; padding:13px 15px; }
+  .verdict .vh { font-family:var(--f-num); font-weight:700; font-size:15px; letter-spacing:-.02em; }
+  .verdict .vp { font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.6; }
+  .caveat { margin-top:10px; font-size:11.5px; color:var(--muted); line-height:1.6;
+    border-left:2px solid var(--line); padding-left:11px; }
+  .caveat b { color:var(--text); }
+
+  .t1krow { display:flex; align-items:center; gap:11px; font-size:12.5px; margin-bottom:9px; }
+  .t1krow .who { flex:0 0 92px; font-weight:600; display:flex; align-items:center; gap:6px; }
+  .t1krow .who i { width:8px; height:8px; border-radius:50%; display:block; flex:none; }
+  .t1krow .bar { flex:1; height:20px; background:var(--ink); border-radius:6px; overflow:hidden; }
+  .t1krow .bar div { height:100%; border-radius:6px; }
+  .t1krow .val { flex:0 0 104px; text-align:right; font-family:var(--f-num); font-weight:600; font-size:13px; }
+  @media (max-width:620px) { .t1krow .who { flex-basis:70px; } .t1krow .val { flex-basis:82px; font-size:12px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="live-dot" id="liveDot"></span>
+    <h1>Channel Command <span class="tt">· Compare</span></h1>
+    <div class="status"><span id="statusText">loading…</span></div>
+    <select id="themeSel" title="Theme">
+      <optgroup label="Soft &amp; sleek">
+        <option value="rose">🌷 Rosé</option><option value="sakura">🌸 Sakura</option><option value="pearl">🤍 Pearl</option>
+      </optgroup>
+      <optgroup label="Dark &amp; dreamy 🌙">
+        <option value="mauve">💗 Mauve</option><option value="twilight">🌌 Twilight</option>
+        <option value="berry">🍇 Berry</option><option value="rosenight">🌹 Midnight Rose</option>
+        <option value="dusk">🌆 Dusk</option>
+      </optgroup>
+      <optgroup label="Original">
+        <option value="midnight">🌙 Midnight</option><option value="noir">🖤 Noir</option>
+        <option value="ocean">🌊 Ocean</option><option value="blush">🌺 Blush</option>
+        <option value="lavender">💜 Lavender</option><option value="honey">🍯 Honey</option>
+      </optgroup>
+    </select>
+  </header>
+
+  <div class="switcher">
+    <a href="./"><button class="ghost">▶ YouTube</button></a>
+    <a href="./tiktok.html"><button class="ghost">♪ TikTok</button></a>
+    <a href="./compare.html"><button class="ghost on">⇄ Compare</button></a>
+  </div>
+
+  <div class="error" id="errorBox"></div>
+
+  <div class="conn" id="connRow"></div>
+
+  <!-- SETUP / SIGN IN -->
+  <div class="card" id="setupPanel">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Connect both sides</div>
+    <p class="explain" style="margin:10px 0 14px">
+      Compare needs the same two sign-ins the other pages use. It reuses them — if you're already
+      signed in on the YouTube and TikTok dashboards on this device, there's nothing to do here.
+    </p>
+    <div class="row">
+      <button class="primary" id="signInBtn">Sign in with Google</button>
+      <a href="./tiktok.html"><button class="ghost">Connect TikTok →</button></a>
+    </div>
+    <p class="hint" id="setupHint"></p>
+  </div>
+
+  <!-- PAIRING -->
+  <div class="card" id="pairCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Linking your posts</div>
+    <p class="explain" style="margin-top:8px">
+      Suggested matches are scored on caption similarity (hashtags and emoji stripped), how close together
+      the two were posted, and whether the TikTok looks like a cut of the YouTube one. <b>Nothing is linked
+      until you confirm it</b> — a wrong pair would quietly poison every number below.
+    </p>
+    <div id="suggestions"><p class="dnote">looking for matches…</p></div>
+    <div class="manual">
+      <span>Link by hand:</span>
+      <select id="manY"><option value="">Pick a YouTube video…</option></select>
+      <select id="manT"><option value="">…and its TikTok post</option></select>
+      <button class="ghost" id="manLink">Link</button>
+    </div>
+    <div id="linkedList" style="margin-top:14px"></div>
+  </div>
+
+  <!-- COMPARISON -->
+  <div class="card" id="cmpCard" style="display:none">
+    <div class="thead-bar">
+      <div class="label" id="cmpLabel">Side by side</div>
+      <select id="pairPick" title="Which pair to show"></select>
+    </div>
+    <div id="cmpContent"></div>
+  </div>
+
+  <div class="card" id="raceCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">The launch race</div>
+    <p class="explain" style="margin-top:8px" id="raceExplain"></p>
+    <div class="range-row" id="raceMode" style="margin-bottom:12px">
+      <button class="ghost active" data-mode="idx">vs your typical launch</button>
+      <button class="ghost" data-mode="raw">Raw views</button>
+    </div>
+    <div id="raceContent"></div>
+  </div>
+
+  <div class="card" id="t1kCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Time to a thousand</div>
+    <p class="explain" style="margin-top:8px">How long each version took to reach 1,000 views. No units problem here — it's a clock.</p>
+    <div id="t1kContent"></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const fmt = new Intl.NumberFormat();
+  const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+  const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const DATA = 'https://www.googleapis.com/youtube/v3/';
+  const DATA_RAW = 'https://raw.githubusercontent.com/ReubenRich16/Analytics/main/data/';
+  const DEFAULT_CLIENT_ID = '';
+  const SCOPES = 'https://www.googleapis.com/auth/youtube.readonly';
+
+  let accessToken = null, tokenExp = 0, tokenClient = null, clientId = '';
+  let workerUrl = '', ttSession = '';
+  let chanId = '', ytVideos = [], ttVideos = [], ytHist = null, ttHist = null;
+  let pairs = [], activePair = 0, raceMode = 'idx';
+
+  const setStatus = t => { $('statusText').textContent = t; };
+  const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
+  const clearError = () => { $('errorBox').style.display = 'none'; };
+
+  /* ---------- theme (identical keys to the other two pages) ---------- */
+  function applyTheme(t) {
+    if (t === 'midnight') document.body.removeAttribute('data-theme');
+    else document.body.setAttribute('data-theme', t);
+    $('themeSel').value = t;
+    try { localStorage.setItem('cc_theme', t); } catch (e) {}
+  }
+  let savedTheme = 'midnight';
+  try { savedTheme = localStorage.getItem('cc_theme') || 'midnight'; } catch (e) {}
+  applyTheme(savedTheme);
+  $('themeSel').addEventListener('change', () => applyTheme($('themeSel').value));
+
+  /* ---------- stored connections ---------- */
+  try { clientId = localStorage.getItem('cc_client_id') || DEFAULT_CLIENT_ID; } catch (e) {}
+  try { workerUrl = localStorage.getItem('cc_worker') || localStorage.getItem('tt_worker') || ''; } catch (e) {}
+  try { ttSession = localStorage.getItem('tt_sess') || ''; } catch (e) {}
+  try {
+    const t = JSON.parse(localStorage.getItem('cc_tok') || 'null');
+    if (t && t.t && t.e && t.e - 90000 > Date.now()) { accessToken = t.t; tokenExp = t.e; }
+  } catch (e) {}
+
+  // true only after a /pairs round-trip actually succeeds — having a Worker URL and a
+  // token is not the same thing as being synced, and the pill used to claim it was
+  let pairsSynced = false;
+  function renderConn() {
+    const rows = [
+      ['YouTube', !!accessToken, accessToken ? 'signed in' : 'not signed in'],
+      ['TikTok', !!(workerUrl && ttSession), (workerUrl && ttSession) ? 'connected' : (workerUrl ? 'not signed in' : 'no Worker URL')],
+      ['Pairs', pairsSynced, pairsSynced ? 'synced to your Worker' : 'saved on this device only']
+    ];
+    $('connRow').innerHTML = rows.map(([n, ok, note]) =>
+      '<span class="pill ' + (ok ? 'ok' : 'bad') + '"><i></i>' + esc(n) + ' · ' + esc(note) + '</span>').join('');
+  }
+
+  /* ---------- Google sign-in (same client id and token key as the main page) ---------- */
+  function saveToken() {
+    try { localStorage.setItem('cc_tok', JSON.stringify({ t: accessToken, e: tokenExp })); } catch (e) {}
+  }
+  function initAuth(prompt) {
+    if (!clientId) { showError('No Google client ID saved on this device yet — open the YouTube dashboard once and sign in there first.'); return; }
+    if (!(window.google && google.accounts && google.accounts.oauth2)) { showError('Google sign-in script has not loaded yet — give it a second and try again.'); return; }
+    try {
+      tokenClient = tokenClient || google.accounts.oauth2.initTokenClient({
+        client_id: clientId, scope: SCOPES,
+        callback: resp => {
+          if (!resp || !resp.access_token) { showError('Sign-in was cancelled or refused.'); return; }
+          accessToken = resp.access_token;
+          tokenExp = Date.now() + (+resp.expires_in || 3600) * 1000;
+          saveToken(); clearError(); boot();
+        }
+      });
+      tokenClient.requestAccessToken(prompt ? { prompt: 'consent' } : {});
+    } catch (e) { showError('Could not start Google sign-in: ' + e.message); }
+  }
+  $('signInBtn').addEventListener('click', () => initAuth(false));
+  $('errorBox').addEventListener('click', () => { if (clientId) { clearError(); initAuth(false); } });
+
+  async function dataApi(path, params) {
+    const u = new URL(DATA + path);
+    Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+    const r = await fetch(u, { headers: { Authorization: 'Bearer ' + accessToken } });
+    if (r.status === 401) { accessToken = null; const e = new Error('reauth'); e.reauth = true; throw e; }
+    if (!r.ok) throw new Error('YouTube API ' + r.status);
+    return r.json();
+  }
+  async function ttApi(path) {
+    const r = await fetch(workerUrl.replace(/\/$/, '') + path, { headers: { Authorization: 'Bearer ' + ttSession } });
+    if (!r.ok) throw new Error('TikTok ' + r.status);
+    return r.json();
+  }
+
+  /* ---------- matching ----------
+     Captions differ between platforms far more than titles do, so everything is
+     normalised hard before comparing: hashtags out, emoji out, punctuation out. */
+  function normTitle(s) {
+    return String(s || '').toLowerCase()
+      .replace(/#[\p{L}0-9_]+/gu, ' ')
+      .replace(/\p{Extended_Pictographic}/gu, ' ')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/[^\p{L}\p{N} ]+/gu, ' ')
+      .replace(/\s+/g, ' ').trim();
+  }
+  function bigrams(s) { const g = new Set(); for (let i = 0; i < s.length - 1; i++) g.add(s.slice(i, i + 2)); return g; }
+  function dice(a, b) {
+    const A = bigrams(a), B = bigrams(b);
+    if (!A.size || !B.size) return 0;
+    let inter = 0; for (const g of A) if (B.has(g)) inter++;
+    return 2 * inter / (A.size + B.size);
+  }
+  const HOUR = 3600e3;
+  function scorePair(y, t) {
+    const sim = dice(normTitle(y.title), normTitle(t.title));
+    const gapH = Math.abs(y.pub - t.pub) / HOUR;
+    const time = gapH <= 6 ? 1 : gapH >= 168 ? 0 : 1 - (gapH - 6) / 162;
+    // a TikTok is normally a cut of the YouTube one, so shorter-or-equal scores well
+    let dur = 0.5;
+    if (y.dur && t.dur) dur = t.dur <= y.dur ? 1 : (t.dur <= y.dur * 1.35 ? 0.6 : 0.1);
+    return { score: 0.6 * sim + 0.25 * time + 0.15 * dur, sim, gapH, dur };
+  }
+  function whyText(s) {
+    const bits = ['<em>' + Math.round(s.sim * 100) + '% caption match</em>'];
+    bits.push(s.gapH < 1 ? 'posted within the hour' :
+      s.gapH < 48 ? 'posted ' + Math.round(s.gapH) + ' hours apart' :
+      'posted ' + Math.round(s.gapH / 24) + ' days apart');
+    if (s.dur === 1) bits.push('length looks like a cut');
+    return bits.join(' · ');
+  }
+
+  /* ---------- pair storage: Worker when we can, this device otherwise ---------- */
+  async function loadPairs() {
+    if (workerUrl && accessToken) {
+      try {
+        const r = await fetch(workerUrl.replace(/\/$/, '') + '/pairs', { headers: { Authorization: 'Bearer ' + accessToken } });
+        if (r.ok) { const j = await r.json(); if (Array.isArray(j)) { pairs = j; pairsSynced = true; return; } }
+      } catch (e) {}
+    }
+    pairsSynced = false;
+    try { pairs = JSON.parse(localStorage.getItem('cc_pairs') || '[]'); } catch (e) { pairs = []; }
+  }
+  async function savePairs() {
+    try { localStorage.setItem('cc_pairs', JSON.stringify(pairs)); } catch (e) {}
+    if (!workerUrl || !accessToken) return;
+    try {
+      const r = await fetch(workerUrl.replace(/\/$/, '') + '/pairs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+        body: JSON.stringify({ pairs })
+      });
+      pairsSynced = r.ok;
+    } catch (e) { pairsSynced = false; }
+    renderConn();
+  }
+
+  /* ---------- load both catalogues ---------- */
+  async function loadYouTube() {
+    const ch = await dataApi('channels', { part: 'contentDetails', mine: 'true' });
+    if (!ch.items || !ch.items.length) throw new Error('No channel on this Google account.');
+    chanId = ch.items[0].id;
+    const uploads = ch.items[0].contentDetails.relatedPlaylists.uploads;
+    const ids = [];
+    let pageToken = '';
+    while (ids.length < 200) {
+      const d = await dataApi('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: '50', ...(pageToken ? { pageToken } : {}) });
+      for (const it of d.items) ids.push(it.contentDetails.videoId);
+      pageToken = d.nextPageToken; if (!pageToken) break;
+    }
+    ytVideos = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const part = ids.slice(i, i + 50);
+      const d = await dataApi('videos', { part: 'snippet,contentDetails,statistics', id: part.join(','), maxResults: '50' });
+      for (const it of d.items) {
+        ytVideos.push({
+          id: it.id, title: it.snippet.title,
+          // the frame matters as much as the caption when confirming a pair: two posts can
+          // share a title and be different cuts, and the eye catches that instantly
+          thumb: (((it.snippet.thumbnails || {}).medium || (it.snippet.thumbnails || {}).default) || {}).url || '',
+          pub: new Date(it.snippet.publishedAt).getTime(),
+          dur: isoDur(it.contentDetails && it.contentDetails.duration),
+          views: +(it.statistics.viewCount || 0),
+          likes: +(it.statistics.likeCount || 0),
+          comments: +(it.statistics.commentCount || 0)
+        });
+      }
+    }
+  }
+  function isoDur(s) {
+    const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(s || '');
+    return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0;
+  }
+  async function loadTikTok() {
+    if (!workerUrl || !ttSession) return;
+    const v = await ttApi('/tiktok/videos');
+    const list = (v && v.videos) || (v && v.data && v.data.videos) || [];
+    ttVideos = list.map(x => ({
+      id: x.id, title: x.title || x.video_description || '',
+      thumb: x.cover_image_url || '',
+      pub: (x.create_time || 0) * 1000, dur: x.duration || 0,
+      views: +(x.view_count || 0), likes: +(x.like_count || 0),
+      comments: +(x.comment_count || 0), shares: +(x.share_count || 0)
+    })).filter(x => x.id);
+    try { ttHist = await ttApi('/tiktok/history'); } catch (e) { ttHist = null; }
+  }
+  async function loadYtHistory() {
+    try {
+      const r = await fetch(DATA_RAW + 'history.json', { cache: 'no-store' });
+      ytHist = r.ok ? await r.json() : null;
+    } catch (e) { ytHist = null; }
+  }
+
+  /* ---------- percentile within a platform's own catalogue ---------- */
+  /* Two different numbers, which is the point.
+
+     `beat` is the share of the other posts this one outruns — the right thing to fill a
+     progress bar with, since more beaten really is more bar.
+
+     `top` is where it places, and it is NOT 100 − beat. Beating everything gives beat=100,
+     and 100 − 100 printed "Top 0%" — the best post on the channel labelled as the top zero
+     percent of it. Rounding made it worse than a single edge case: beat hits 100 for any
+     ratio at or above 0.995, so on a catalogue of 84 the second-best post said "Top 0%"
+     too. A rank out of the whole catalogue can't do that — best of 84 is 1/84, so "Top 1%",
+     and the floor keeps it there.
+
+     (The bottom of the range needs no fix. The worst post gets beat=0 → "Top 100%", which
+     is vacuously true rather than wrong.) */
+  /* Ranked on TOTALS over a comparable stretch, not views/day. Dividing by age does not
+     remove age from a count — it inverts it: the same post reads thousands a day on its
+     first morning and a trickle two months later on identical performance, which is why
+     both dashboards dropped views/day from every ranking. Past its launch window a post's
+     own view count IS the comparable figure (the launch is almost all of it); inside the
+     window the total is still climbing, so a brand-new post abstains from the ranking
+     rather than being scored by either ruler. */
+  const LAUNCH_MS = 48 * 3600e3;
+  const settled = v => Date.now() - v.pub >= LAUNCH_MS;
+  function percentile(list, one) {
+    if (!settled(one)) return null;
+    const others = list.filter(x => x.id !== one.id && settled(x));
+    if (others.length < 3) return null;
+    const me = one.views;
+    const beats = others.filter(o => o.views < me).length;
+    const rank = others.filter(o => o.views >= me).length + 1;   // 1 = best on the channel
+    return {
+      beat: Math.round(beats / others.length * 100),
+      top: Math.max(1, Math.round(rank / (others.length + 1) * 100))
+    };
+  }
+
+  /* ---------- render: suggestions + linked ---------- */
+
+  // One side of a proposed pair: the frame, the caption, and when it went up. Captions
+  // alone are a weak basis for confirming a match — the suggester already scores on them,
+  // so agreeing on caption similarity only re-states what the machine guessed. The
+  // thumbnail and the date are the independent evidence a person can actually judge.
+  const dstamp = ms => !ms ? 'date unknown'
+    : new Date(ms).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) +
+      ' · ' + new Date(ms).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+  /* Length, as a person writes it. Seconds for a short, m:ss up to an hour, h:mm:ss past it.
+     Zero means "not reported" rather than "zero seconds long" — TikTok returns 0 for some
+     posts and the YouTube parser returns 0 for a live stream with no duration — so those
+     get no chip at all instead of "0:00", which would be a stated fact that isn't true. */
+  function durText(sec) {
+    const s = Math.round(+sec || 0);
+    if (s <= 0) return '';
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    const p = n => String(n).padStart(2, '0');
+    return h ? h + ':' + p(m) + ':' + p(ss) : m + ':' + p(ss);
+  }
+  function side(kind, badge, v) {
+    const len = durText(v.dur);
+    const chip = len ? '<span class="plen">' + esc(len) + '</span>' : '';
+    const t = v.thumb
+      ? '<img class="pthumb ' + kind + '" src="' + esc(v.thumb) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">'
+      : '<span class="pthumb ' + kind + ' none" aria-hidden="true"></span>';
+    return '<div class="pside"><div class="pshot">' + t + chip + '</div>' +
+      '<div class="pmeta"><b><span class="pf ' + kind + '">' + badge + '</span>' + esc(v.title || '(no caption)') + '</b>' +
+      '<small>' + esc(dstamp(v.pub)) + (len ? ' · ' + len + ' long' : '') + '</small></div></div>';
+  }
+  // Only the WARNING, never the gap itself — whyText already states how far apart the two
+  // were posted, and printing it twice in the same row is noise that makes the row look
+  // like it is saying two things when it is saying one. This adds the judgement whyText
+  // does not make: past about three days, a caption match is usually a coincidence of
+  // wording rather than the same video, and that deserves calling out next to a button
+  // whose whole job is confirming the pair.
+  function gapNote(a, b) {
+    if (!a || !b) return '';
+    const h = Math.abs(a - b) / 3600e3;
+    if (h <= 72) return '';
+    // deliberately does not repeat the number whyText just printed — this line exists to
+    // add the judgement, not the measurement
+    return '<div class="gap far">Worth a careful look — this may be a caption coincidence rather than the same video.</div>';
+  }
+
+  function renderPairing() {
+    const linkedY = new Set(pairs.map(p => p.y)), linkedT = new Set(pairs.map(p => p.t));
+    const cands = [];
+    for (const y of ytVideos) {
+      if (linkedY.has(y.id)) continue;
+      for (const t of ttVideos) {
+        if (linkedT.has(t.id)) continue;
+        const s = scorePair(y, t);
+        if (s.score >= 0.42) cands.push({ y, t, s });
+      }
+    }
+    cands.sort((a, b) => b.s.score - a.s.score);
+    // one suggestion per video on each side — the best one
+    const usedY = new Set(), usedT = new Set(), top = [];
+    for (const c of cands) {
+      if (usedY.has(c.y.id) || usedT.has(c.t.id)) continue;
+      usedY.add(c.y.id); usedT.add(c.t.id); top.push(c);
+      if (top.length >= 8) break;
+    }
+    $('suggestions').innerHTML = top.length ? top.map(c =>
+      '<div class="pair-row" data-y="' + esc(c.y.id) + '" data-t="' + esc(c.t.id) + '">' +
+        '<div class="who">' +
+          side('y', '▶ YT', c.y) +
+          side('t', '♪ TT', c.t) +
+        '</div>' +
+        '<div class="why">' + whyText(c.s) + gapNote(c.y.pub, c.t.pub) + '</div>' +
+        '<div class="acts"><button class="ghost link-yes">Yes, link</button>' +
+        '<button class="ghost link-no">Not the same</button></div></div>').join('')
+      : '<p class="dnote">No confident matches right now. Captions that differ a lot won’t be suggested — link those by hand below. (A strong caption match can be suggested however far apart the two were posted, so check the dates before confirming.)</p>';
+
+    $('linkedList').innerHTML = pairs.length ? '<p class="dnote" style="margin-bottom:8px">Linked (' + pairs.length + '):</p>' +
+      pairs.map((p, i) => {
+        // a confirmed pair keeps its frames and dates: that is how a wrong link gets
+        // spotted later, when the numbers it feeds start looking odd
+        const y = ytVideos.find(v => v.id === p.y), t = ttVideos.find(v => v.id === p.t);
+        const who = (y && t)
+          ? side('y', '▶ YT', y) + side('t', '♪ TT', t)
+          : '<div class="pside"><div class="pmeta"><b>' + esc(y ? y.title : p.y) + '</b>' +
+            '<small>' + esc(t ? (t.title || '(no caption)') : p.t) + '</small></div></div>';
+        // a linked row has no whyText, so here the gap IS worth stating outright
+        const gapH = (y && t && y.pub && t.pub) ? Math.abs(y.pub - t.pub) / 3600e3 : null;
+        const gap = gapH == null ? '' : '<div class="gap' + (gapH > 72 ? ' far' : '') + '">Posted ' +
+          (gapH < 48 ? Math.round(gapH) + ' hours' : Math.round(gapH / 24) + ' days') + ' apart</div>';
+        return '<div class="pair-row linked"><div class="who">' + who + '</div>' +
+          '<div class="why">' + gap + '</div>' +
+          '<div class="acts"><button class="ghost unlink" data-i="' + i + '">Unlink</button></div></div>';
+      }).join('') : '';
+
+    const opts = a => a.map(v => {
+      const len = durText(v.dur);
+      return '<option value="' + esc(v.id) + '">' + esc((v.title || '(no caption)').slice(0, 70)) +
+        (len ? esc(' · ' + len) : '') + '</option>';
+    }).join('');
+    $('manY').innerHTML = '<option value="">Pick a YouTube video…</option>' + opts(ytVideos);
+    $('manT').innerHTML = '<option value="">…and its TikTok post</option>' + opts(ttVideos);
+  }
+
+  $('suggestions').addEventListener('click', async e => {
+    const row = e.target.closest('.pair-row'); if (!row) return;
+    if (e.target.classList.contains('link-yes')) {
+      pairs.push({ y: row.dataset.y, t: row.dataset.t, at: Date.now() });
+      await savePairs(); renderPairing(); renderAll();
+    } else if (e.target.classList.contains('link-no')) {
+      row.remove();
+    }
+  });
+  $('linkedList').addEventListener('click', async e => {
+    const b = e.target.closest('.unlink'); if (!b) return;
+    pairs.splice(+b.dataset.i, 1);
+    await savePairs(); renderPairing(); renderAll();
+  });
+  $('manLink').addEventListener('click', async () => {
+    const y = $('manY').value, t = $('manT').value;
+    if (!y || !t) { showError('Pick one video on each side first.'); return; }
+    if (pairs.some(p => p.y === y || p.t === t)) { showError('One of those is already linked — unlink it first.'); return; }
+    clearError();
+    pairs.push({ y, t, at: Date.now() });
+    await savePairs(); renderPairing(); renderAll();
+  });
+
+  /* ---------- side by side ---------- */
+  const rate = (n, d) => d ? (n / d * 100) : 0;
+  function renderCompare() {
+    if (!pairs.length) { $('cmpCard').style.display = 'none'; return; }
+    $('cmpCard').style.display = 'block';
+    $('pairPick').innerHTML = pairs.map((p, i) => {
+      const y = ytVideos.find(v => v.id === p.y);
+      return '<option value="' + i + '"' + (i === activePair ? ' selected' : '') + '>' + esc((y ? y.title : p.y).slice(0, 60)) + '</option>';
+    }).join('');
+    const p = pairs[activePair] || pairs[0];
+    const y = ytVideos.find(v => v.id === p.y), t = ttVideos.find(v => v.id === p.t);
+    if (!y || !t) { $('cmpContent').innerHTML = '<p class="dnote">One side of this pair isn’t loading — it may have been deleted, or TikTok hasn’t returned it this time.</p>'; return; }
+    const yp = percentile(ytVideos, y), tp = percentile(ttVideos, t);
+    const col = (cls, name, v, extra, pct, pctLabel, colour) =>
+      '<div class="col ' + cls + '"><div class="cap"><span class="d" style="background:' + colour + '"></span>' + name + '</div>' +
+      [['Length', durText(v.dur) || 'not reported'],
+       ['Views', fmt.format(v.views)], ['Likes', fmt.format(v.likes)], ['Comments', fmt.format(v.comments)]]
+        .concat(extra)
+        .map(([k, val]) => '<div class="mrow"><span class="k">' + k + '</span><span class="v">' + val + '</span></div>').join('') +
+      (pct == null ? '<div class="pctbox"><div class="pl">Not ranked — still in its launch window, or too few settled posts on this platform</div></div>'
+        : '<div class="pctbox"><div class="pl">' + pctLabel + '</div>' +
+          '<div class="track"><div class="fill" style="width:' + pct.beat + '%;background:' + colour + '"></div></div>' +
+          '<div class="big">Top ' + pct.top + '%</div></div>') + '</div>';
+
+    const ytExtra = [['Like rate', rate(y.likes, y.views).toFixed(1) + '%'],
+                     ['Comment rate', rate(y.comments, y.views).toFixed(2) + '%']];
+    const ttExtra = [['Shares', fmt.format(t.shares)],
+                     ['Like rate', rate(t.likes, t.views).toFixed(1) + '%'],
+                     ['Comment rate', rate(t.comments, t.views).toFixed(2) + '%']];
+
+    let verdict = '';
+    if (yp != null && tp != null) {
+      const d = tp.beat - yp.beat;
+      const head = Math.abs(d) < 8 ? 'It did about as well on both.'
+        : d > 0 ? 'This one belongs on TikTok.' : 'This one belongs on YouTube.';
+      const body = Math.abs(d) < 8
+        ? 'It sits in your top ' + yp.top + '% on YouTube and your top ' + tp.top + '% on TikTok — close enough that neither platform is obviously the better home for it.'
+        : d > 0
+          ? 'Top ' + yp.top + '% of your YouTube catalogue, but top ' + tp.top + '% of your TikTok posts. Relative to your own back catalogue it did better on TikTok.'
+          : 'Top ' + tp.top + '% of your TikTok posts, but top ' + yp.top + '% of your YouTube catalogue. Relative to your own back catalogue it did better on YouTube.';
+      verdict = '<div class="verdict"><div class="vh">' + head + '</div><div class="vp">' + body + '</div></div>';
+    }
+
+    $('cmpContent').innerHTML =
+      '<p class="explain" style="margin-bottom:12px">' + esc(y.title) + ' · posted ' +
+        new Date(y.pub).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) +
+        ' on YouTube and ' + new Date(t.pub).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ' on TikTok.</p>' +
+      '<div class="vs">' +
+        col('y', 'YouTube', y, ytExtra, yp, 'Against your own YouTube catalogue', 'var(--live)') +
+        col('t', 'TikTok', t, ttExtra, tp, 'Against your own TikTok posts', 'var(--accent)') +
+      '</div>' + verdict +
+      '<div class="caveat"><b>Why the view counts aren’t the comparison.</b> TikTok counts a view the moment ' +
+      'the video starts; YouTube long-form wants a real watch first. Putting ' + fmt.format(t.views) + ' next to ' +
+      fmt.format(y.views) + ' is two different rulers. The honest read is the percentile — total views ranked ' +
+      'within each platform’s own settled posts — and the per-view rates, which age does not touch.</div>';
+  }
+  $('pairPick').addEventListener('change', () => { activePair = +$('pairPick').value || 0; renderAll(); });
+
+  /* ---------- launch series, from whatever each side recorded ---------- */
+  function ytSeries(id, pub) {
+    const arr = ytHist && ytHist.videos && ytHist.videos[id];
+    if (!arr || arr.length < 2) return [];
+    return arr.map(s => [Math.max(0, (s[0] - pub) / HOUR), s[1]]).filter(s => s[0] >= 0).sort((a, b) => a[0] - b[0]);
+  }
+  function ttSeries(id, pub) {
+    const rec = ttHist && ttHist.videos && ttHist.videos[id];
+    if (!rec || !rec.s || rec.s.length < 2) return [];
+    return rec.s.map(s => [Math.max(0, (s[0] - pub) / HOUR), s[1]]).filter(s => s[0] >= 0).sort((a, b) => a[0] - b[0]);
+  }
+  // The value at hour h, or null past the end of what was actually recorded.
+  //
+  // The bound matters. Without it this held the final value forever, so a post whose curve
+  // stops at 6 hours was counted as if it had been flat from there to the end of the span.
+  // Once the Worker started recording 48 hours, the span widened to match — and every
+  // older, shorter curve got dragged along at its 6-hour total, dropping the median that
+  // "your typical launch" divides by. A post performing exactly normally then reads far
+  // above 100%. Stopping where the evidence stops is the honest answer; build() already
+  // renders a null as a break rather than a number.
+  //
+  // The epsilon is not decoration: pts is stepped by span/40 against `h <= span + 1e-9`,
+  // so float drift puts the last h a hair above the series' final x, and a strict compare
+  // would silently drop the last point of the user's own line too.
+  const atHour = (series, h) => {
+    if (!series.length || h > series[series.length - 1][0] + 1e-6) return null;
+    let v = null;
+    for (const s of series) { if (s[0] <= h) v = s[1]; else break; }
+    return v;
+  };
+  // the platform's own typical launch: the median of every other post that has a curve
+  function typicalCurve(all, span) {
+    const curves = all.filter(c => c.length > 1);
+    if (curves.length < 2) return null;
+    const out = [];
+    for (let h = 0; h <= span; h += span / 40) {
+      const vals = curves.map(c => atHour(c, h)).filter(v => v != null).sort((a, b) => a - b);
+      // one surviving curve is an anecdote, not a typical launch — and past the point where
+      // most posts stop, the few that continue are exactly the unusual ones
+      if (vals.length < 2) { out.push([h, null]); continue; }
+      out.push([h, vals[vals.length >> 1]]);
+    }
+    return out;
+  }
+
+  function renderRace() {
+    const p = pairs[activePair] || pairs[0];
+    if (!p) { $('raceCard').style.display = 'none'; return; }
+    const y = ytVideos.find(v => v.id === p.y), t = ttVideos.find(v => v.id === p.t);
+    if (!y || !t) { $('raceCard').style.display = 'none'; return; }
+    const ys = ytSeries(y.id, y.pub), ts = ttSeries(t.id, t.pub);
+    $('raceCard').style.display = 'block';
+    if (ys.length < 2 && ts.length < 2) {
+      $('raceExplain').textContent = 'Nothing recorded for either side of this pair.';
+      $('raceContent').innerHTML = '<p class="dnote">Neither platform gives you a launch history, so this chart is built ' +
+        'from what the snapshot robot and the Worker recorded at the time. Anything posted before they were watching ' +
+        'has no curve, and can’t get one retrospectively. The next thing you post to both will appear here.</p>';
+      return;
+    }
+    /* Only compare over the window both sides actually cover — and when only one side has
+       a curve, show that side in full rather than inventing an overlap.
+
+       This was `Math.max(1, Math.min(yEnd, tEnd) || 6)`, where a missing side contributes
+       0. Math.min(48, 0) is 0, and `0 || 6` is 6 — so a YouTube video whose TikTok partner
+       predates the Worker got a 6-hour span: the chart plotted the first six hours of a
+       recorded 48-hour curve, silently dropping seven eighths of it, under a sentence
+       reading "This pair overlaps for 6 hours." The overlap was zero. */
+    const yEnd = ys.length > 1 ? ys[ys.length - 1][0] : 0;
+    const tEnd = ts.length > 1 ? ts[ts.length - 1][0] : 0;
+    const bothSides = yEnd > 0 && tEnd > 0;
+    const span = Math.max(1, bothSides ? Math.min(yEnd, tEnd) : (yEnd || tEnd));
+    const ytTyp = typicalCurve(ytVideos.filter(v => v.id !== y.id).map(v => ytSeries(v.id, v.pub)), span);
+    const ttTyp = typicalCurve(ttVideos.filter(v => v.id !== t.id).map(v => ttSeries(v.id, v.pub)), span);
+    const step = span / 40;
+    const pts = [];
+    for (let h = 0; h <= span + 1e-9; h += step) pts.push(h);
+    const series = [];
+    const build = (s, typ, colour, name) => {
+      if (s.length < 2) return;
+      const arr = pts.map(h => {
+        const v = atHour(s, h);
+        if (v == null) return null;
+        if (raceMode === 'raw') return v;
+        const tv = typ ? atHour(typ.filter(x => x[1] != null).map(x => [x[0], x[1]]), h) : null;
+        return tv ? v / tv * 100 : null;
+      });
+      if (arr.every(v => v == null)) return;
+      series.push({ arr, colour, name });
+    };
+    build(ys, ytTyp, 'var(--live)', 'YouTube');
+    build(ts, ttTyp, 'var(--accent)', 'TikTok');
+    if (!series.length) {
+      $('raceExplain').textContent = 'Not enough recorded launches to index against yet.';
+      $('raceContent').innerHTML = '<p class="dnote">The indexed view needs a few other recorded launches on the same ' +
+        'platform to work out what “typical” looks like. Switch to <b>Raw views</b> in the meantime.</p>';
+      return;
+    }
+    const covered = tEnd;
+    const dur = span < 2 ? Math.round(span * 60) + ' minutes' : Math.round(span) + ' hours';
+    // an "overlap" needs two curves; with one, say which side is missing instead of
+    // claiming a shared window that does not exist
+    $('raceExplain').innerHTML = 'Recorded by the snapshot robot on YouTube and by your Worker on TikTok. ' +
+      (bothSides
+        ? 'This pair overlaps for <b>' + dur + '</b>' +
+          (covered && covered < 47 ? ' — that is as much of the TikTok side as has been recorded so far.' : '.')
+        : 'Only the ' + (yEnd ? 'YouTube' : 'TikTok') + ' side was being recorded when this went up, so there is nothing ' +
+          'to race it against — this is its own first <b>' + dur + '</b> on its own.');
+    $('raceContent').innerHTML = raceChart(pts, series, span) +
+      '<div class="legend">' + series.map(s => '<span class="lg-item"><span class="lg-key" style="background:' + s.colour + '"></span>' + s.name + '</span>').join('') +
+      (raceMode === 'idx' ? '<span class="lg-item"><span class="lg-key" style="background:var(--muted)"></span>your typical launch (=100)</span>' : '') +
+      '</div>' +
+      '<div class="caveat">' + (raceMode === 'raw'
+        ? '<b>Raw views, for completeness.</b> The two platforms count a view differently, so this view looks dramatic and tells you very little. It’s here because hiding it would be worse than explaining it.'
+        : '<b>Each line against its own usual.</b> 100 means “exactly a typical launch for that platform”, so the shape is the story: above the line is beating your own normal start, and a line climbing toward the right is something still being found.') + '</div>';
+  }
+
+  function raceChart(pts, series, span) {
+    const w = 620, h = 190, L = 56, R = 18, T = 16, B = 30;
+    const all = series.flatMap(s => s.arr).filter(v => v != null);
+    const hiRaw = Math.max(1, ...all, raceMode === 'idx' ? 100 : 0);
+    const sc = niceScale(hiRaw, 4);
+    const X = i => L + i * (w - L - R) / Math.max(1, pts.length - 1);
+    const Y = v => h - B - (v / sc.hi) * (h - T - B);
+    let frame = '';
+    for (const tick of sc.ticks) {
+      const yy = Y(tick);
+      if (Math.abs(yy - (h - B)) > 0.5) frame += '<line class="grid-line" x1="' + L + '" y1="' + yy.toFixed(1) + '" x2="' + (w - R) + '" y2="' + yy.toFixed(1) + '"/>';
+      frame += '<text class="ax" x="' + (L - 8) + '" y="' + (yy + 3.4).toFixed(1) + '" text-anchor="end">' + esc(shortNum(tick)) + '</text>';
+    }
+    frame += '<line class="axis-line" x1="' + L + '" y1="' + (h - B) + '" x2="' + (w - R) + '" y2="' + (h - B) + '"/>';
+    const lab = hh => hh === 0 ? 'live' : (span < 2 ? Math.round(hh * 60) + 'm' : '+' + Math.round(hh) + 'h');
+    frame += '<text class="ax" x="' + L + '" y="' + (h - 8) + '">' + lab(0) + '</text>' +
+      '<text class="ax" x="' + ((L + w - R) / 2).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="middle">' + lab(span / 2) + '</text>' +
+      '<text class="ax" x="' + (w - R) + '" y="' + (h - 8) + '" text-anchor="end">' + lab(span) + '</text>';
+    if (raceMode === 'idx') {
+      const yy = Y(100);
+      frame += '<line x1="' + L + '" y1="' + yy.toFixed(1) + '" x2="' + (w - R) + '" y2="' + yy.toFixed(1) + '" style="stroke:var(--muted);stroke-width:1;stroke-dasharray:5 4;opacity:.7"/>' +
+        '<text class="ax" x="' + (L + 8) + '" y="' + (yy - 7).toFixed(1) + '">your typical launch</text>';
+    }
+    // when the two lines finish close together, push the labels apart
+    const ends = series.map(s => { for (let i = s.arr.length - 1; i >= 0; i--) if (s.arr[i] != null) return { i, v: s.arr[i] }; return null; });
+    const ys0 = ends.map(e => e ? Y(e.v) : null);
+    const close = ys0.length === 2 && ys0[0] != null && ys0[1] != null && Math.abs(ys0[0] - ys0[1]) < 19;
+    let body = '';
+    series.forEach((s, k) => {
+      let d = '', started = false;
+      s.arr.forEach((v, i) => {
+        if (v == null) return;
+        d += (started ? ' L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); started = true;
+      });
+      if (!started) return;
+      body += '<path class="line" d="' + d + '" style="fill:none;stroke:' + s.colour + ';stroke-width:2.4"/>';
+      const e = ends[k]; if (!e) return;
+      let ly = Y(e.v) - 11;
+      if (close) ly = (ys0[k] <= ys0[1 - k]) ? Y(e.v) - 13 : Y(e.v) + 17;
+      body += '<circle cx="' + X(e.i).toFixed(1) + '" cy="' + Y(e.v).toFixed(1) + '" r="4.5" style="fill:' + s.colour + ';stroke:var(--ink);stroke-width:2"/>' +
+        '<text class="val" x="' + (X(e.i) - 9).toFixed(1) + '" y="' + Math.max(T + 10, Math.min(h - B - 4, ly)).toFixed(1) + '" text-anchor="end" style="fill:' + s.colour + '">' +
+        esc(raceMode === 'raw' ? shortNum(e.v) : Math.round(e.v) + '%') + '</text>';
+    });
+    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Launch curves on both platforms">' + frame + body + '</svg>';
+  }
+  function niceScale(hi, target) {
+    const raw = hi / Math.max(1, target);
+    const mag = Math.pow(10, Math.floor(Math.log10(Math.max(1e-9, raw))));
+    const n = raw / mag;
+    const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    const top = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = 0; v <= top + step / 1e6; v += step) ticks.push(v);
+    return { hi: top, ticks };
+  }
+  function shortNum(v) {
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(a % 1e6 ? 1 : 0).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return (v / 1e3).toFixed(0) + 'k';
+    return fmt.format(Math.round(v));
+  }
+  $('raceMode').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]'); if (!b) return;
+    raceMode = b.dataset.mode;
+    document.querySelectorAll('#raceMode button').forEach(x => x.classList.toggle('active', x === b));
+    renderRace();
+  });
+
+  /* ---------- time to a thousand ---------- */
+  /* How long the video took to reach `target` — or null when nobody was watching it happen.
+
+     The null case is the whole point. This used to return the first recorded sample at or
+     above the target, which for a back-catalogue video is not a duration at all: the robot
+     started on 2026-07-08, so a video published in January has its first sample at age
+     ~4,344 hours, already well past a thousand views, and "time to a thousand" came back
+     as 4,344 hours. 29 of the 85 videos in data/history.json are already above 1,000 in
+     their very first sample.
+
+     That fed everything on this card. The median across the catalogue became thousands of
+     hours, so "Your usual" read 181d 0h; `max` was then set by that number, squashing the
+     real 2-hour and 9-hour bars to the 2% floor; and when the paired video was itself an
+     old one, the comparison printed "TikTok got there about 2172× faster".
+
+     A series that is ALREADY at or above the target on its first sample cannot answer the
+     question, so it says so — the card already renders "not recorded" and explains it. The
+     same guard covers TikTok, whose posts hit the same case from the other direction.
+
+     The cost is a genuinely fast new upload that passes a thousand before its first
+     capture: sampling in the committed history averages ~19.5 hours between the first two
+     samples, so that does happen, and it now reports "not recorded" instead of a number.
+     That is the honest answer to what was actually observed. */
+  function firstAt(series, target) {
+    if (!series.length || series[0][1] >= target) return null;
+    for (const s of series) if (s[1] >= target) return s[0];
+    return null;
+  }
+  const fmtDur = hrs => hrs == null ? '—' :
+    hrs < 1 ? Math.round(hrs * 60) + ' min' :
+    hrs < 48 ? (Math.round(hrs * 10) / 10) + ' hrs' :
+    Math.floor(hrs / 24) + 'd ' + Math.round(hrs % 24) + 'h';
+
+  function renderT1k() {
+    const p = pairs[activePair] || pairs[0];
+    if (!p) { $('t1kCard').style.display = 'none'; return; }
+    const y = ytVideos.find(v => v.id === p.y), t = ttVideos.find(v => v.id === p.t);
+    if (!y || !t) { $('t1kCard').style.display = 'none'; return; }
+    const yh = firstAt(ytSeries(y.id, y.pub), 1000), th = firstAt(ttSeries(t.id, t.pub), 1000);
+    const usual = (() => {
+      const vals = ytVideos.filter(v => v.id !== y.id).map(v => firstAt(ytSeries(v.id, v.pub), 1000)).filter(v => v != null).sort((a, b) => a - b);
+      return vals.length >= 2 ? vals[vals.length >> 1] : null;
+    })();
+    if (yh == null && th == null) { $('t1kCard').style.display = 'none'; return; }
+    $('t1kCard').style.display = 'block';
+    const max = Math.max(yh || 0, th || 0, usual || 0, 0.01);
+    const row = (name, hrs, colour, dim) =>
+      '<div class="t1krow"><span class="who"' + (dim ? ' style="color:var(--muted)"' : '') + '><i style="background:' + colour + (dim ? ';opacity:.55' : '') + '"></i>' + name + '</span>' +
+      '<div class="bar"><div style="width:' + (hrs == null ? 0 : Math.max(2, hrs / max * 100)) + '%;background:' + colour + (dim ? ';opacity:.55' : '') + '"></div></div>' +
+      '<span class="val"' + (dim ? ' style="color:var(--muted)"' : '') + '>' + (hrs == null ? 'not recorded' : fmtDur(hrs)) + '</span></div>';
+    let note = '';
+    if (yh != null && usual != null) {
+      const d = usual ? (yh - usual) / usual : 0;
+      note = Math.abs(d) < 0.12
+        ? 'On YouTube it reached a thousand at <b>about your usual pace</b> (' + fmtDur(usual) + ').'
+        : d < 0
+          ? 'On YouTube it reached a thousand <b>faster than your usual</b> video (' + fmtDur(usual) + ').'
+          : 'On YouTube it took <b>longer than your usual</b> video (' + fmtDur(usual) + '), so the slow start was this upload rather than the platform.';
+    }
+    if (yh != null && th != null && th > 0) {
+      const x = Math.round(yh / th);
+      if (x >= 2) note = 'TikTok got there about <b>' + x + '× faster</b>, which is normal for the format. ' + note;
+    }
+    $('t1kContent').innerHTML =
+      row('TikTok', th, 'var(--accent)') + row('YouTube', yh, 'var(--live)') +
+      // the median is computed over YouTube launches only — the bare "Your usual" label
+      // sat under the TikTok bar inviting a comparison the number doesn't support
+      (usual != null ? row('Your usual (YouTube)', usual, 'var(--muted)', true) : '') +
+      (note ? '<p class="dnote" style="margin-top:4px">' + note + '</p>' : '') +
+      ((yh == null || th == null) ? '<p class="dnote" style="margin-top:6px">A blank row means nothing was recorded for that side while the post was new — the robots can only measure what they were watching at the time.</p>' : '');
+  }
+
+  function renderAll() { renderCompare(); renderRace(); renderT1k(); }
+
+  /* ---------- boot ---------- */
+  async function boot() {
+    renderConn();
+    if (!accessToken) {
+      $('setupPanel').style.display = 'block';
+      setStatus('not signed in');
+      $('setupHint').innerHTML = clientId
+        ? 'Tap <b>Sign in with Google</b> above. Compare only ever reads — it uses the same read-only permission the YouTube dashboard already has.'
+        : 'No Google client ID is saved on this device. Open the <a href="./">YouTube dashboard</a> and sign in there once; Compare picks it up automatically.';
+      return;
+    }
+    $('setupPanel').style.display = 'none';
+    setStatus('loading…');
+    try {
+      await loadYouTube();
+    } catch (e) {
+      if (e && e.reauth) { accessToken = null; renderConn(); $('setupPanel').style.display = 'block';
+        showError('Your Google session needs a quick renew — tap this message to reconnect.'); return; }
+      showError('Could not load YouTube: ' + e.message); return;
+    }
+    await Promise.all([loadTikTok().catch(() => {}), loadYtHistory()]);
+    await loadPairs();
+    renderConn();
+    $('liveDot').classList.add('on');
+    if (!ttVideos.length) {
+      setStatus('YouTube only');
+      $('pairCard').style.display = 'block';
+      // a connected device whose load failed is not "not connected" — say which it was
+      $('suggestions').innerHTML = (workerUrl && ttSession)
+        ? '<p class="dnote">TikTok is connected, but no posts came back this time — the Worker or TikTok may be having a moment. Reload in a minute; everything YouTube-side still works.</p>'
+        : '<p class="dnote">TikTok isn’t connected on this device yet, so there’s nothing to pair against. ' +
+          'Sign in on the <a href="./tiktok.html">TikTok dashboard</a> first — everything else here works the moment you do.</p>';
+      $('linkedList').innerHTML = '';
+      return;
+    }
+    setStatus(ytVideos.length + ' YouTube · ' + ttVideos.length + ' TikTok');
+    $('pairCard').style.display = 'block';
+    renderPairing();
+    renderAll();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
