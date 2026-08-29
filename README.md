@@ -354,11 +354,16 @@ entire record, because TikTok publishes no history of its own.
 `/life` and `/tiktok/life` are what spend it. One video, publication to now, bucketed to an
 hour — finer than anything else that exists for that stretch, since YouTube's own analytics
 stop at a day. It appears as **"Every hour since it went up"** in the YouTube drawer and on
-the TikTok post card. About 5,100 rows per open against a 5,000,000/day read allowance, so
-it is fetched when a card opens rather than prefetched.
+the TikTok post card and per-post drawer, topped by a results strip (first hour / first day
+/ first week / time to 1,000, each mark abstaining when the recording never reached or
+never saw it). About 5,100 rows per open against a 5,000,000/day read allowance, so it is
+fetched when a card opens and **cached** — the TikTok page's poll repaints redraw from
+memory rather than re-asking D1.
 
 Every point on it is measured. Nothing is interpolated between samples and nothing is
-extended past the last one — a gap in the recording is drawn as a gap in the line.
+extended past the last one — a gap in the recording is drawn as a gap in the line. And a
+missing recording says so on the page — a post that predates the account being connected
+has no history to draw, which is different from the feature not working.
 
 **Where the minute samples live**
 

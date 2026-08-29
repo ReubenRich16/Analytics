@@ -2199,45 +2199,111 @@
      rest. Days 3 to 60 were written, kept for two months, pruned, and never looked at once.
 
      One post's whole life is about 5,100 rows against a 5,000,000/day allowance, so it is
-     fetched when the card renders rather than prefetched for every post.
+     fetched once and CACHED. Both hosts rebuild their DOM on every poll — the card via
+     showSlot, the drawer via ttdRepaint — and before the cache the card refetched those
+     5,100 rows on every single poll, while the drawer's guard was inverted: the repaint
+     wiped the drawn chart and then declined to refetch BECAUSE it had been drawn, so the
+     hourly chart vanished on the first repaint after opening and never came back. With
+     the cache a repaint paints synchronously from what is known; the Worker is only asked
+     when nothing is known yet, a recording is old enough to have grown, or a failure is
+     old enough to retry.
 
      Every point is measured. Nothing is interpolated and nothing is extended past the last
-     reading — a gap in the recording is drawn as a gap in the line. */
+     reading — a gap in the recording is drawn as a gap in the line. And a MISSING record
+     now says so out loud: silence here was indistinguishable from "this feature doesn't
+     exist", which is exactly the report that prompted this rework. */
   let lifeSeq = 0;
+  const lifeCache = {};                  // id → { d, at } success · { why, at, … } miss
+  const LIFE_FRESH = 10 * 60e3;          // a growing recording is re-asked this often
+  const LIFE_RETRY = 60e3;               // a failure may be retried this often
+
+  // the recorded life as results — what the post had at the marks its recording
+  // actually reached, each mark abstaining rather than guessing when it cannot answer
+  function lifeStripHtml(d) {
+    const s = d.s, step = d.step || 3600e3, first = s[0], lastAge = s[s.length - 1][0];
+    const atAge = a => { let v = null; for (const p of s) { if (p[0] <= a) v = p[1]; else break; } return v; };
+    const cells = [];
+    for (const [label, a] of [['First hour', 3600e3], ['First day', 864e5], ['First week', 7 * 864e5]]) {
+      // both guards are honesty: a recording that never reached the mark, or one that
+      // STARTED after it (account connected late), cannot say what the post had there
+      if (lastAge < a || first[0] >= a) continue;
+      const v = atAge(a - 1);
+      if (v != null) cells.push(mcell(label, fmt.format(v) + ' views'));
+    }
+    // observed only: the count has to cross 1,000 inside the recording — a first sample
+    // already past 1,000 means the crossing happened while nobody was watching
+    if (first[1] < 1000) {
+      const hit = s.find(p => p[1] >= 1000);
+      if (hit) cells.push(mcell('To 1,000 views', '≤ ' + fmtAge(Math.round((hit[0] + step) / 60000))));
+    }
+    cells.push(mcell('Recorded', lastAge < 864e5 ? Math.round(lastAge / 3600e3) + 'h' : Math.round(lastAge / 864e5) + ' days', s.length + ' readings'));
+    return '<div class="metric-grid" style="margin-bottom:10px">' + cells.join('') + '</div>';
+  }
+
+  // paint one host's life section from a cache entry — synchronous, no network
+  function paintLife(wrap, entry) {
+    const ex = wrap.querySelector('[data-life="explain"]'), ch = wrap.querySelector('[data-life="chart"]');
+    if (!ex || !ch) return;
+    if (!entry.d) {
+      // the honest misses — each names its cause, because a hidden section reads as
+      // "this feature doesn't exist" when the truth is one of these three
+      ex.innerHTML = entry.why === 'notfound'
+        ? 'Your Worker has <b>no recording of this post</b>. Recording starts when a post is first seen after the account is connected — anything posted before then has no history to draw, and TikTok itself keeps none to backfill from.'
+        : entry.why === 'thin'
+          ? 'The recording has only ' + (entry.n || 0) + ' reading' + (entry.n === 1 ? '' : 's') + ' so far — too few to draw a line. It grows by the hour; check back soon.'
+          : 'Couldn’t reach your Worker for the hourly record' + (entry.detail ? ' (' + esc(entry.detail) + ')' : '') + ' — it retries on the next refresh.';
+      ch.innerHTML = '';
+      wrap.style.display = 'block';
+      return;
+    }
+    const d = entry.d;
+    const t0 = (d.create_time || 0) * 1000;
+    const at = d.s.map(p => t0 + p[0]);
+    const views = d.s.map(p => p[1]);
+    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views · ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
+      (i ? ' · +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
+    const lastAge = d.s[d.s.length - 1][0];
+    const days = lastAge / 864e5;
+    ex.innerHTML =
+      'Recorded by your own Worker, one point an hour, from posting to <b>' +
+      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
+      'TikTok keeps no history at all — it only ever tells you the count right now — so this is the ' +
+      'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
+      'in the recording.';
+    // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
+    // label is the third positional argument, not an opts key
+    ch.innerHTML = lifeStripHtml(d) + lineChart(views, 'var(--accent)', 'Views every hour since posting', {
+      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+    });
+    wrap.style.display = 'block';
+  }
   /* `scope` is which host is asking — the latest card, or the drawer. The sequence guard
      lives on the host element rather than in a module counter, because both can be loading
      at once and a single counter would have whichever finished second cancel the other. */
   async function loadLife(id, scope) {
     const wrap = (scope || document).querySelector('[data-life="section"]');
     if (!wrap || !session || !workerUrl) return;
+    const known = lifeCache[id];
+    if (known) paintLife(wrap, known);           // a repaint costs nothing
+    if (known && Date.now() - known.at < (known.d ? LIFE_FRESH : LIFE_RETRY)) return;
     const seq = String(++lifeSeq);
     wrap.dataset.lifeSeq = seq;
-    let d = null;
+    let d = null, fail = null;
     try { d = await api('/tiktok/life?id=' + encodeURIComponent(id)); }
-    catch (e) { return; }                       // the card stands without it
+    catch (e) { fail = String((e && e.message) || e).slice(0, 80); }
+    const prev = lifeCache[id];
+    if (fail) {
+      // a stale recording beats a blank space — keep a success we already had
+      lifeCache[id] = prev && prev.d ? { ...prev, at: Date.now() } : { why: 'unreachable', detail: fail, at: Date.now() };
+    } else if (!d || !d.found) {
+      lifeCache[id] = { why: 'notfound', at: Date.now() };
+    } else if (!d.s || d.s.length < 3) {
+      lifeCache[id] = { why: 'thin', n: (d.s || []).length, at: Date.now() };
+    } else {
+      lifeCache[id] = { d, at: Date.now() };
+    }
     if (!wrap.isConnected || wrap.dataset.lifeSeq !== seq) return;   // a newer render won, or the host is gone
-    if (!d || !d.found || !d.s || d.s.length < 3) return;
-
-    const t0 = (d.create_time || 0) * 1000;
-    const at = d.s.map(p => t0 + p[0]);
-    const views = d.s.map(p => p[1]);
-    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views \u00b7 ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
-      (i ? ' \u00b7 +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
-    const lastAge = d.s[d.s.length - 1][0];
-    const days = lastAge / 864e5;
-
-    wrap.querySelector('[data-life="explain"]').innerHTML =
-      'Recorded by your own Worker, one point an hour, from posting to <b>' +
-      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
-      'TikTok keeps no history at all \u2014 it only ever tells you the count right now \u2014 so this is the ' +
-      'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
-      'in the recording.';
-    // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
-    // label is the third positional argument, not an opts key
-    wrap.querySelector('[data-life="chart"]').innerHTML = lineChart(views, 'var(--accent)', 'Views every hour since posting', {
-      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
-    });
-    wrap.style.display = 'block';
+    paintLife(wrap, lifeCache[id]);
   }
 
   /* ---------- the per-post drawer ----------
@@ -2252,8 +2318,8 @@
      site that shows the shape of a post older than a week.
 
      Nothing here fetches anything the page does not already hold, with one exception:
-     /tiktok/life, once per open. That reads about 5,100 D1 rows against a 5,000,000/day
-     allowance, so it is called when the drawer opens and never on a poll repaint. */
+     /tiktok/life — served through lifeCache above, so opening costs one ~5,100-row read
+     and every repaint after that paints from memory. */
   let ttdId = null, ttdVid = null, ttdLastFocus = null;
 
   function ttdOpen(id, fromEl) {
@@ -2297,9 +2363,8 @@
     try { if (ttdLastFocus && ttdLastFocus.focus) ttdLastFocus.focus(); } catch (e) {}
   }
 
-  /* Everything except the life chart, which is fetched once by ttdOpen and then left
-     alone. The life placeholder is rebuilt empty here on a repaint, which is why the
-     fetch is repeated from ttdRepaint rather than skipped — see the note there. */
+  // The life placeholder is rebuilt empty here; whoever called this follows up with
+  // loadLife, which repaints it synchronously from lifeCache — no network on a repaint.
   function ttdFill() {
     const v = ttdVid, body = $('ttdBody');
     if (!v || !body) return;
@@ -2328,19 +2393,19 @@
      because poll() replaces that whole array with fresh objects every tick and the one
      captured at open time is a dead snapshot.
 
-     The life chart is re-fetched here because ttdFill rebuilds its placeholder empty.
-     That is one /tiktok/life call per poll while the drawer is open — about 5,100 D1 rows
-     a minute against a 5,000,000/day allowance, so roughly 7M/day if a drawer were left
-     open for twenty-four hours straight. It is not, and the guard below is the cheap
-     insurance: refetch only when the post changed or the chart is not currently drawn. */
+     loadLife runs unconditionally: ttdFill just rebuilt the life placeholder empty, and
+     the call is a synchronous repaint from lifeCache — the Worker is only asked when the
+     cache has nothing, is stale, or a failure is old enough to retry. (The old guard here
+     was inverted — it skipped the refetch precisely when a chart HAD been drawn, right
+     after wiping it, so the hourly chart vanished on the first repaint and never returned.
+     scripts/tt-life.test.mjs pins the working shape.) */
   function ttdRepaint() {
     const dr = $('ttDrawer');
     if (!dr || dr.style.display !== 'block' || !ttdId) return;
     const v = videos.find(x => x.id === ttdId);
     if (v) ttdVid = v;
-    const had = !!$('ttdBody').querySelector('[data-life="section"] svg.chart');
     ttdFill();
-    if (!had) loadLife(ttdId, $('ttdBody'));
+    loadLife(ttdId, $('ttdBody'));
   }
 
   /* Hashtags — the one panel the drawer holds that the latest card does not.
@@ -2420,8 +2485,8 @@
       const ageD = (Date.now() - v.create_time * 1000) / 864e5;
       html += ageD > HIST_WINDOW_D
         ? '<p class="dnote">The minute-by-minute chart only carries the last ' + HIST_WINDOW_D + ' days, so this ' +
-          'post has scrolled out of it. Nothing is lost — the Worker recorded it at the time, and the hourly ' +
-          'record below covers its whole life.</p>'
+          'post has scrolled out of it. The hourly record below carries whatever the Worker holds of its ' +
+          'whole life — and says so if it holds nothing.</p>'
         : '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
           '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
     }

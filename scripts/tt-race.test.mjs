@@ -411,12 +411,19 @@ console.log('\nthe per-post drawer');
     /tr\.tabIndex = 0;/.test(TT) && /e\.key !== 'Enter' && e\.key !== ' '/.test(TT));
 
   /* Repaint and cost. /tiktok/life is ~5,100 D1 rows; refetching it on every poll while a
-     drawer sits open would be millions of rows a day against a 5,000,000 cap. */
+     drawer sits open would be millions of rows a day against a 5,000,000 cap. The first
+     guard here was checking whether the chart was already drawn — INVERTED, since the
+     repaint had just wiped it, so the chart vanished on the first repaint and never came
+     back. The cost cap now lives in loadLife's cache instead (scripts/tt-life.test.mjs
+     proves a fresh cache entry answers a repaint without a fetch), which frees the
+     repaint to call loadLife every time. */
   const rep = TT.slice(TT.indexOf('function ttdRepaint()'), TT.indexOf('\n  }\n', TT.indexOf('function ttdRepaint()')));
   check('a repaint re-resolves the post from the live list', /videos\.find\(x => x\.id === ttdId\)/.test(rep),
     'poll replaces the array, so the object captured at open time is a dead snapshot');
-  check('and only refetches the life chart when it is not already drawn',
-    /const had = [\s\S]*if \(!had\) loadLife/.test(rep), 'that route is ~5,100 D1 rows a call');
+  check('a repaint always restores the life section', /loadLife\(ttdId/.test(rep) && !/const had/.test(rep),
+    'the drawn-chart guard was the vanish bug');
+  check('and the per-poll cost cap lives in the cache instead',
+    /known && Date\.now\(\) - known\.at < \(known\.d \? LIFE_FRESH : LIFE_RETRY\)/.test(TT));
   check('Escape closes it, after the party which sits on top',
     /if \(\$\('party'\)\.classList\.contains\('on'\)\) \{ closeParty\(\); return; \}\s*\n\s*ttdClose\(\);/.test(TT));
   check('focus is returned to whatever opened it', /ttdLastFocus\.focus\(\)/.test(TT));
