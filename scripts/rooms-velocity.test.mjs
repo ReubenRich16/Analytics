@@ -271,6 +271,8 @@ console.log('\nTikTok view velocity');
   const fn = new Function('$', 'fmt', 'document', 'videos', 'state', `
     let { perPost, velHistory, velSession, velStart } = state;
     const MAX_BARS = 60;
+    let velBackfilled = 0;              // the reload-resume additions ride the same render
+    const saveVel = () => {};
     ${body}
     renderVelocity();
     return { perPost, velHistory, velSession, velStart };
@@ -327,8 +329,8 @@ console.log('\nTikTok view velocity');
   check('the table still opens on newest, not on a delta that is zero on the first poll',
     /let tableSort = \{ key: 'newest'/.test(TT),
     'a delta default reshuffles the whole table on the second poll');
-  check('and the footnote says the counters are per-tab and never go backwards',
-    /reset when you reload/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
+  check('and the footnote says the counters resume and never go backwards',
+    /survive a quick reload/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
 
   for (const [src, page] of [[YT, 'index.html'], [TT, 'tiktok.html']]) {
     check(page + ' hides the per-minute rate until the session is half a minute old',
@@ -492,6 +494,47 @@ console.log('\nwhile you were away — the YouTube mirror');
     /if \(d <= 0\) continue;/.test(YT.slice(YT.indexOf('function ytGainBuckets('), YT.indexOf('\n  }\n', YT.indexOf('function ytGainBuckets(')))));
   check('the feed styles exist in the shared stylesheet, with landscape thumbs',
     /#awayContent \.alert \.acover \{ width:44px; height:25px;/.test(CSS));
+}
+
+/* The velocity card across a browser reload: a quick reload RESUMES (strip, session,
+   and the diffing baseline, so the gap is counted rather than dropped), a longer gap
+   backfills the strip, faded, from minute-resolution recordings only. */
+console.log('\nvelocity survives a reload');
+{
+  for (const [page, src, key] of [['YouTube', YT, 'yt_vel'], ['TikTok', TT, 'tt_vel']]) {
+    check(page + ' — saved per account under its own key', new RegExp("'" + key + ":' \\+").test(src));
+    check(page + ' — a quick reload resumes; a long gap does not', /VEL_RESUME = 30 \* 60e3/.test(src) &&
+      /Date\.now\(\) - saved\.at <= VEL_RESUME/.test(src));
+    check(page + ' — backfill only trusts minute-resolution samples',
+      page === 'YouTube' ? /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2\) continue;/.test(src)
+                         : /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2 \* 60e3\) continue;/.test(src));
+    check(page + ' — the silent lead-in is trimmed, not shown as a wall of zeros',
+      /while \(s < bars\.length && bars\[s\] === 0\) s\+\+;/.test(src));
+    check(page + ' — backfilled bars are faded and say what they are',
+      /\(back \? ' back' : ''\)/.test(src) && /recorded before this tab opened/.test(src));
+    check(page + ' — faded bars age out of the left edge',
+      /if \(velBackfilled > 0\) velBackfilled--;/.test(src));
+  }
+  /* The bug the harness caught: restoring the session baseline WITHOUT the per-video
+     baseline made every video read as "first seen mid-session" on the first post-reload
+     tick, and the newly-seen compensation added the whole catalogue's lifetime counts to
+     the session baseline — the session line showed minus-everything. */
+  check('YouTube — the per-video baseline is saved and restored with the session',
+    /perVideo: Object\.fromEntries/.test(YT) && /for \(const \[id, p\] of Object\.entries\(saved\.perVideo \|\| \{\}\)\) perVideo\[id\] = \{ \.\.\.p, tickV: 0 \};/.test(YT));
+  check('TikTok — likewise for its per-post baseline',
+    /perPost: Object\.fromEntries/.test(TT) && /for \(const \[id, p\] of Object\.entries\(saved\.perPost \|\| \{\}\)\) perPost\[id\] = \{ \.\.\.p, tickV: 0 \};/.test(TT));
+  check('YouTube — the save happens after the baseline advances',
+    /prevTotals = totals;\s*\n\s*saveVel\(\);/.test(YT));
+  check('YouTube — a poll before the video list exists refuses to tick',
+    /if \(!videoIds\.length\) return;/.test(YT));
+  check('YouTube — the strip paints backfill even before a first diff exists',
+    /if \(history\.length\) \{\s*\n\s*const wrap = \$\('bars'\)/.test(YT));
+  check('TikTok — a cold-open backfill starts the session at zero, honestly',
+    /velSession = \{ views: 0, likes: 0, comments: 0, shares: 0 \};\s*\/\/ nothing watched yet/.test(TT));
+  check('the faded-bar style exists once, in the shared stylesheet',
+    /\.bars \.bar\.back \{ opacity:\.38; \}/.test(CSS));
+  check('TikTok — the footnote no longer claims a reload resets the counts',
+    !/reset when you reload/.test(TT) && /survive a quick reload/.test(TT));
 }
 
 console.log('\nhashtags ranked by what they returned');

@@ -48,7 +48,10 @@ data/             recorded history, committed by the robots
 - **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
   running session total. On TikTok this accumulates each post's own movement rather than
   differencing the account total, because the app fetches at most the 60 newest posts and
-  that total *falls* when an older one scrolls out of the window
+  that total *falls* when an older one scrolls out of the window. A quick reload **resumes**
+  the session (the gap is counted, not dropped); a cold open **backfills** the strip, faded,
+  from the recorded minute samples — never smeared from coarser ones, because nothing on
+  these pages interpolates
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
   the newest upload, so nine slots out of ten showed nothing where a chart belongs

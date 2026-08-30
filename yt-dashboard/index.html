@@ -891,6 +891,7 @@
     }
 
     prevTotals = null; sessionStart = null; history = []; perVideo = {}; paused = false;
+    restoreVel();   // a quick reload resumes the velocity card instead of zeroing it
     $('setupPanel').style.display = 'none';
     $('channelBanner').style.display = 'flex';
     $('roomBar').style.display = 'flex';
@@ -1132,8 +1133,85 @@
   function flash(el) { el.classList.add('flash'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('flash'))); }
 
   let polling = false;
+  /* Reload used to zero the velocity card. Now a quick reload RESUMES: the strip, the
+     session baseline and the last totals are saved on every tick, so the first poll after
+     a reload diffs against the last saved reading and the seconds in between are counted
+     rather than dropped. A longer gap starts a fresh session — the away card tells that
+     story — but the strip still BACKFILLS, faded, from the recorded minute samples once
+     the Worker bundle lands, so a cold open is never a blank graph.
+
+     Backfill only trusts minute-resolution samples (adjacent readings ≤2 minutes apart):
+     the robot's 5-minute and hourly samples say nothing about any single minute, and
+     smearing them across bars would be interpolation, which this page never does. */
+  const VEL_RESUME = 30 * 60e3;
+  const velKey = () => 'yt_vel:' + (chanId || '');
+  let velBackfilled = 0, velSeeded = false;
+  function saveVel() {
+    if (!chanId || !sessionStart) return;
+    try {
+      localStorage.setItem(velKey(), JSON.stringify({
+        at: Date.now(), sessionStart, sessionTime, prevTotals,
+        bars: history.slice(-MAX_BARS), back: velBackfilled,
+        // the per-video baseline travels too. Without it, every video reads as "first
+        // seen mid-session" on the first post-reload tick, and the newly-seen
+        // compensation adds the whole catalogue's lifetime counts to the session
+        // baseline — the session line then shows minus-everything. Found the hard way.
+        perVideo: Object.fromEntries(Object.entries(perVideo).map(([id, p]) =>
+          [id, { views: p.views, likes: p.likes, comments: p.comments, sessV: p.sessV || 0 }]))
+      }));
+    } catch (e) {}
+  }
+  function restoreVel() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(velKey()) || 'null'); } catch (e) {}
+    if (!(saved && Array.isArray(saved.bars) && saved.sessionStart && Date.now() - saved.at <= VEL_RESUME)) return;
+    history = saved.bars.map(Number).filter(v => isFinite(v));
+    velBackfilled = Math.max(0, Math.min(+saved.back || 0, history.length));
+    sessionStart = saved.sessionStart;
+    sessionTime = +saved.sessionTime || Date.now();
+    prevTotals = saved.prevTotals || null;   // the first poll diffs across the reload gap
+    perVideo = {};
+    for (const [id, p] of Object.entries(saved.perVideo || {})) perVideo[id] = { ...p, tickV: 0 };
+    velSeeded = true;
+  }
+  function backfillBars() {
+    const now = Date.now(), bars = new Array(MAX_BARS).fill(0);
+    let any = false;
+    for (const [vid, arr] of Object.entries(snaps)) {
+      const m = meta[vid];
+      if (!m || !arr || arr.length < 2) continue;
+      const pub = new Date(m.publishedAt).getTime();
+      if (!pub) continue;
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] - arr[i - 1][0] > 2) continue;   // not minute data — no vote
+        const slot = Math.floor((now - (pub + arr[i][0] * 60e3)) / 60e3);
+        if (slot < 0 || slot >= MAX_BARS) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d > 0) { bars[MAX_BARS - 1 - slot] += d; any = true; }
+      }
+    }
+    if (!any) return [];
+    let s = 0; while (s < bars.length && bars[s] === 0) s++;   // drop the silent lead-in
+    return bars.slice(s);
+  }
+  // cold open only, once, after the Worker's minute bundle has landed
+  function seedVelFromSnaps() {
+    if (velSeeded) return;
+    velSeeded = true;
+    const bars = backfillBars();
+    if (!bars.length) return;
+    history = bars.concat(history).slice(-MAX_BARS);
+    velBackfilled = Math.min(bars.length, history.length);
+  }
+
   async function poll(force) {
     if (!accessToken) return;
+    /* A poll before bootstrap has loaded the video list can only produce zero totals —
+       which then read as a real tick: a lying zero bar, a session baseline of nothing,
+       and (once reloads resumed the session) a session line of minus-everything. The
+       visibility handler can fire exactly that early on a resumed load, so refuse to
+       tick until there is something true to count. */
+    if (!videoIds.length) return;
     if ((paused || hiddenPaused) && !force) return;
     if (polling) return; // re-entrancy guard: overlapping polls double-count velocity/deltas
     polling = true;
@@ -1197,14 +1275,22 @@
 
       if (prevTotals) {
         history.push(Math.max(0, totals.views - prevTotals.views));
-        if (history.length > MAX_BARS) history.shift();
+        if (history.length > MAX_BARS) {
+          history.shift();
+          if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
+        }
+      }
+      // painted whenever there is anything to paint — a cold open with backfilled bars
+      // has history before it has a prevTotals to diff against
+      if (history.length) {
         const wrap = $('bars'); wrap.innerHTML = '';
         const max = Math.max(1, ...history);
-        history.forEach(v => {
+        history.forEach((v, i) => {
+          const back = i < velBackfilled;
           const b = document.createElement('div');
-          b.className = 'bar' + (v === 0 ? ' zero' : '');
+          b.className = 'bar' + (v === 0 ? ' zero' : '') + (back ? ' back' : '');
           b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
-          b.title = '+' + fmt.format(v) + ' views';
+          b.title = '+' + fmt.format(v) + ' views' + (back ? ' — recorded before this tab opened' : '');
           wrap.appendChild(b);
         });
       }
@@ -1234,6 +1320,7 @@
       if (pollCount % 5 === 1) loadComments();
       if (pollCount % 30 === 0) checkNewUploads();
       prevTotals = totals;
+      saveVel();   // every tick, after the baseline advances, so a reload resumes cleanly
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
@@ -2316,6 +2403,7 @@
       try { localStorage.setItem(WSINCE_KEY, String(newest)); } catch (e) {}
     }
     workerPulled = true;
+    seedVelFromSnaps();   // cold open: the strip backfills, faded, from these minutes
   }
   // The bundle above only carries the last few days of samples, because its job is "what
   // has happened lately". A reference curve for the projection is the opposite slice —

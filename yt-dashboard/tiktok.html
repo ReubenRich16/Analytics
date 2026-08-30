@@ -253,7 +253,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session are counted live in this tab and reset when you reload; a post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
+    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session survive a quick reload — within 30 minutes the session resumes and the gap is counted; longer away, a fresh session starts and the velocity strip backfills, faded, from your Worker's recordings. A post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
   </div>
   </div>
 
@@ -1276,6 +1276,7 @@
     await ttSyncPull();
     await pullHistory();
     await pullLaunches();
+    restoreVel();   // resume a quick reload, or backfill the strip from the recordings
     intervalMs = +$('interval').value;
     await poll();
     if (timer) clearInterval(timer);
@@ -1287,6 +1288,69 @@
      Every number here is a sum of per-post positive deltas over posts present in BOTH the
      previous reading and this one. Anything else would be measuring the API's window, not
      the account: see the note on perPost above. */
+  /* Reload used to zero this card. Now a quick reload RESUMES: the strip, the session
+     totals and the per-post baseline are saved on every tick, so the first poll after a
+     reload diffs against the last saved reading and the seconds in between are counted
+     rather than dropped. A longer gap starts a fresh session — a three-day-old "session"
+     is not a session, and the away card above tells that story — but the strip still
+     BACKFILLS from the Worker's recordings, faded, so a cold open is never a blank graph.
+
+     Backfill only trusts minute-resolution samples. A pair of readings five minutes or an
+     hour apart says nothing about any single minute, and smearing it across bars would be
+     interpolation, which this page never does — so cold posts simply contribute nothing
+     to the backfill, and that is the truth of what was recorded. */
+  const VEL_RESUME = 30 * 60e3;
+  const velKey = () => 'tt_vel:' + ((me && me.open_id) || '');
+  let velBackfilled = 0;                 // leading bars that are recordings, not watching
+  function saveVel() {
+    if (!me || !me.open_id || !velSession) return;
+    try {
+      localStorage.setItem(velKey(), JSON.stringify({
+        at: Date.now(), start: velStart, session: velSession,
+        bars: velHistory.slice(-MAX_BARS), back: velBackfilled,
+        perPost: Object.fromEntries(Object.entries(perPost).map(([id, p]) =>
+          [id, { views: p.views, likes: p.likes, comments: p.comments, shares: p.shares, sessV: p.sessV || 0 }]))
+      }));
+    } catch (e) {}
+  }
+  function backfillBars() {
+    const now = Date.now(), bars = new Array(MAX_BARS).fill(0);
+    let any = false;
+    for (const rec of Object.values((hist && hist.videos) || {})) {
+      const arr = (rec && rec.s) || [];
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] - arr[i - 1][0] > 2 * 60e3) continue;   // not minute data — no vote
+        const slot = Math.floor((now - arr[i][0]) / 60e3);
+        if (slot < 0 || slot >= MAX_BARS) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d > 0) { bars[MAX_BARS - 1 - slot] += d; any = true; }
+      }
+    }
+    if (!any) return [];
+    let s = 0; while (s < bars.length && bars[s] === 0) s++;   // drop the silent lead-in
+    return bars.slice(s);
+  }
+  function restoreVel() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(velKey()) || 'null'); } catch (e) {}
+    if (saved && Array.isArray(saved.bars) && saved.session && Date.now() - saved.at <= VEL_RESUME) {
+      velHistory = saved.bars.map(Number).filter(v => isFinite(v));
+      velBackfilled = Math.max(0, Math.min(+saved.back || 0, velHistory.length));
+      velSession = saved.session;
+      velStart = +saved.start || Date.now();
+      perPost = {};
+      for (const [id, p] of Object.entries(saved.perPost || {})) perPost[id] = { ...p, tickV: 0 };
+      return;   // the first poll now diffs across the reload gap instead of dropping it
+    }
+    const bars = backfillBars();
+    if (bars.length) {
+      velHistory = bars;
+      velBackfilled = bars.length;
+      velSession = { views: 0, likes: 0, comments: 0, shares: 0 };   // nothing watched yet
+      velStart = Date.now();
+    }
+  }
+
   function renderVelocity() {
     const seen = {};
     let tick = 0;
@@ -1315,16 +1379,20 @@
     if (first) { velSession = { views: 0, likes: 0, comments: 0, shares: 0 }; velStart = Date.now(); return; }
     for (const k of ['views', 'likes', 'comments', 'shares']) velSession[k] += step[k];
     velHistory.push(tick);
-    if (velHistory.length > MAX_BARS) velHistory.shift();
+    if (velHistory.length > MAX_BARS) {
+      velHistory.shift();
+      if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
+    }
     const wrap = $('bars');
     if (wrap) {
       wrap.innerHTML = '';
       const max = Math.max(1, ...velHistory);
-      velHistory.forEach(v => {
+      velHistory.forEach((v, i) => {
+        const back = i < velBackfilled;
         const b = document.createElement('div');
-        b.className = 'bar' + (v === 0 ? ' zero' : '');
+        b.className = 'bar' + (v === 0 ? ' zero' : '') + (back ? ' back' : '');
         b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
-        b.title = '+' + fmt.format(v) + ' views';
+        b.title = '+' + fmt.format(v) + ' views' + (back ? ' — recorded before this tab opened' : '');
         wrap.appendChild(b);
       });
     }
@@ -1332,6 +1400,7 @@
     $('sessionText').innerHTML = 'session: <b>+' + fmt.format(velSession.views) + '</b> views · <b>+' +
       fmt.format(velSession.likes) + '</b> likes · <b>+' + fmt.format(velSession.comments) + '</b> comments · <b>+' +
       fmt.format(velSession.shares) + '</b> shares · ' + Math.round(mins) + 'm';
+    saveVel();   // every tick, so a reload resumes from the last reading
     // Not before half a minute of session. `mins` is floored at one second, so the very
     // first refresh divides a real gain by 1/60 of a minute and prints a rate in the
     // thousands — a number that is arithmetically correct and describes nothing.
