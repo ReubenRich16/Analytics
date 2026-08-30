@@ -34,6 +34,12 @@
     font:inherit; font-size:11px; color:var(--text); }
   #alertsContent .chip.chipv img { width:16px; height:22px; border-radius:4px; object-fit:cover; }
   #alertsContent .chip.chipv:hover { border-color:var(--muted); }
+  /* inbox rules: new-since-last-look wears a dot, already-seen dims */
+  #alertsContent .alert.seen { opacity:.55; }
+  #alertsContent .alert .dot { width:6px; height:6px; border-radius:50%; background:var(--accent);
+    flex:none; align-self:center; }
+  #alertsContent .alert.moment .txt { color:var(--text); }
+  #alertsContent .awayhead { margin-bottom:10px; }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
@@ -1252,6 +1258,7 @@
     me = await api('/tiktok/me');
     // before any history is pulled: this is what decides whose store we are adding to
     loadHist(me && me.open_id);
+    loadSeen();   // reads when this device last had the page open, then stamps now
     $('ttAvatar').src = me.avatar_url || '';
     $('ttName').textContent = me.display_name || me.username || 'TikTok';
     $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
@@ -1364,6 +1371,7 @@
       // re-pull the Worker's recordings periodically so the minute chart keeps growing
       // while a launch is live, not only when Refresh is pressed
       pollCount++;
+      touchSeen();   // the stamp means "last had the page open", so it rides every poll
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
@@ -3000,6 +3008,56 @@
   const ALERT_DAYS = 14;         // how far back the feed looks
   let accelSet = new Set();
 
+  /* "While you were away" now means it. A per-device, per-account stamp of the last time
+     this page was open (touched on every poll, so it reads "last had it open", not "last
+     opened it"). Everything in the card is sized against it: the headline sums the gap,
+     items newer than it wear a dot, older ones dim. Absent — first visit on this device,
+     cleared storage — the card simply falls back to its 14-day window with no dots, which
+     is honest: this device genuinely doesn't know when you last looked. The stamp is
+     deliberately not synced or exported; "when did I last look on THIS device" is the
+     question, and another device's answer would be a lie here. */
+  let awaySince = null;
+  const seenKey = () => 'tt_seen:' + ((me && me.open_id) || '');
+  function touchSeen() {
+    if (!me || !me.open_id) return;
+    try { localStorage.setItem(seenKey(), String(Date.now())); } catch (e) {}
+  }
+  function loadSeen() {
+    if (!me || !me.open_id) return;
+    try {
+      const v = +localStorage.getItem(seenKey());
+      awaySince = v > 0 && v < Date.now() ? v : null;
+    } catch (e) { awaySince = null; }
+    touchSeen();
+  }
+
+  /* Positive recorded view-gains, bucketed by local hour, across every post's recording
+     inside [from, now]. One pass serves three readers: the away headline (total), the
+     biggest-hour line (max bucket, with the post that carried it), and the yesterday
+     line (buckets rolled up by local day). Negative deltas are TikTok revising a count —
+     recorded, not viewership — and don't vote, same rule as everywhere else. */
+  function ttGainBuckets(from) {
+    const vids = (hist && hist.videos) || {};
+    const now = Date.now();
+    const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
+    let total = 0;
+    for (const [id, rec] of Object.entries(vids)) {
+      const arr = (rec && rec.s) || [];
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] < from || arr[i][0] > now) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d <= 0) continue;
+        total += d;
+        const h = new Date(arr[i][0]); h.setMinutes(0, 0, 0);
+        const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
+        b.gain += d;
+        b.byPost.set(id, (b.byPost.get(id) || 0) + d);
+        hours.set(h.getTime(), b);
+      }
+    }
+    return { total, hours };
+  }
+
   /* Accelerating: gaining meaningfully faster than it was a day ago. The absolute floor
      matters more than the ratio — three views yesterday and five today is a 67% rise and
      means nothing, and a small account produces a great many of those. */
@@ -3062,12 +3120,79 @@
     return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
+  /* The headline: the whole absence in one sentence, so the card answers before it
+     itemises. Only when the away stamp exists and the absence is long enough to be one —
+     under half an hour "while you were away" is theatre, and the feed below already
+     covers it. Views are what the recordings saw (a post's first sample inside the window
+     counts from that sample), followers come from the account snapshots, and both say
+     nothing rather than guessing when the Worker holds no data for the stretch. */
+  const AWAY_MIN = 30 * 60e3;
+  function ttAwayHeadHtml(list) {
+    if (!awaySince || Date.now() - awaySince < AWAY_MIN) return '';
+    const bits = [];
+    const g = ttGainBuckets(awaySince);
+    if (g.total > 0) bits.push('<b>+' + fmt.format(g.total) + ' views</b> recorded across your posts');
+    const f = fseries();
+    const a = ATB(f, awaySince), b = f[f.length - 1];
+    if (a && b && a !== b) {
+      const df = (b[1] || 0) - (a[1] || 0);
+      if (df) bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
+    }
+    const crossed = list.filter(x => x.at >= awaySince).length;
+    if (crossed) bits.push('<b>' + crossed + '</b> round number' + (crossed === 1 ? '' : 's') + ' crossed');
+    if (!bits.length) return '';
+    return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(awaySince).replace(' ago', '')) + '</b>): ' +
+      bits.join(' · ') + '.</p>';
+  }
+
+  /* Two moments, told as plain lines: the biggest recorded hour, and how yesterday placed
+     among the days behind it. Each abstains rather than stretching: the hour needs a real
+     gain behind it, the ranking needs a few full days, and today never ranks because it
+     is not finished being a day yet. */
+  function ttMomentsHtml() {
+    const rows = [];
+    const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
+    const label = from === awaySince ? 'Biggest hour while you were away' : 'Biggest hour of the last day';
+    const g = ttGainBuckets(from);
+    let bestAt = 0, best = null;
+    for (const [at, b] of g.hours) if (!best || b.gain > best.gain) { best = b; bestAt = at; }
+    if (best && best.gain >= 30) {
+      let carrier = '';
+      const top = [...best.byPost.entries()].sort((x, y) => y[1] - x[1])[0];
+      if (top && top[1] >= best.gain * 0.6) {
+        const rec = (hist && hist.videos && hist.videos[top[0]]) || null;
+        const live = videos.find(x => x.id === top[0]);
+        const cap = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
+        if (cap) carrier = ', mostly “' + esc(cap.slice(0, 34)) + '”';
+      }
+      rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
+        at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
+    }
+    // yesterday, ranked among the full local days the recordings cover
+    const day = new Map();
+    for (const [at, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+      const k = new Date(at).toLocaleDateString('en-CA');
+      day.set(k, (day.get(k) || 0) + b.gain);
+    }
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
+    const done = [...day.entries()].filter(([k]) => k !== tk);
+    if (done.length >= 3 && day.has(yk)) {
+      const rank = done.filter(([, v]) => v > day.get(yk)).length + 1;
+      rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
+        (rank === 1 ? 'your best day' : ordinal(rank) + ' best of ' + done.length + ' recorded days'), at: '' });
+    }
+    if (!rows.length) return '';
+    return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
+      (r.at ? '<div class="at">' + esc(r.at) + '</div>' : '') + '</div>').join('');
+  }
+
   function renderAlerts() {
     const el = $('alertsContent');
     if (!el) return;
     const list = ttAlerts();
     const accel = [...accelSet].map(id => videos.find(x => x.id === id)).filter(Boolean);
-    let html = '';
+    let html = ttAwayHeadHtml(list);
     if (accel.length) {
       html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
         accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' accelerating</b> \u2014 gaining at least ' +
@@ -3077,6 +3202,7 @@
           (v.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(v.cover_image_url) + '">' : '') +
           esc(capOf(v).slice(0, 34)) + '</button>').join('') + '</div>';
     }
+    html += ttMomentsHtml();
     if (!list.length) {
       html += '<p class="dnote">Nothing has crossed a round number in the last ' + ALERT_DAYS +
         ' days. This fills itself in from your Worker\u2019s own recordings \u2014 it needs nothing open and nothing scheduled.</p>';
@@ -3087,10 +3213,18 @@
        so you can see WHICH post without reading. Only a post still in TikTok's 60-post
        window is clickable: the drawer needs the live post to open, and a dead row that
        does nothing when tapped is worse than a plain one. Account-level rows (followers,
-       account likes) have no post to open and stay plain on purpose. */
+       account likes) have no post to open and stay plain on purpose.
+
+       Inbox rules, only when this device knows when you last looked: an item newer than
+       the away stamp wears a dot, an older one dims. The feed is already newest-first,
+       so the new ones sit naturally on top. */
+    const mark = awaySince != null;
     html += list.map(a => {
       const live = a.id && videos.some(x => x.id === a.id);
-      return '<div class="alert' + (live ? ' open" role="button" tabindex="0" data-vid="' + esc(a.id) : '') + '">' +
+      const fresh = mark && a.at >= awaySince;
+      const cls = 'alert' + (live ? ' open' : '') + (mark ? (fresh ? ' fresh' : ' seen') : '');
+      return '<div class="' + cls + '"' + (live ? ' role="button" tabindex="0" data-vid="' + esc(a.id) + '"' : '') + '>' +
+        (fresh ? '<span class="dot" title="New since you last looked"></span>' : '') +
         (a.id && a.cover ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.cover) + '">' : '') +
         '<div class="txt">' + a.t + '</div>' +
         '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>';

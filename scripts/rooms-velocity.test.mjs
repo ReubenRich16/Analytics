@@ -413,6 +413,30 @@ console.log('\nwhile you were away');
   check('ids and covers are escaped on the way into markup',
     /data-vid="' \+ esc\(a\.id\)/.test(ra) && /src="' \+ esc\(a\.cover\)/.test(ra));
   check('the card copy says rows are tappable', /Tap any post to open its full breakdown/.test(TT));
+
+  /* "While you were away" now means it: a per-device, per-account stamp of the last time
+     the page was open sizes the headline, puts a dot on the new, and dims the seen. */
+  check('the away stamp is read at boot and touched on every poll',
+    /loadSeen\(\);/.test(TT) && /pollCount\+\+;\s*\n\s*touchSeen\(\);/.test(TT));
+  check('the stamp is per-account and deliberately not synced or exported',
+    /'tt_seen:' \+ \(\(me && me\.open_id\) \|\| ''\)/.test(TT) &&
+    !/TT_PREFS = \[[^\]]*tt_seen/.test(TT));
+  check('a stamp from the future is refused rather than trusted',
+    /v > 0 && v < Date\.now\(\) \? v : null/.test(TT));
+  const gb = TT.slice(TT.indexOf('function ttGainBuckets('), TT.indexOf('\n  }\n', TT.indexOf('function ttGainBuckets(')));
+  check('a count that went backwards does not vote in the gain buckets', /if \(d <= 0\) continue;/.test(gb));
+  const head = TT.slice(TT.indexOf('function ttAwayHeadHtml('), TT.indexOf('\n  }\n', TT.indexOf('function ttAwayHeadHtml(')));
+  check('the headline only appears for a real absence, and says nothing over guessing',
+    /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
+  check('a follower drop is shown signed, not clamped', /df > 0 \? '\+' : '−'/.test(head));
+  const mom = TT.slice(TT.indexOf('function ttMomentsHtml('), TT.indexOf('\n  }\n', TT.indexOf('function ttMomentsHtml(')));
+  check('the biggest hour needs a real gain behind it', /best\.gain >= 30/.test(mom));
+  check('and only names a carrier post that actually carried it', /top\[1\] >= best\.gain \* 0\.6/.test(mom));
+  check('today never ranks — it is not finished being a day', /\.filter\(\(\[k\]\) => k !== tk\)/.test(mom));
+  check('the yesterday rank abstains below three full days', /done\.length >= 3/.test(mom));
+  check('new items wear a dot and seen ones dim, only when this device knows',
+    /const mark = awaySince != null;/.test(ra) && /fresh \? ' fresh' : ' seen'/.test(ra) &&
+    /title="New since you last looked"/.test(ra));
 }
 
 console.log('\nhashtags ranked by what they returned');
