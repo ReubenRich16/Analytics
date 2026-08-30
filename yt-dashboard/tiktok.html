@@ -24,6 +24,16 @@
   #alertsContent .alert .txt { min-width:0; }
   #alertsContent .alert .at { margin-left:auto; flex:none; font-family:var(--f-mono);
     font-size:11px; color:var(--muted); white-space:nowrap; }
+  /* a post row wears its cover and opens the drawer — same affordance as the table rows */
+  #alertsContent .alert .acover { width:26px; height:34px; border-radius:6px; object-fit:cover;
+    flex:none; align-self:center; background:var(--panel-2); }
+  #alertsContent .alert.open { cursor:pointer; }
+  #alertsContent .alert.open:hover .txt, #alertsContent .alert.open:focus-visible .txt { color:var(--text); }
+  #alertsContent .alert.open:focus-visible { outline:1px solid var(--muted); outline-offset:2px; border-radius:8px; }
+  #alertsContent .chip.chipv { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    font:inherit; font-size:11px; color:var(--text); }
+  #alertsContent .chip.chipv img { width:16px; height:22px; border-radius:4px; object-fit:cover; }
+  #alertsContent .chip.chipv:hover { border-color:var(--muted); }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
@@ -174,7 +184,7 @@
 
   <div class="card" id="alertsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
-    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open.</p>
+    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open. <b>Tap any post to open its full breakdown.</b></p>
     <div id="alertsContent"><p class="dnote">checking…</p></div>
   </div>
 
@@ -3030,12 +3040,16 @@
     const vids = (hist && hist.videos) || {};
     for (const [id, rec] of Object.entries(vids)) {
       const arr = (rec && rec.s) || [];
-      const cap = ((rec && rec.title) || '').trim() || (videos.find(x => x.id === id) ? capOf(videos.find(x => x.id === id)) : '');
+      const live = videos.find(x => x.id === id);
+      const cap = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
+      // the cover rides along so the feed can show WHICH post at a glance — the Worker
+      // records it, and the live list is the fallback for anything it missed
+      const cover = (rec && rec.cover) || (live && live.cover_image_url) || '';
       for (let i = 1; i < arr.length; i++) {
         if (arr[i][0] < since) continue;
         for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
           if (m < 100) continue;   // the first hundred views is not news
-          out.push({ k: 'v:' + id, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
+          out.push({ k: 'v:' + id, id, cover, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
         }
       }
     }
@@ -3057,9 +3071,11 @@
     if (accel.length) {
       html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
         accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' accelerating</b> \u2014 gaining at least ' +
-        ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day.</p>' +
+        ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day. Tap one for its full breakdown.</p>' +
         '<div class="chiprow" style="margin-bottom:10px">' +
-        accel.slice(0, 6).map(v => '<span class="chip">' + esc(capOf(v).slice(0, 34)) + '</span>').join('') + '</div>';
+        accel.slice(0, 6).map(v => '<button type="button" class="chip chipv" data-vid="' + esc(v.id) + '">' +
+          (v.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(v.cover_image_url) + '">' : '') +
+          esc(capOf(v).slice(0, 34)) + '</button>').join('') + '</div>';
     }
     if (!list.length) {
       html += '<p class="dnote">Nothing has crossed a round number in the last ' + ALERT_DAYS +
@@ -3067,9 +3083,33 @@
       el.innerHTML = html;
       return;
     }
-    html += list.map(a => '<div class="alert"><div class="txt">' + a.t + '</div>' +
-      '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>').join('');
+    /* A post row opens its full breakdown, exactly like a table row \u2014 and wears its cover
+       so you can see WHICH post without reading. Only a post still in TikTok's 60-post
+       window is clickable: the drawer needs the live post to open, and a dead row that
+       does nothing when tapped is worse than a plain one. Account-level rows (followers,
+       account likes) have no post to open and stay plain on purpose. */
+    html += list.map(a => {
+      const live = a.id && videos.some(x => x.id === a.id);
+      return '<div class="alert' + (live ? ' open" role="button" tabindex="0" data-vid="' + esc(a.id) : '') + '">' +
+        (a.id && a.cover ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.cover) + '">' : '') +
+        '<div class="txt">' + a.t + '</div>' +
+        '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>';
+    }).join('');
     el.innerHTML = html;
+    // wired once, delegated: renderAlerts replaces this innerHTML on every poll, and a
+    // listener per row would be re-bound each time for no reason
+    if (!el.dataset.wired) {
+      el.dataset.wired = '1';
+      const open = t => { const b = t && t.closest && t.closest('[data-vid]'); if (b) ttdOpen(b.dataset.vid, b); };
+      el.addEventListener('click', e => open(e.target));
+      el.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const b = e.target && e.target.closest && e.target.closest('[data-vid]');
+        if (!b) return;
+        e.preventDefault();
+        ttdOpen(b.dataset.vid, b);
+      });
+    }
   }
 
   /* ---------- hashtags, with the account's own record attached ----------

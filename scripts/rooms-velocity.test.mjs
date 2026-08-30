@@ -392,6 +392,27 @@ console.log('\nwhile you were away');
     /const best = new Map\(\);[\s\S]{0,200}if \(!best\.has\(a\.k\)\) best\.set\(a\.k, a\);/.test(feed));
   check('every entry carries the subject it is about', (feed.match(/out\.push\(\{ k: /g) || []).length === 3,
     (feed.match(/out\.push\(\{ k: /g) || []).length + ' of 3');
+
+  /* A post in the feed is a thing you can LOOK AT, not just a caption: it wears its cover
+     and opens the same per-post drawer a table row does. Only a post still in TikTok's
+     60-post window is clickable — the drawer needs the live post, and a row that does
+     nothing when tapped is worse than a plain one. Account-level rows have no post. */
+  const ra = TT.slice(TT.indexOf('function renderAlerts()'), TT.indexOf('\n  }\n', TT.indexOf('function renderAlerts()')));
+  check('a post entry carries its id and cover for the feed',
+    /out\.push\(\{ k: 'v:' \+ id, id, cover,/.test(feed));
+  check('the cover comes from the recording, with the live list as fallback',
+    /\(rec && rec\.cover\) \|\| \(live && live\.cover_image_url\)/.test(feed));
+  check('a row is clickable only while the post is still in the 60-post window',
+    /videos\.some\(x => x\.id === a\.id\)/.test(ra));
+  check('a clickable row is a real button to the keyboard',
+    /role="button" tabindex="0" data-vid="/.test(ra) && /e\.key !== 'Enter' && e\.key !== ' '/.test(ra));
+  check('clicking opens the same drawer as a table row', /ttdOpen\(b\.dataset\.vid, b\)/.test(ra));
+  check('the handler is delegated and wired once', /el\.dataset\.wired/.test(ra));
+  check('the accelerating chips open the drawer too, wearing a thumbnail',
+    /class="chip chipv" data-vid="/.test(ra) && /<img alt="" loading="lazy" src="' \+ esc\(v\.cover_image_url\)/.test(ra));
+  check('ids and covers are escaped on the way into markup',
+    /data-vid="' \+ esc\(a\.id\)/.test(ra) && /src="' \+ esc\(a\.cover\)/.test(ra));
+  check('the card copy says rows are tappable', /Tap any post to open its full breakdown/.test(TT));
 }
 
 console.log('\nhashtags ranked by what they returned');
