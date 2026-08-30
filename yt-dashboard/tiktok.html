@@ -267,6 +267,13 @@
     <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
+  <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings -->
+  <div class="card" id="recTrendsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Trends — from your own recordings</div>
+    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from what your Worker recorded: nothing fetched, nothing guessed, and a gap in the recording stays a gap.</p>
+    <div id="recTrendsContent"><p class="dnote">compiling…</p></div>
+  </div>
+
   </div>
 
   <div class="room-pane" data-pane="coach" id="pane-coach" role="tabpanel" aria-labelledby="tab-coach" tabindex="0">
@@ -1266,7 +1273,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1445,7 +1452,7 @@
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
       buildAccel();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
@@ -3313,6 +3320,121 @@
         ttdOpen(b.dataset.vid, b);
       });
     }
+  }
+
+  /* ---------- recorded trends ----------
+     The Trends room TikTok could never have, as a card. This page used to say a Trends
+     room "would hold nothing the Now room does not already show" — true when the Worker
+     kept only a three-day window, and no longer true now that it records every post for
+     60 days and the account every three hours for 400. Everything here is recordings:
+     no API quota, no guessing, and a day the recording missed is absent, not zero.
+
+     "A day" is a local calendar day with at least one recorded gain. Today sits on its
+     own tile and never joins a week, because it is not finished being a day. Weeks say
+     how many recorded days they rest on — "+9,800 over 7 recorded days" and "over 4"
+     are different claims, and the small print is the difference. */
+  let recTrendsRange = 90;
+  function recDayGains(days) {
+    const out = new Map();   // local day (en-CA) → recorded views gained
+    for (const [at, b] of ttGainBuckets(Date.now() - days * 864e5).hours) {
+      const k = new Date(at).toLocaleDateString('en-CA');
+      out.set(k, (out.get(k) || 0) + b.gain);
+    }
+    return out;
+  }
+  const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  function renderRecTrends() {
+    const card = $('recTrendsCard'), el = $('recTrendsContent');
+    if (!card || !el) return;
+    if (!hist) { card.style.display = 'none'; return; }   // no recordings, no card
+    card.style.display = 'block';
+    const tk = new Date().toLocaleDateString('en-CA');
+    const day = recDayGains(16);
+    const doneKeys = [...day.keys()].filter(k => k !== tk).sort();
+    const sum = ks => ks.reduce((a, k) => a + (day.get(k) || 0), 0);
+    const last7 = doneKeys.slice(-7), prev7 = doneKeys.slice(-14, -7);
+
+    // the pulse: the whole account in one tile row, every cell honest about its basis
+    const f = fseries();
+    const fNow = f.length ? f[f.length - 1] : null;
+    // a recording younger than a week still has a true answer — over its own span,
+    // and the tile says which, because "+96 over 7 days" and "over 4" differ
+    const fBase = (f.length ? ATB(f, Date.now() - 7 * 864e5) : null) || (f.length > 1 ? f[0] : null);
+    const dF = fNow && fBase && fNow !== fBase ? (fNow[1] || 0) - (fBase[1] || 0) : null;
+    const fSpanD = dF != null ? Math.max(1, Math.round((fNow[0] - fBase[0]) / 864e5)) : 0;
+    const vSum = videos.reduce((a, v) => a + (v.view_count || 0), 0);
+    const lSum = videos.reduce((a, v) => a + (v.like_count || 0), 0);
+    let html = '<div class="metric-grid">' +
+      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—', day.has(tk) ? 'views recorded' : 'nothing recorded yet') +
+      mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? last7.length + ' recorded day' + (last7.length === 1 ? '' : 's') : 'no full days recorded') +
+      mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? prev7.length + ' recorded day' + (prev7.length === 1 ? '' : 's') : 'no full days recorded') +
+      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)), 'exact, between two snapshots') : '') +
+      (vSum > 0 ? mcell('Like rate', (lSum / vSum * 100).toFixed(1) + '%', 'across the listed posts') : '') +
+      '</div>';
+    // week against week, only when both weeks have enough days to be a claim
+    if (last7.length >= 5 && prev7.length >= 5 && sum(prev7) > 0) {
+      const d = Math.round((sum(last7) / sum(prev7) - 1) * 100);
+      html += '<p class="explain" style="margin-bottom:14px">' +
+        (Math.abs(d) < 8 ? 'This week is running level with last week.'
+          : d > 0 ? 'This week is running <b>' + d + '% ahead</b> of last week.'
+                  : 'This week is running <b>' + Math.abs(d) + '% behind</b> last week.') + '</p>';
+    }
+
+    // views per day — the daily series TikTok never provides
+    if (doneKeys.length >= 3) {
+      const ks = doneKeys.slice(-14);
+      const pts = ks.map(k => day.get(k) || 0);
+      const at = ks.map(k => new Date(k + 'T12:00:00').getTime());
+      const tips = ks.map(k => '+' + fmt.format(day.get(k) || 0) + ' views — ' +
+        new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }));
+      html += '<div class="dsection"><h4>Views per day — recorded</h4>' +
+        '<p class="explain">Views your posts gained each full day, summed from the recordings. Today is excluded — it isn’t finished being a day. A missing day is a gap in the recording, not a zero.</p>' +
+        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
+    } else {
+      html += '<p class="dnote">The views-per-day chart needs a few full recorded days — it fills itself in as the Worker keeps sampling.</p>';
+    }
+
+    // follower history — 400 days of snapshots that only ever powered a sparkline
+    if (f.length >= 3) {
+      const cut = recTrendsRange === 0 ? 0 : Date.now() - recTrendsRange * 864e5;
+      const seg = f.filter(s => s[0] >= cut);
+      if (seg.length >= 2) {
+        const pts = seg.map(s => s[1] || 0), at = seg.map(s => s[0]);
+        const tips = seg.map(s => fmt.format(s[1] || 0) + ' followers — ' +
+          new Date(s[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
+        html += '<div class="dsection"><h4>Follower history — recorded every few hours</h4>' +
+          '<div class="range-row" id="recRange">' +
+          [30, 90, 0].map(n => '<button class="ghost' + (recTrendsRange === n ? ' active' : '') + '" data-rec="' + n + '">' + (n === 0 ? 'All' : n + ' days') + '</button>').join('') +
+          '</div>' +
+          lineChart(pts, 'var(--up)', 'Follower history', { at, tips,
+            x0: new Date(seg[0][0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), x1: 'now' }) + '</div>';
+      }
+    }
+
+    // when views actually arrive — hour of the day, the viewer's own clock
+    const hb = new Array(24).fill(0);
+    let hbAny = false;
+    for (const [at2, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+      hb[new Date(at2).getHours()] += b.gain;
+      if (b.gain > 0) hbAny = true;
+    }
+    if (hbAny) {
+      const max = Math.max(...hb, 1);
+      html += '<div class="dsection"><h4>When views actually arrive</h4>' +
+        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>, from the recordings. This is when your audience watches — the Coach room answers when to post, which is a different question.</p>' +
+        '<div class="bars" style="justify-content:space-between">' +
+        hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm') + '"></div>').join('') +
+        '</div>' +
+        '<div class="dnote" style="display:flex;justify-content:space-between;margin-top:4px"><span>12am</span><span>12pm</span><span>11pm</span></div></div>';
+    }
+    el.innerHTML = html;
+    const rr = $('recRange');
+    if (rr) rr.addEventListener('click', e => {
+      const b2 = e.target.closest('[data-rec]');
+      if (!b2) return;
+      recTrendsRange = +b2.dataset.rec;
+      renderRecTrends();
+    });
   }
 
   /* ---------- hashtags, with the account's own record attached ----------

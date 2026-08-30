@@ -91,11 +91,14 @@ data/             recorded history, committed by the robots
   subtraction, not a sum of samples — and this card replaced the old Recent milestones list
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
-  TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for
-  a reason rather than for want of building them: its API exposes no audience data of any
-  kind, so an Audience room could only ever be empty, and it publishes no daily series of
-  its own, so a Trends room would hold nothing the Now room does not already show.
-  **Everything TikTok's API can support is now built on both pages** — what separates them
+  TikTok (Now · Posts · Account · Coach · Ideas). The missing Audience room is missing for
+  a reason rather than for want of building it: TikTok's API exposes no audience data of
+  any kind, so it could only ever be empty. The missing Trends room used to be justified
+  the same way — TikTok publishes no daily series of its own — but the Worker's recordings
+  outgrew that: the Account room now carries a **Trends — from your own recordings** card
+  (a pulse tile row, views per day with week-vs-week, 400 days of follower history, and a
+  when-views-arrive clock), every number built from the recordings rather than fetched.
+  **Everything TikTok's API can support is built on both pages** — what separates them
   is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card
   exactly as it was before, so nothing is ever out of reach

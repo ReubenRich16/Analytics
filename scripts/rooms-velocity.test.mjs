@@ -537,11 +537,41 @@ console.log('\nvelocity survives a reload');
     !/reset when you reload/.test(TT) && /survive a quick reload/.test(TT));
 }
 
+/* Recorded trends — the daily series, follower history and arrival clock TikTok never
+   provides, built entirely from the Worker's recordings. The old rationale for having
+   no Trends room ("it publishes no daily series of its own") stopped being a rationale
+   the day the recordings outgrew the three-day window. */
+console.log('\nrecorded trends — the charts TikTok never provides');
+{
+  check('the card lives in the Account room, revealed at sign-in',
+    /id="recTrendsCard"/.test(TT) && /'breakdownCard', 'recTrendsCard'/.test(TT));
+  const rt = TT.slice(TT.indexOf('function renderRecTrends('), TT.indexOf('\n  }\n', TT.indexOf('const rr = $(\'recRange\')')));
+  check('it only shows once the recordings exist',
+    /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(rt));
+  check('today never joins a week — it is not finished being a day',
+    /\.filter\(k => k !== tk\)/.test(rt));
+  check('weeks say how many recorded days they rest on', /recorded day/.test(rt));
+  check('week-vs-week only speaks with five recorded days on each side',
+    /last7\.length >= 5 && prev7\.length >= 5/.test(rt));
+  check('the follower delta is exact between snapshots, over its stated span',
+    /exact, between two snapshots/.test(rt) && /'Followers, ' \+ fSpanD/.test(rt));
+  check('a recording younger than a week answers over its own span instead of abstaining',
+    /\|\| \(f\.length > 1 \? f\[0\] : null\)/.test(rt));
+  check('the views-per-day chart admits a missing day is a gap, not a zero',
+    /A missing day is a gap in the recording, not a zero/.test(rt));
+  check('the arrival clock is the viewer\'s own, and says so',
+    /getHours\(\)/.test(rt) && /your own local time/.test(rt));
+  check('and points at the Coach for the when-to-post question, not itself',
+    /the Coach room answers when to post/.test(rt));
+  check('follower history offers 30 / 90 / All', /\[30, 90, 0\]\.map/.test(rt));
+  check('the card renders on the poll chain', /renderBreakdown\(\); renderRecTrends\(\);/.test(TT));
+}
+
 console.log('\nhashtags ranked by what they returned');
 {
   const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
   check('the card exists and has a room', /id="tagsCard"/.test(TT) && /id="tagsContent"/.test(TT));
-  check('and is revealed at sign-in', /'breakdownCard', 'tagsCard', 'coachCard'/.test(TT));
+  check('and is revealed at sign-in', /'recTrendsCard', 'tagsCard', 'coachCard'/.test(TT));
   /* Frequency ranks your habits; reach ranks your results. A tag on two hits should beat
      a tag spread across ten quiet ones, which is the whole reason this is not a chip row
      sorted by count. */
@@ -557,7 +587,7 @@ console.log('\nhashtags ranked by what they returned');
   check('truncation is admitted rather than silent', /rated\.length > 10/.test(body));
   check('the thinner unranked copy in Coach is gone, not left above it',
     !/Hashtags to lean into/.test(TT), 'saying it twice let the weaker half win by being higher up');
-  check('it repaints on the poll', /renderBreakdown\(\); renderTags\(\);/.test(TT));
+  check('it repaints on the poll', /renderRecTrends\(\); renderTags\(\);/.test(TT));
   check('and a caption cannot inject markup through a tag', /esc\(t\)/.test(body));
 }
 
