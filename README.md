@@ -78,9 +78,14 @@ data/             recorded history, committed by the robots
   side, with a **Ranked** alternative that reads as a list
 - **Per-post drawer** — the full breakdown for any post in the table, not just the recent
   ones the arrows reach
-- **While you were away** (TikTok) — round numbers your account and posts crossed since you
-  last looked, and a ⚡ on anything gaining faster than it was yesterday. The YouTube page's
-  equivalents are its Recent milestones card and the table's ⚡ badge
+- **While you were away** — the whole absence in one line ("While you were away (2d):
+  +1,920 views · +24 subscribers · 2 round numbers crossed"), sized by a per-device stamp of
+  when you last had the page open. Round numbers your account and posts crossed (each post
+  tappable, wearing its thumbnail, opening its full breakdown), a ⚡ on anything gaining
+  faster than it was yesterday, the biggest recorded hour, and yesterday ranked among the
+  days behind it. New-since-you-looked items wear a dot; already-seen ones dim. On YouTube
+  the headline is **exact** — the robot records the channel's own totals, so it is a
+  subtraction, not a sum of samples — and this card replaced the old Recent milestones list
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
   TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for

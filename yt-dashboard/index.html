@@ -130,6 +130,13 @@
     <div class="session" id="sessionText"></div>
   </div>
 
+  <!-- WHILE YOU WERE AWAY — the TikTok page's card, on YouTube's richer recordings -->
+  <div class="card" id="awayCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
+    <p class="explain" style="margin-top:8px">Round numbers your channel and your videos crossed recently, and anything picking up speed. Built from the snapshot robot's own recordings, so it covers the hours nobody had this page open. <b>Tap any video to open its full breakdown.</b></p>
+    <div id="awayContent"><p class="dnote">checking…</p></div>
+  </div>
+
   <!-- LATEST UPLOAD -->
   <div class="card" id="latestCard" style="display:none">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -375,12 +382,13 @@
   // the minute samples it recorded while no browser was open and merges them into the race.
   let workerUrl = '';
   const looksLikeWorkerUrl = u => /^https:\/\/[^ "'<>]+$/.test(u || '');
-  let hist = null, histAlerts = [], histRanks = null, accelSet = new Set();
+  let hist = null, histRanks = null, accelSet = new Set();
   const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
   async function loadHistory() {
     const grab = async f => { try { const r = await fetch(DATA_RAW + f, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; } };
     hist = await grab('history.json');
-    histAlerts = (await grab('alerts.json')) || [];
+    // alerts.json is no longer read: the away card computes the same crossings from the
+    // recordings themselves, and the robot's GitHub issues still carry the notifications
     histRanks = await grab('ranks.json');
     accelSet = new Set();
     if (hist && hist.videos) {
@@ -397,7 +405,220 @@
     // otherwise the milestone projection is missing until the next refresh
     if (videoIds.length) { seedSnapsFromHistory(); renderTable(); renderCoaching(); loadTrends(); }
     renderStatSparks();
+    renderAway();
     renderAnswer(); // the "today vs your usual" line needs the recorded history
+  }
+
+  /* ---------- while you were away ----------
+     The TikTok page's card, rebuilt on YouTube's richer recordings, replacing the old
+     "Recent milestones" list in Trends (which was the robot's alerts.json re-printed —
+     not clickable, not sized to your absence, and blind to anything the alert job
+     didn't happen to catch). Two upgrades the TikTok side cannot make:
+
+       · the headline is EXACT. The robot records the channel's own running totals, so
+         "+12,400 views · +38 subscribers" is a subtraction between two real readings,
+         not a sum of per-post samples.
+       · yesterday's rank is measured on the channel's real daily views.
+
+     Same rules as the TikTok card otherwise: a per-device, per-account stamp of the
+     last time the page was open sizes the headline, items newer than it wear a dot,
+     older ones dim, and every video row opens its full breakdown, wearing its
+     thumbnail. Crossings are only ever between two recorded samples — the card never
+     invents an event. */
+  const AWAY_MIN = 30 * 60e3;
+  const ALERT_DAYS = 14;
+  let awaySince = null;
+  const seenKey = () => 'yt_seen:' + (chanId || '');
+  function touchSeen() {
+    if (!chanId) return;
+    try { localStorage.setItem(seenKey(), String(Date.now())); } catch (e) {}
+  }
+  function loadSeen() {
+    if (!chanId) return;
+    try {
+      const v = +localStorage.getItem(seenKey());
+      awaySince = v > 0 && v < Date.now() ? v : null;   // a stamp from the future is refused
+    } catch (e) { awaySince = null; }
+    touchSeen();
+  }
+  const chanSeries = () => (hist && ((hist.channels && hist.channels[chanId]) || hist.channel)) || [];
+  const fmtAgo = ts => {
+    const s = (Date.now() - ts) / 1000;
+    if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  };
+
+  // per-video positive view-gains bucketed by local hour — the biggest-hour line's
+  // evidence. A count that went backwards is YouTube revising, and doesn't vote.
+  function ytGainBuckets(from) {
+    const now = Date.now(), hours = new Map();
+    for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] < from || arr[i][0] > now) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d <= 0) continue;
+        const h = new Date(arr[i][0]); h.setMinutes(0, 0, 0);
+        const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
+        b.gain += d;
+        b.byPost.set(id, (b.byPost.get(id) || 0) + d);
+        hours.set(h.getTime(), b);
+      }
+    }
+    return { hours };
+  }
+
+  /* The feed. Crossings between two recorded samples only — no "you are close to" and no
+     rounding up, both of which would be the page inventing an event. One line per subject
+     (the most recent crossing, which is also the highest), newest first, capped at 8. */
+  function ytAway() {
+    const out = [], since = Date.now() - ALERT_DAYS * 864e5;
+    const ladder = (from, to) => {
+      const hits = [];
+      let m = nextMilestone(from);
+      while (m <= to && hits.length < 4) { hits.push(m); m = nextMilestone(m); }
+      return hits;
+    };
+    const chn = chanSeries();
+    for (let i = 1; i < chn.length; i++) {
+      if (chn[i][0] < since) continue;
+      for (const m of ladder(chn[i - 1][1] || 0, chn[i][1] || 0)) out.push({ k: 'subs', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' subscribers</b>' });
+      for (const m of ladder(chn[i - 1][2] || 0, chn[i][2] || 0)) {
+        if (m < 1000) continue;   // channel views cross small rungs constantly; only the real ones
+        out.push({ k: 'chviews', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' channel views</b>' });
+      }
+    }
+    for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
+      const title = (videoTitle(id) || '').trim(), thumb = (meta[id] && meta[id].thumb) || '';
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] < since) continue;
+        for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
+          if (m < 100) continue;   // the first hundred views is not news
+          out.push({ k: 'v:' + id, id, thumb, at: arr[i][0], t: '<b>' + esc((title || 'a video').slice(0, 46)) + '</b> passed ' + fmt.format(m) + ' views' });
+        }
+      }
+    }
+    const best = new Map();
+    for (const a of out.sort((x, y) => y.at - x.at)) if (!best.has(a.k)) best.set(a.k, a);
+    return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
+  }
+
+  // the whole absence in one sentence, exact because the robot records the channel's own
+  // totals — and silent under half an hour, when "while you were away" is theatre
+  function ytAwayHeadHtml(list) {
+    if (!awaySince || Date.now() - awaySince < AWAY_MIN) return '';
+    const bits = [];
+    const chn = chanSeries();
+    const a = histAtOrBefore(chn, awaySince), b = chn[chn.length - 1];
+    if (a && b && a !== b) {
+      const dv = (b[2] || 0) - (a[2] || 0);
+      if (dv > 0) bits.push('<b>+' + fmt.format(dv) + ' channel views</b>');
+      const ds = (b[1] || 0) - (a[1] || 0);
+      if (ds) bits.push('<b>' + (ds > 0 ? '+' : '−') + fmt.format(Math.abs(ds)) + ' subscriber' + (Math.abs(ds) === 1 ? '' : 's') + '</b>');
+    }
+    const crossed = list.filter(x => x.at >= awaySince).length;
+    if (crossed) bits.push('<b>' + crossed + '</b> round number' + (crossed === 1 ? '' : 's') + ' crossed');
+    if (!bits.length) return '';
+    return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(awaySince).replace(' ago', '')) + '</b>): ' +
+      bits.join(' · ') + ' — exact, from the channel’s own recorded totals.</p>';
+  }
+
+  /* Two moments as plain lines: the biggest recorded hour (naming a carrier only when
+     one video genuinely carried ≥60% of it), and yesterday ranked among the full days
+     behind it — measured on the channel's real daily views. Today never ranks, because
+     it is not finished being a day; the rank abstains below three full days. */
+  function ytMomentsHtml() {
+    const rows = [];
+    const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
+    const label = from === awaySince ? 'Biggest hour while you were away' : 'Biggest hour of the last day';
+    const g = ytGainBuckets(from);
+    let bestAt = 0, best = null;
+    for (const [at, b] of g.hours) if (!best || b.gain > best.gain) { best = b; bestAt = at; }
+    if (best && best.gain >= 30) {
+      let carrier = '';
+      const top = [...best.byPost.entries()].sort((x, y) => y[1] - x[1])[0];
+      if (top && top[1] >= best.gain * 0.6) {
+        const cap = (videoTitle(top[0]) || '').trim();
+        if (cap && cap !== top[0]) carrier = ', mostly “' + esc(cap.slice(0, 34)) + '”';
+      }
+      rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
+        at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
+    }
+    const chn = chanSeries(), day = new Map();
+    for (let i = 1; i < chn.length; i++) {
+      if (chn[i][0] < Date.now() - ALERT_DAYS * 864e5) continue;
+      const d = (chn[i][2] || 0) - (chn[i - 1][2] || 0);
+      if (d <= 0) continue;   // a channel total that went backwards is a revision, not a day
+      const k = new Date(chn[i][0]).toLocaleDateString('en-CA');
+      day.set(k, (day.get(k) || 0) + d);
+    }
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
+    const done = [...day.entries()].filter(([k]) => k !== tk);
+    if (done.length >= 3 && day.has(yk)) {
+      const rank = done.filter(([, v]) => v > day.get(yk)).length + 1;
+      rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
+        (rank === 1 ? 'your best day' : ordinal(rank) + ' best of ' + done.length + ' recorded days'), at: '' });
+    }
+    if (!rows.length) return '';
+    return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
+      (r.at ? '<div class="at">' + esc(r.at) + '</div>' : '') + '</div>').join('');
+  }
+
+  function renderAway() {
+    const card = $('awayCard'), el = $('awayContent');
+    if (!card || !el) return;
+    if (!hist) { card.style.display = 'none'; return; }   // no recordings, no card — Trends explains the unlock
+    card.style.display = 'block';
+    const list = ytAway();
+    const accel = [...accelSet].filter(id => meta[id]);
+    let html = ytAwayHeadHtml(list);
+    if (accel.length) {
+      html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">⚡ ' +
+        accel.length + ' video' + (accel.length === 1 ? ' is' : 's are') + ' accelerating</b> — gaining at least ' +
+        '1.5× as fast as the day before, on at least 50 views a day. Tap one for its full breakdown.</p>' +
+        '<div class="chiprow" style="margin-bottom:10px">' +
+        accel.slice(0, 6).map(id => '<button type="button" class="chip chipv" data-vid="' + esc(id) + '">' +
+          (meta[id].thumb ? '<img alt="" loading="lazy" src="' + esc(meta[id].thumb) + '">' : '') +
+          esc((videoTitle(id) || '').slice(0, 34)) + '</button>').join('') + '</div>';
+    }
+    html += ytMomentsHtml();
+    if (!list.length) {
+      html += '<p class="dnote">Nothing has crossed a round number in the last ' + ALERT_DAYS +
+        ' days. This fills itself in from the snapshot robot’s recordings — it needs nothing open and nothing scheduled.</p>';
+      el.innerHTML = html;
+      return;
+    }
+    /* A video row opens its full breakdown, exactly like a table row — and wears its
+       thumbnail so you can see WHICH video without reading. Only a video the page has
+       metadata for is clickable (the drawer needs it); channel-level rows have nothing
+       to open and stay plain. Inbox rules apply only when this device knows when you
+       last looked: newer items wear a dot, older ones dim. */
+    const mark = awaySince != null;
+    html += list.map(a => {
+      const live = a.id && meta[a.id];
+      const fresh = mark && a.at >= awaySince;
+      const cls = 'alert' + (live ? ' open' : '') + (mark ? (fresh ? ' fresh' : ' seen') : '');
+      return '<div class="' + cls + '"' + (live ? ' role="button" tabindex="0" data-vid="' + esc(a.id) + '"' : '') + '>' +
+        (fresh ? '<span class="dot" title="New since you last looked"></span>' : '') +
+        (a.id && a.thumb ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.thumb) + '">' : '') +
+        '<div class="txt">' + a.t + '</div>' +
+        '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>';
+    }).join('');
+    el.innerHTML = html;
+    // wired once, delegated — renderAway replaces this innerHTML whenever history reloads
+    if (!el.dataset.wired) {
+      el.dataset.wired = '1';
+      const open = t => { const b = t && t.closest && t.closest('[data-vid]'); if (b) openDrawer(b.dataset.vid, b); };
+      el.addEventListener('click', e => open(e.target));
+      el.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const b = e.target && e.target.closest && e.target.closest('[data-vid]');
+        if (!b) return;
+        e.preventDefault();
+        openDrawer(b.dataset.vid, b);
+      });
+    }
   }
 
   // A 12-point trend line under each headline number, drawn from the snapshot robot's
@@ -649,6 +870,12 @@
     if (!videoIds.length) throw new Error('No public videos found.');
     $('tableLabel').textContent = 'Videos — tracking ' + videoIds.length + ' · tap a row for deep analytics';
     renderStatSparks(); // history may already be loaded; chanId is only known now
+    /* Read the away stamp HERE, before the first poll — the poll touches the stamp on
+       every tick, so reading it any later reads the touch, not the absence. That exact
+       ordering bug shipped in the first draft of this card: loadSeen sat in loadHistory,
+       the boot's first poll had already stamped "now", and every absence read as 30
+       seconds. The browser harness caught it; keep the read ahead of the first poll. */
+    loadSeen();
 
     setStatus('loading tags…');
     for (const part of chunk(videoIds, 50)) {
@@ -910,6 +1137,7 @@
     if ((paused || hiddenPaused) && !force) return;
     if (polling) return; // re-entrancy guard: overlapping polls double-count velocity/deltas
     polling = true;
+    touchSeen();   // the away stamp means "last HAD the page open", so it rides every poll
     setStatus('fetching…');
     try {
       const results = [];
@@ -1927,10 +2155,12 @@
           hbarList(rows2.sort((a, b) => b.val - a.val)));
       }
     }
-    if (histAlerts && histAlerts.length) {
-      html += section('Recent milestones', 'Detected automatically by the hourly snapshot job — it also opens a GitHub issue so you get a notification.',
-        histAlerts.slice(-5).reverse().map(a => '<p class="dnote" style="margin-bottom:6px">' + esc(new Date(a.ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })) + ' — ' + esc(a.text) + '</p>').join(''));
-    }
+    /* "Recent milestones" used to be re-printed here from the robot's alerts.json —
+       plain text, not clickable, and blind to anything the alert job missed. The
+       "While you were away" card in the Now room replaced it: same crossings computed
+       from the recordings themselves, with thumbnails, tap-through, and an absence-
+       sized headline. The robot still opens GitHub issues for milestones, so the
+       notification half of the old feature lives on. */
     if (histRanks && Object.keys(histRanks).length) {
       let rr = '';
       for (const [kw, arr] of Object.entries(histRanks)) {

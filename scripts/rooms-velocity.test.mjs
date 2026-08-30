@@ -439,6 +439,61 @@ console.log('\nwhile you were away');
     /title="New since you last looked"/.test(ra));
 }
 
+/* The YouTube page carries the same card, on richer recordings — and it REPLACED the old
+   "Recent milestones" list (alerts.json re-printed: not clickable, not sized to an
+   absence, blind to anything the alert job missed). */
+console.log('\nwhile you were away — the YouTube mirror');
+{
+  check('the card exists in the Now room', /id="awayCard"/.test(YT) && /id="awayContent"/.test(YT));
+  check('it only shows once the robot\'s history exists',
+    /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(YT));
+  check('the old Recent milestones list is gone, and alerts.json is no longer fetched',
+    !/section\('Recent milestones'/.test(YT) && !/histAlerts/.test(YT));
+
+  /* The stamp. Same semantics as TikTok's — and the read must come BEFORE the boot's
+     first poll, because the poll touches the stamp on every tick. The first draft read
+     it after (in loadHistory), so the boot's own poll stamped "now" first and every
+     absence measured ~30 seconds; the browser harness caught it. */
+  check('the away stamp is per-channel and refused when from the future',
+    /'yt_seen:' \+ \(chanId \|\| ''\)/.test(YT) && /v > 0 && v < Date\.now\(\) \? v : null/.test(YT));
+  check('the stamp is read before the boot\'s first poll can touch it',
+    YT.indexOf('loadSeen();') > 0 && YT.indexOf('loadSeen();') < YT.indexOf('await poll();'));
+  check('and touched on every poll thereafter', /polling = true;\s*\n\s*touchSeen\(\);/.test(YT));
+
+  /* The feed: crossings between two recorded samples only, same ladder as the milestone
+     party, one line per subject, video rows tappable with their thumbnails. */
+  const feed = YT.slice(YT.indexOf('function ytAway()'), YT.indexOf('\n  }\n', YT.indexOf('function ytAway()')));
+  check('crossings come from consecutive recorded samples', /ladder\(chn\[i - 1\]\[1\] \|\| 0, chn\[i\]\[1\] \|\| 0\)/.test(feed));
+  check('small rungs are not news — 100 for a video, 1,000 for channel views',
+    /if \(m < 100\) continue;/.test(feed) && /if \(m < 1000\) continue;/.test(feed));
+  check('one line per subject, capped at eight',
+    /if \(!best\.has\(a\.k\)\) best\.set\(a\.k, a\);/.test(feed) && /\.slice\(0, 8\)/.test(feed));
+  const rw = YT.slice(YT.indexOf('function renderAway()'), YT.indexOf('\n  }\n', YT.indexOf('function renderAway()')));
+  check('a video row is clickable only when the drawer can actually open it',
+    /const live = a\.id && meta\[a\.id\];/.test(rw));
+  check('rows and chips open the same full-breakdown drawer', /openDrawer\(b\.dataset\.vid, b\)/.test(rw));
+  check('rows are real keyboard buttons and the handler is wired once',
+    /role="button" tabindex="0" data-vid="/.test(rw) && /el\.dataset\.wired/.test(rw));
+
+  /* The richer half: the headline is EXACT (the robot records the channel's own totals),
+     and yesterday is ranked on the channel's real daily views. */
+  const head = YT.slice(YT.indexOf('function ytAwayHeadHtml('), YT.indexOf('\n  }\n', YT.indexOf('function ytAwayHeadHtml(')));
+  check('the headline subtracts two real channel readings',
+    /\(b\[2\] \|\| 0\) - \(a\[2\] \|\| 0\)/.test(head) && /histAtOrBefore\(chn, awaySince\)/.test(head));
+  check('a subscriber drop shows signed, not clamped', /ds > 0 \? '\+' : '−'/.test(head));
+  check('and it stays silent for a short absence or an empty one',
+    /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
+  const mom = YT.slice(YT.indexOf('function ytMomentsHtml('), YT.indexOf('\n  }\n', YT.indexOf('function ytMomentsHtml(')));
+  check('the biggest hour needs a real gain and a genuine carrier',
+    /best\.gain >= 30/.test(mom) && /top\[1\] >= best\.gain \* 0\.6/.test(mom));
+  check('yesterday ranks on channel days, today never ranks, and thin data abstains',
+    /\.filter\(\(\[k\]\) => k !== tk\)/.test(mom) && /done\.length >= 3/.test(mom));
+  check('a count that went backwards does not vote',
+    /if \(d <= 0\) continue;/.test(YT.slice(YT.indexOf('function ytGainBuckets('), YT.indexOf('\n  }\n', YT.indexOf('function ytGainBuckets(')))));
+  check('the feed styles exist in the shared stylesheet, with landscape thumbs',
+    /#awayContent \.alert \.acover \{ width:44px; height:25px;/.test(CSS));
+}
+
 console.log('\nhashtags ranked by what they returned');
 {
   const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
