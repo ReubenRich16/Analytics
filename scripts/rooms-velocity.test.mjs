@@ -271,6 +271,8 @@ console.log('\nTikTok view velocity');
   const fn = new Function('$', 'fmt', 'document', 'videos', 'state', `
     let { perPost, velHistory, velSession, velStart } = state;
     const MAX_BARS = 60;
+    let velBackfilled = 0;              // the reload-resume additions ride the same render
+    const saveVel = () => {};
     ${body}
     renderVelocity();
     return { perPost, velHistory, velSession, velStart };
@@ -327,8 +329,8 @@ console.log('\nTikTok view velocity');
   check('the table still opens on newest, not on a delta that is zero on the first poll',
     /let tableSort = \{ key: 'newest'/.test(TT),
     'a delta default reshuffles the whole table on the second poll');
-  check('and the footnote says the counters are per-tab and never go backwards',
-    /reset when you reload/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
+  check('and the footnote says the counters resume and never go backwards',
+    /survive a quick reload/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
 
   for (const [src, page] of [[YT, 'index.html'], [TT, 'tiktok.html']]) {
     check(page + ' hides the per-minute rate until the session is half a minute old',
@@ -392,13 +394,184 @@ console.log('\nwhile you were away');
     /const best = new Map\(\);[\s\S]{0,200}if \(!best\.has\(a\.k\)\) best\.set\(a\.k, a\);/.test(feed));
   check('every entry carries the subject it is about', (feed.match(/out\.push\(\{ k: /g) || []).length === 3,
     (feed.match(/out\.push\(\{ k: /g) || []).length + ' of 3');
+
+  /* A post in the feed is a thing you can LOOK AT, not just a caption: it wears its cover
+     and opens the same per-post drawer a table row does. Only a post still in TikTok's
+     60-post window is clickable — the drawer needs the live post, and a row that does
+     nothing when tapped is worse than a plain one. Account-level rows have no post. */
+  const ra = TT.slice(TT.indexOf('function renderAlerts()'), TT.indexOf('\n  }\n', TT.indexOf('function renderAlerts()')));
+  check('a post entry carries its id and cover for the feed',
+    /out\.push\(\{ k: 'v:' \+ id, id, cover,/.test(feed));
+  check('the cover comes from the recording, with the live list as fallback',
+    /\(rec && rec\.cover\) \|\| \(live && live\.cover_image_url\)/.test(feed));
+  check('a row is clickable only while the post is still in the 60-post window',
+    /videos\.some\(x => x\.id === a\.id\)/.test(ra));
+  check('a clickable row is a real button to the keyboard',
+    /role="button" tabindex="0" data-vid="/.test(ra) && /e\.key !== 'Enter' && e\.key !== ' '/.test(ra));
+  check('clicking opens the same drawer as a table row', /ttdOpen\(b\.dataset\.vid, b\)/.test(ra));
+  check('the handler is delegated and wired once', /el\.dataset\.wired/.test(ra));
+  check('the accelerating chips open the drawer too, wearing a thumbnail',
+    /class="chip chipv" data-vid="/.test(ra) && /<img alt="" loading="lazy" src="' \+ esc\(v\.cover_image_url\)/.test(ra));
+  check('ids and covers are escaped on the way into markup',
+    /data-vid="' \+ esc\(a\.id\)/.test(ra) && /src="' \+ esc\(a\.cover\)/.test(ra));
+  check('the card copy says rows are tappable', /Tap any post to open its full breakdown/.test(TT));
+
+  /* "While you were away" now means it: a per-device, per-account stamp of the last time
+     the page was open sizes the headline, puts a dot on the new, and dims the seen. */
+  check('the away stamp is read at boot and touched on every poll',
+    /loadSeen\(\);/.test(TT) && /pollCount\+\+;\s*\n\s*touchSeen\(\);/.test(TT));
+  check('the stamp is per-account and deliberately not synced or exported',
+    /'tt_seen:' \+ \(\(me && me\.open_id\) \|\| ''\)/.test(TT) &&
+    !/TT_PREFS = \[[^\]]*tt_seen/.test(TT));
+  check('a stamp from the future is refused rather than trusted',
+    /v > 0 && v < Date\.now\(\) \? v : null/.test(TT));
+  const gb = TT.slice(TT.indexOf('function ttGainBuckets('), TT.indexOf('\n  }\n', TT.indexOf('function ttGainBuckets(')));
+  check('a count that went backwards does not vote in the gain buckets', /if \(d <= 0\) continue;/.test(gb));
+  const head = TT.slice(TT.indexOf('function ttAwayHeadHtml('), TT.indexOf('\n  }\n', TT.indexOf('function ttAwayHeadHtml(')));
+  check('the headline only appears for a real absence, and says nothing over guessing',
+    /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
+  check('a follower drop is shown signed, not clamped', /df > 0 \? '\+' : '−'/.test(head));
+  const mom = TT.slice(TT.indexOf('function ttMomentsHtml('), TT.indexOf('\n  }\n', TT.indexOf('function ttMomentsHtml(')));
+  check('the biggest hour needs a real gain behind it', /best\.gain >= 30/.test(mom));
+  check('and only names a carrier post that actually carried it', /top\[1\] >= best\.gain \* 0\.6/.test(mom));
+  check('today never ranks — it is not finished being a day', /\.filter\(\(\[k\]\) => k !== tk\)/.test(mom));
+  check('the yesterday rank abstains below three full days', /done\.length >= 3/.test(mom));
+  check('new items wear a dot and seen ones dim, only when this device knows',
+    /const mark = awaySince != null;/.test(ra) && /fresh \? ' fresh' : ' seen'/.test(ra) &&
+    /title="New since you last looked"/.test(ra));
+}
+
+/* The YouTube page carries the same card, on richer recordings — and it REPLACED the old
+   "Recent milestones" list (alerts.json re-printed: not clickable, not sized to an
+   absence, blind to anything the alert job missed). */
+console.log('\nwhile you were away — the YouTube mirror');
+{
+  check('the card exists in the Now room', /id="awayCard"/.test(YT) && /id="awayContent"/.test(YT));
+  check('it only shows once the robot\'s history exists',
+    /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(YT));
+  check('the old Recent milestones list is gone, and alerts.json is no longer fetched',
+    !/section\('Recent milestones'/.test(YT) && !/histAlerts/.test(YT));
+
+  /* The stamp. Same semantics as TikTok's — and the read must come BEFORE the boot's
+     first poll, because the poll touches the stamp on every tick. The first draft read
+     it after (in loadHistory), so the boot's own poll stamped "now" first and every
+     absence measured ~30 seconds; the browser harness caught it. */
+  check('the away stamp is per-channel and refused when from the future',
+    /'yt_seen:' \+ \(chanId \|\| ''\)/.test(YT) && /v > 0 && v < Date\.now\(\) \? v : null/.test(YT));
+  check('the stamp is read before the boot\'s first poll can touch it',
+    YT.indexOf('loadSeen();') > 0 && YT.indexOf('loadSeen();') < YT.indexOf('await poll();'));
+  check('and touched on every poll thereafter', /polling = true;\s*\n\s*touchSeen\(\);/.test(YT));
+
+  /* The feed: crossings between two recorded samples only, same ladder as the milestone
+     party, one line per subject, video rows tappable with their thumbnails. */
+  const feed = YT.slice(YT.indexOf('function ytAway()'), YT.indexOf('\n  }\n', YT.indexOf('function ytAway()')));
+  check('crossings come from consecutive recorded samples', /ladder\(chn\[i - 1\]\[1\] \|\| 0, chn\[i\]\[1\] \|\| 0\)/.test(feed));
+  check('small rungs are not news — 100 for a video, 1,000 for channel views',
+    /if \(m < 100\) continue;/.test(feed) && /if \(m < 1000\) continue;/.test(feed));
+  check('one line per subject, capped at eight',
+    /if \(!best\.has\(a\.k\)\) best\.set\(a\.k, a\);/.test(feed) && /\.slice\(0, 8\)/.test(feed));
+  const rw = YT.slice(YT.indexOf('function renderAway()'), YT.indexOf('\n  }\n', YT.indexOf('function renderAway()')));
+  check('a video row is clickable only when the drawer can actually open it',
+    /const live = a\.id && meta\[a\.id\];/.test(rw));
+  check('rows and chips open the same full-breakdown drawer', /openDrawer\(b\.dataset\.vid, b\)/.test(rw));
+  check('rows are real keyboard buttons and the handler is wired once',
+    /role="button" tabindex="0" data-vid="/.test(rw) && /el\.dataset\.wired/.test(rw));
+
+  /* The richer half: the headline is EXACT (the robot records the channel's own totals),
+     and yesterday is ranked on the channel's real daily views. */
+  const head = YT.slice(YT.indexOf('function ytAwayHeadHtml('), YT.indexOf('\n  }\n', YT.indexOf('function ytAwayHeadHtml(')));
+  check('the headline subtracts two real channel readings',
+    /\(b\[2\] \|\| 0\) - \(a\[2\] \|\| 0\)/.test(head) && /histAtOrBefore\(chn, awaySince\)/.test(head));
+  check('a subscriber drop shows signed, not clamped', /ds > 0 \? '\+' : '−'/.test(head));
+  check('and it stays silent for a short absence or an empty one',
+    /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
+  const mom = YT.slice(YT.indexOf('function ytMomentsHtml('), YT.indexOf('\n  }\n', YT.indexOf('function ytMomentsHtml(')));
+  check('the biggest hour needs a real gain and a genuine carrier',
+    /best\.gain >= 30/.test(mom) && /top\[1\] >= best\.gain \* 0\.6/.test(mom));
+  check('yesterday ranks on channel days, today never ranks, and thin data abstains',
+    /\.filter\(\(\[k\]\) => k !== tk\)/.test(mom) && /done\.length >= 3/.test(mom));
+  check('a count that went backwards does not vote',
+    /if \(d <= 0\) continue;/.test(YT.slice(YT.indexOf('function ytGainBuckets('), YT.indexOf('\n  }\n', YT.indexOf('function ytGainBuckets(')))));
+  check('the feed styles exist in the shared stylesheet, with landscape thumbs',
+    /#awayContent \.alert \.acover \{ width:44px; height:25px;/.test(CSS));
+}
+
+/* The velocity card across a browser reload: a quick reload RESUMES (strip, session,
+   and the diffing baseline, so the gap is counted rather than dropped), a longer gap
+   backfills the strip, faded, from minute-resolution recordings only. */
+console.log('\nvelocity survives a reload');
+{
+  for (const [page, src, key] of [['YouTube', YT, 'yt_vel'], ['TikTok', TT, 'tt_vel']]) {
+    check(page + ' — saved per account under its own key', new RegExp("'" + key + ":' \\+").test(src));
+    check(page + ' — a quick reload resumes; a long gap does not', /VEL_RESUME = 30 \* 60e3/.test(src) &&
+      /Date\.now\(\) - saved\.at <= VEL_RESUME/.test(src));
+    check(page + ' — backfill only trusts minute-resolution samples',
+      page === 'YouTube' ? /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2\) continue;/.test(src)
+                         : /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2 \* 60e3\) continue;/.test(src));
+    check(page + ' — the silent lead-in is trimmed, not shown as a wall of zeros',
+      /while \(s < bars\.length && bars\[s\] === 0\) s\+\+;/.test(src));
+    check(page + ' — backfilled bars are faded and say what they are',
+      /\(back \? ' back' : ''\)/.test(src) && /recorded before this tab opened/.test(src));
+    check(page + ' — faded bars age out of the left edge',
+      /if \(velBackfilled > 0\) velBackfilled--;/.test(src));
+  }
+  /* The bug the harness caught: restoring the session baseline WITHOUT the per-video
+     baseline made every video read as "first seen mid-session" on the first post-reload
+     tick, and the newly-seen compensation added the whole catalogue's lifetime counts to
+     the session baseline — the session line showed minus-everything. */
+  check('YouTube — the per-video baseline is saved and restored with the session',
+    /perVideo: Object\.fromEntries/.test(YT) && /for \(const \[id, p\] of Object\.entries\(saved\.perVideo \|\| \{\}\)\) perVideo\[id\] = \{ \.\.\.p, tickV: 0 \};/.test(YT));
+  check('TikTok — likewise for its per-post baseline',
+    /perPost: Object\.fromEntries/.test(TT) && /for \(const \[id, p\] of Object\.entries\(saved\.perPost \|\| \{\}\)\) perPost\[id\] = \{ \.\.\.p, tickV: 0 \};/.test(TT));
+  check('YouTube — the save happens after the baseline advances',
+    /prevTotals = totals;\s*\n\s*saveVel\(\);/.test(YT));
+  check('YouTube — a poll before the video list exists refuses to tick',
+    /if \(!videoIds\.length\) return;/.test(YT));
+  check('YouTube — the strip paints backfill even before a first diff exists',
+    /if \(history\.length\) \{\s*\n\s*const wrap = \$\('bars'\)/.test(YT));
+  check('TikTok — a cold-open backfill starts the session at zero, honestly',
+    /velSession = \{ views: 0, likes: 0, comments: 0, shares: 0 \};\s*\/\/ nothing watched yet/.test(TT));
+  check('the faded-bar style exists once, in the shared stylesheet',
+    /\.bars \.bar\.back \{ opacity:\.38; \}/.test(CSS));
+  check('TikTok — the footnote no longer claims a reload resets the counts',
+    !/reset when you reload/.test(TT) && /survive a quick reload/.test(TT));
+}
+
+/* Recorded trends — the daily series, follower history and arrival clock TikTok never
+   provides, built entirely from the Worker's recordings. The old rationale for having
+   no Trends room ("it publishes no daily series of its own") stopped being a rationale
+   the day the recordings outgrew the three-day window. */
+console.log('\nrecorded trends — the charts TikTok never provides');
+{
+  check('the card lives in the Account room, revealed at sign-in',
+    /id="recTrendsCard"/.test(TT) && /'breakdownCard', 'recTrendsCard'/.test(TT));
+  const rt = TT.slice(TT.indexOf('function renderRecTrends('), TT.indexOf('\n  }\n', TT.indexOf('const rr = $(\'recRange\')')));
+  check('it only shows once the recordings exist',
+    /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(rt));
+  check('today never joins a week — it is not finished being a day',
+    /\.filter\(k => k !== tk\)/.test(rt));
+  check('weeks say how many recorded days they rest on', /recorded day/.test(rt));
+  check('week-vs-week only speaks with five recorded days on each side',
+    /last7\.length >= 5 && prev7\.length >= 5/.test(rt));
+  check('the follower delta is exact between snapshots, over its stated span',
+    /exact, between two snapshots/.test(rt) && /'Followers, ' \+ fSpanD/.test(rt));
+  check('a recording younger than a week answers over its own span instead of abstaining',
+    /\|\| \(f\.length > 1 \? f\[0\] : null\)/.test(rt));
+  check('the views-per-day chart admits a missing day is a gap, not a zero',
+    /A missing day is a gap in the recording, not a zero/.test(rt));
+  check('the arrival clock is the viewer\'s own, and says so',
+    /getHours\(\)/.test(rt) && /your own local time/.test(rt));
+  check('and points at the Coach for the when-to-post question, not itself',
+    /the Coach room answers when to post/.test(rt));
+  check('follower history offers 30 / 90 / All', /\[30, 90, 0\]\.map/.test(rt));
+  check('the card renders on the poll chain', /renderBreakdown\(\); renderRecTrends\(\);/.test(TT));
 }
 
 console.log('\nhashtags ranked by what they returned');
 {
   const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
   check('the card exists and has a room', /id="tagsCard"/.test(TT) && /id="tagsContent"/.test(TT));
-  check('and is revealed at sign-in', /'breakdownCard', 'tagsCard', 'coachCard'/.test(TT));
+  check('and is revealed at sign-in', /'recTrendsCard', 'tagsCard', 'coachCard'/.test(TT));
   /* Frequency ranks your habits; reach ranks your results. A tag on two hits should beat
      a tag spread across ten quiet ones, which is the whole reason this is not a chip row
      sorted by count. */
@@ -414,7 +587,7 @@ console.log('\nhashtags ranked by what they returned');
   check('truncation is admitted rather than silent', /rated\.length > 10/.test(body));
   check('the thinner unranked copy in Coach is gone, not left above it',
     !/Hashtags to lean into/.test(TT), 'saying it twice let the weaker half win by being higher up');
-  check('it repaints on the poll', /renderBreakdown\(\); renderTags\(\);/.test(TT));
+  check('it repaints on the poll', /renderRecTrends\(\); renderTags\(\);/.test(TT));
   check('and a caption cannot inject markup through a tag', /esc\(t\)/.test(body));
 }
 

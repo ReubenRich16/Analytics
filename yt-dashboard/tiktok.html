@@ -24,6 +24,22 @@
   #alertsContent .alert .txt { min-width:0; }
   #alertsContent .alert .at { margin-left:auto; flex:none; font-family:var(--f-mono);
     font-size:11px; color:var(--muted); white-space:nowrap; }
+  /* a post row wears its cover and opens the drawer — same affordance as the table rows */
+  #alertsContent .alert .acover { width:26px; height:34px; border-radius:6px; object-fit:cover;
+    flex:none; align-self:center; background:var(--panel-2); }
+  #alertsContent .alert.open { cursor:pointer; }
+  #alertsContent .alert.open:hover .txt, #alertsContent .alert.open:focus-visible .txt { color:var(--text); }
+  #alertsContent .alert.open:focus-visible { outline:1px solid var(--muted); outline-offset:2px; border-radius:8px; }
+  #alertsContent .chip.chipv { display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    font:inherit; font-size:11px; color:var(--text); }
+  #alertsContent .chip.chipv img { width:16px; height:22px; border-radius:4px; object-fit:cover; }
+  #alertsContent .chip.chipv:hover { border-color:var(--muted); }
+  /* inbox rules: new-since-last-look wears a dot, already-seen dims */
+  #alertsContent .alert.seen { opacity:.55; }
+  #alertsContent .alert .dot { width:6px; height:6px; border-radius:50%; background:var(--accent);
+    flex:none; align-self:center; }
+  #alertsContent .alert.moment .txt { color:var(--text); }
+  #alertsContent .awayhead { margin-bottom:10px; }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
@@ -174,7 +190,7 @@
 
   <div class="card" id="alertsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
-    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open.</p>
+    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open. <b>Tap any post to open its full breakdown.</b></p>
     <div id="alertsContent"><p class="dnote">checking…</p></div>
   </div>
 
@@ -237,7 +253,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session are counted live in this tab and reset when you reload; a post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
+    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session survive a quick reload — within 30 minutes the session resumes and the gap is counted; longer away, a fresh session starts and the velocity strip backfills, faded, from your Worker's recordings. A post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
   </div>
   </div>
 
@@ -249,6 +265,13 @@
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
     <p class="explain" style="margin-top:8px">Totals and per-post averages across every post the API returns.</p>
     <div id="breakdownContent"><p class="dnote">compiling…</p></div>
+  </div>
+
+  <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings -->
+  <div class="card" id="recTrendsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Trends — from your own recordings</div>
+    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from what your Worker recorded: nothing fetched, nothing guessed, and a gap in the recording stays a gap.</p>
+    <div id="recTrendsContent"><p class="dnote">compiling…</p></div>
   </div>
 
   </div>
@@ -1242,6 +1265,7 @@
     me = await api('/tiktok/me');
     // before any history is pulled: this is what decides whose store we are adding to
     loadHist(me && me.open_id);
+    loadSeen();   // reads when this device last had the page open, then stamps now
     $('ttAvatar').src = me.avatar_url || '';
     $('ttName').textContent = me.display_name || me.username || 'TikTok';
     $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
@@ -1249,7 +1273,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1259,6 +1283,7 @@
     await ttSyncPull();
     await pullHistory();
     await pullLaunches();
+    restoreVel();   // resume a quick reload, or backfill the strip from the recordings
     intervalMs = +$('interval').value;
     await poll();
     if (timer) clearInterval(timer);
@@ -1270,6 +1295,69 @@
      Every number here is a sum of per-post positive deltas over posts present in BOTH the
      previous reading and this one. Anything else would be measuring the API's window, not
      the account: see the note on perPost above. */
+  /* Reload used to zero this card. Now a quick reload RESUMES: the strip, the session
+     totals and the per-post baseline are saved on every tick, so the first poll after a
+     reload diffs against the last saved reading and the seconds in between are counted
+     rather than dropped. A longer gap starts a fresh session — a three-day-old "session"
+     is not a session, and the away card above tells that story — but the strip still
+     BACKFILLS from the Worker's recordings, faded, so a cold open is never a blank graph.
+
+     Backfill only trusts minute-resolution samples. A pair of readings five minutes or an
+     hour apart says nothing about any single minute, and smearing it across bars would be
+     interpolation, which this page never does — so cold posts simply contribute nothing
+     to the backfill, and that is the truth of what was recorded. */
+  const VEL_RESUME = 30 * 60e3;
+  const velKey = () => 'tt_vel:' + ((me && me.open_id) || '');
+  let velBackfilled = 0;                 // leading bars that are recordings, not watching
+  function saveVel() {
+    if (!me || !me.open_id || !velSession) return;
+    try {
+      localStorage.setItem(velKey(), JSON.stringify({
+        at: Date.now(), start: velStart, session: velSession,
+        bars: velHistory.slice(-MAX_BARS), back: velBackfilled,
+        perPost: Object.fromEntries(Object.entries(perPost).map(([id, p]) =>
+          [id, { views: p.views, likes: p.likes, comments: p.comments, shares: p.shares, sessV: p.sessV || 0 }]))
+      }));
+    } catch (e) {}
+  }
+  function backfillBars() {
+    const now = Date.now(), bars = new Array(MAX_BARS).fill(0);
+    let any = false;
+    for (const rec of Object.values((hist && hist.videos) || {})) {
+      const arr = (rec && rec.s) || [];
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] - arr[i - 1][0] > 2 * 60e3) continue;   // not minute data — no vote
+        const slot = Math.floor((now - arr[i][0]) / 60e3);
+        if (slot < 0 || slot >= MAX_BARS) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d > 0) { bars[MAX_BARS - 1 - slot] += d; any = true; }
+      }
+    }
+    if (!any) return [];
+    let s = 0; while (s < bars.length && bars[s] === 0) s++;   // drop the silent lead-in
+    return bars.slice(s);
+  }
+  function restoreVel() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(velKey()) || 'null'); } catch (e) {}
+    if (saved && Array.isArray(saved.bars) && saved.session && Date.now() - saved.at <= VEL_RESUME) {
+      velHistory = saved.bars.map(Number).filter(v => isFinite(v));
+      velBackfilled = Math.max(0, Math.min(+saved.back || 0, velHistory.length));
+      velSession = saved.session;
+      velStart = +saved.start || Date.now();
+      perPost = {};
+      for (const [id, p] of Object.entries(saved.perPost || {})) perPost[id] = { ...p, tickV: 0 };
+      return;   // the first poll now diffs across the reload gap instead of dropping it
+    }
+    const bars = backfillBars();
+    if (bars.length) {
+      velHistory = bars;
+      velBackfilled = bars.length;
+      velSession = { views: 0, likes: 0, comments: 0, shares: 0 };   // nothing watched yet
+      velStart = Date.now();
+    }
+  }
+
   function renderVelocity() {
     const seen = {};
     let tick = 0;
@@ -1298,16 +1386,20 @@
     if (first) { velSession = { views: 0, likes: 0, comments: 0, shares: 0 }; velStart = Date.now(); return; }
     for (const k of ['views', 'likes', 'comments', 'shares']) velSession[k] += step[k];
     velHistory.push(tick);
-    if (velHistory.length > MAX_BARS) velHistory.shift();
+    if (velHistory.length > MAX_BARS) {
+      velHistory.shift();
+      if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
+    }
     const wrap = $('bars');
     if (wrap) {
       wrap.innerHTML = '';
       const max = Math.max(1, ...velHistory);
-      velHistory.forEach(v => {
+      velHistory.forEach((v, i) => {
+        const back = i < velBackfilled;
         const b = document.createElement('div');
-        b.className = 'bar' + (v === 0 ? ' zero' : '');
+        b.className = 'bar' + (v === 0 ? ' zero' : '') + (back ? ' back' : '');
         b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
-        b.title = '+' + fmt.format(v) + ' views';
+        b.title = '+' + fmt.format(v) + ' views' + (back ? ' — recorded before this tab opened' : '');
         wrap.appendChild(b);
       });
     }
@@ -1315,6 +1407,7 @@
     $('sessionText').innerHTML = 'session: <b>+' + fmt.format(velSession.views) + '</b> views · <b>+' +
       fmt.format(velSession.likes) + '</b> likes · <b>+' + fmt.format(velSession.comments) + '</b> comments · <b>+' +
       fmt.format(velSession.shares) + '</b> shares · ' + Math.round(mins) + 'm';
+    saveVel();   // every tick, so a reload resumes from the last reading
     // Not before half a minute of session. `mins` is floored at one second, so the very
     // first refresh divides a real gain by 1/60 of a minute and prints a rate in the
     // thousands — a number that is arithmetically correct and describes nothing.
@@ -1354,11 +1447,12 @@
       // re-pull the Worker's recordings periodically so the minute chart keeps growing
       // while a launch is live, not only when Refresh is pressed
       pollCount++;
+      touchSeen();   // the stamp means "last had the page open", so it rides every poll
       if (pollCount % 3 === 0) await pullHistory();
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
       buildAccel();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
+      renderTable(); showSlot(slotIdx); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
@@ -2990,6 +3084,56 @@
   const ALERT_DAYS = 14;         // how far back the feed looks
   let accelSet = new Set();
 
+  /* "While you were away" now means it. A per-device, per-account stamp of the last time
+     this page was open (touched on every poll, so it reads "last had it open", not "last
+     opened it"). Everything in the card is sized against it: the headline sums the gap,
+     items newer than it wear a dot, older ones dim. Absent — first visit on this device,
+     cleared storage — the card simply falls back to its 14-day window with no dots, which
+     is honest: this device genuinely doesn't know when you last looked. The stamp is
+     deliberately not synced or exported; "when did I last look on THIS device" is the
+     question, and another device's answer would be a lie here. */
+  let awaySince = null;
+  const seenKey = () => 'tt_seen:' + ((me && me.open_id) || '');
+  function touchSeen() {
+    if (!me || !me.open_id) return;
+    try { localStorage.setItem(seenKey(), String(Date.now())); } catch (e) {}
+  }
+  function loadSeen() {
+    if (!me || !me.open_id) return;
+    try {
+      const v = +localStorage.getItem(seenKey());
+      awaySince = v > 0 && v < Date.now() ? v : null;
+    } catch (e) { awaySince = null; }
+    touchSeen();
+  }
+
+  /* Positive recorded view-gains, bucketed by local hour, across every post's recording
+     inside [from, now]. One pass serves three readers: the away headline (total), the
+     biggest-hour line (max bucket, with the post that carried it), and the yesterday
+     line (buckets rolled up by local day). Negative deltas are TikTok revising a count —
+     recorded, not viewership — and don't vote, same rule as everywhere else. */
+  function ttGainBuckets(from) {
+    const vids = (hist && hist.videos) || {};
+    const now = Date.now();
+    const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
+    let total = 0;
+    for (const [id, rec] of Object.entries(vids)) {
+      const arr = (rec && rec.s) || [];
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i][0] < from || arr[i][0] > now) continue;
+        const d = arr[i][1] - arr[i - 1][1];
+        if (d <= 0) continue;
+        total += d;
+        const h = new Date(arr[i][0]); h.setMinutes(0, 0, 0);
+        const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
+        b.gain += d;
+        b.byPost.set(id, (b.byPost.get(id) || 0) + d);
+        hours.set(h.getTime(), b);
+      }
+    }
+    return { total, hours };
+  }
+
   /* Accelerating: gaining meaningfully faster than it was a day ago. The absolute floor
      matters more than the ratio — three views yesterday and five today is a 67% rise and
      means nothing, and a small account produces a great many of those. */
@@ -3030,12 +3174,16 @@
     const vids = (hist && hist.videos) || {};
     for (const [id, rec] of Object.entries(vids)) {
       const arr = (rec && rec.s) || [];
-      const cap = ((rec && rec.title) || '').trim() || (videos.find(x => x.id === id) ? capOf(videos.find(x => x.id === id)) : '');
+      const live = videos.find(x => x.id === id);
+      const cap = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
+      // the cover rides along so the feed can show WHICH post at a glance — the Worker
+      // records it, and the live list is the fallback for anything it missed
+      const cover = (rec && rec.cover) || (live && live.cover_image_url) || '';
       for (let i = 1; i < arr.length; i++) {
         if (arr[i][0] < since) continue;
         for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
           if (m < 100) continue;   // the first hundred views is not news
-          out.push({ k: 'v:' + id, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
+          out.push({ k: 'v:' + id, id, cover, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
         }
       }
     }
@@ -3048,28 +3196,245 @@
     return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
+  /* The headline: the whole absence in one sentence, so the card answers before it
+     itemises. Only when the away stamp exists and the absence is long enough to be one —
+     under half an hour "while you were away" is theatre, and the feed below already
+     covers it. Views are what the recordings saw (a post's first sample inside the window
+     counts from that sample), followers come from the account snapshots, and both say
+     nothing rather than guessing when the Worker holds no data for the stretch. */
+  const AWAY_MIN = 30 * 60e3;
+  function ttAwayHeadHtml(list) {
+    if (!awaySince || Date.now() - awaySince < AWAY_MIN) return '';
+    const bits = [];
+    const g = ttGainBuckets(awaySince);
+    if (g.total > 0) bits.push('<b>+' + fmt.format(g.total) + ' views</b> recorded across your posts');
+    const f = fseries();
+    const a = ATB(f, awaySince), b = f[f.length - 1];
+    if (a && b && a !== b) {
+      const df = (b[1] || 0) - (a[1] || 0);
+      if (df) bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
+    }
+    const crossed = list.filter(x => x.at >= awaySince).length;
+    if (crossed) bits.push('<b>' + crossed + '</b> round number' + (crossed === 1 ? '' : 's') + ' crossed');
+    if (!bits.length) return '';
+    return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(awaySince).replace(' ago', '')) + '</b>): ' +
+      bits.join(' · ') + '.</p>';
+  }
+
+  /* Two moments, told as plain lines: the biggest recorded hour, and how yesterday placed
+     among the days behind it. Each abstains rather than stretching: the hour needs a real
+     gain behind it, the ranking needs a few full days, and today never ranks because it
+     is not finished being a day yet. */
+  function ttMomentsHtml() {
+    const rows = [];
+    const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
+    const label = from === awaySince ? 'Biggest hour while you were away' : 'Biggest hour of the last day';
+    const g = ttGainBuckets(from);
+    let bestAt = 0, best = null;
+    for (const [at, b] of g.hours) if (!best || b.gain > best.gain) { best = b; bestAt = at; }
+    if (best && best.gain >= 30) {
+      let carrier = '';
+      const top = [...best.byPost.entries()].sort((x, y) => y[1] - x[1])[0];
+      if (top && top[1] >= best.gain * 0.6) {
+        const rec = (hist && hist.videos && hist.videos[top[0]]) || null;
+        const live = videos.find(x => x.id === top[0]);
+        const cap = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
+        if (cap) carrier = ', mostly “' + esc(cap.slice(0, 34)) + '”';
+      }
+      rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
+        at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
+    }
+    // yesterday, ranked among the full local days the recordings cover
+    const day = new Map();
+    for (const [at, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+      const k = new Date(at).toLocaleDateString('en-CA');
+      day.set(k, (day.get(k) || 0) + b.gain);
+    }
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
+    const done = [...day.entries()].filter(([k]) => k !== tk);
+    if (done.length >= 3 && day.has(yk)) {
+      const rank = done.filter(([, v]) => v > day.get(yk)).length + 1;
+      rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
+        (rank === 1 ? 'your best day' : ordinal(rank) + ' best of ' + done.length + ' recorded days'), at: '' });
+    }
+    if (!rows.length) return '';
+    return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
+      (r.at ? '<div class="at">' + esc(r.at) + '</div>' : '') + '</div>').join('');
+  }
+
   function renderAlerts() {
     const el = $('alertsContent');
     if (!el) return;
     const list = ttAlerts();
     const accel = [...accelSet].map(id => videos.find(x => x.id === id)).filter(Boolean);
-    let html = '';
+    let html = ttAwayHeadHtml(list);
     if (accel.length) {
       html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
         accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' accelerating</b> \u2014 gaining at least ' +
-        ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day.</p>' +
+        ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day. Tap one for its full breakdown.</p>' +
         '<div class="chiprow" style="margin-bottom:10px">' +
-        accel.slice(0, 6).map(v => '<span class="chip">' + esc(capOf(v).slice(0, 34)) + '</span>').join('') + '</div>';
+        accel.slice(0, 6).map(v => '<button type="button" class="chip chipv" data-vid="' + esc(v.id) + '">' +
+          (v.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(v.cover_image_url) + '">' : '') +
+          esc(capOf(v).slice(0, 34)) + '</button>').join('') + '</div>';
     }
+    html += ttMomentsHtml();
     if (!list.length) {
       html += '<p class="dnote">Nothing has crossed a round number in the last ' + ALERT_DAYS +
         ' days. This fills itself in from your Worker\u2019s own recordings \u2014 it needs nothing open and nothing scheduled.</p>';
       el.innerHTML = html;
       return;
     }
-    html += list.map(a => '<div class="alert"><div class="txt">' + a.t + '</div>' +
-      '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>').join('');
+    /* A post row opens its full breakdown, exactly like a table row \u2014 and wears its cover
+       so you can see WHICH post without reading. Only a post still in TikTok's 60-post
+       window is clickable: the drawer needs the live post to open, and a dead row that
+       does nothing when tapped is worse than a plain one. Account-level rows (followers,
+       account likes) have no post to open and stay plain on purpose.
+
+       Inbox rules, only when this device knows when you last looked: an item newer than
+       the away stamp wears a dot, an older one dims. The feed is already newest-first,
+       so the new ones sit naturally on top. */
+    const mark = awaySince != null;
+    html += list.map(a => {
+      const live = a.id && videos.some(x => x.id === a.id);
+      const fresh = mark && a.at >= awaySince;
+      const cls = 'alert' + (live ? ' open' : '') + (mark ? (fresh ? ' fresh' : ' seen') : '');
+      return '<div class="' + cls + '"' + (live ? ' role="button" tabindex="0" data-vid="' + esc(a.id) + '"' : '') + '>' +
+        (fresh ? '<span class="dot" title="New since you last looked"></span>' : '') +
+        (a.id && a.cover ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.cover) + '">' : '') +
+        '<div class="txt">' + a.t + '</div>' +
+        '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>';
+    }).join('');
     el.innerHTML = html;
+    // wired once, delegated: renderAlerts replaces this innerHTML on every poll, and a
+    // listener per row would be re-bound each time for no reason
+    if (!el.dataset.wired) {
+      el.dataset.wired = '1';
+      const open = t => { const b = t && t.closest && t.closest('[data-vid]'); if (b) ttdOpen(b.dataset.vid, b); };
+      el.addEventListener('click', e => open(e.target));
+      el.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const b = e.target && e.target.closest && e.target.closest('[data-vid]');
+        if (!b) return;
+        e.preventDefault();
+        ttdOpen(b.dataset.vid, b);
+      });
+    }
+  }
+
+  /* ---------- recorded trends ----------
+     The Trends room TikTok could never have, as a card. This page used to say a Trends
+     room "would hold nothing the Now room does not already show" — true when the Worker
+     kept only a three-day window, and no longer true now that it records every post for
+     60 days and the account every three hours for 400. Everything here is recordings:
+     no API quota, no guessing, and a day the recording missed is absent, not zero.
+
+     "A day" is a local calendar day with at least one recorded gain. Today sits on its
+     own tile and never joins a week, because it is not finished being a day. Weeks say
+     how many recorded days they rest on — "+9,800 over 7 recorded days" and "over 4"
+     are different claims, and the small print is the difference. */
+  let recTrendsRange = 90;
+  function recDayGains(days) {
+    const out = new Map();   // local day (en-CA) → recorded views gained
+    for (const [at, b] of ttGainBuckets(Date.now() - days * 864e5).hours) {
+      const k = new Date(at).toLocaleDateString('en-CA');
+      out.set(k, (out.get(k) || 0) + b.gain);
+    }
+    return out;
+  }
+  const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  function renderRecTrends() {
+    const card = $('recTrendsCard'), el = $('recTrendsContent');
+    if (!card || !el) return;
+    if (!hist) { card.style.display = 'none'; return; }   // no recordings, no card
+    card.style.display = 'block';
+    const tk = new Date().toLocaleDateString('en-CA');
+    const day = recDayGains(16);
+    const doneKeys = [...day.keys()].filter(k => k !== tk).sort();
+    const sum = ks => ks.reduce((a, k) => a + (day.get(k) || 0), 0);
+    const last7 = doneKeys.slice(-7), prev7 = doneKeys.slice(-14, -7);
+
+    // the pulse: the whole account in one tile row, every cell honest about its basis
+    const f = fseries();
+    const fNow = f.length ? f[f.length - 1] : null;
+    // a recording younger than a week still has a true answer — over its own span,
+    // and the tile says which, because "+96 over 7 days" and "over 4" differ
+    const fBase = (f.length ? ATB(f, Date.now() - 7 * 864e5) : null) || (f.length > 1 ? f[0] : null);
+    const dF = fNow && fBase && fNow !== fBase ? (fNow[1] || 0) - (fBase[1] || 0) : null;
+    const fSpanD = dF != null ? Math.max(1, Math.round((fNow[0] - fBase[0]) / 864e5)) : 0;
+    const vSum = videos.reduce((a, v) => a + (v.view_count || 0), 0);
+    const lSum = videos.reduce((a, v) => a + (v.like_count || 0), 0);
+    let html = '<div class="metric-grid">' +
+      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—', day.has(tk) ? 'views recorded' : 'nothing recorded yet') +
+      mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? last7.length + ' recorded day' + (last7.length === 1 ? '' : 's') : 'no full days recorded') +
+      mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? prev7.length + ' recorded day' + (prev7.length === 1 ? '' : 's') : 'no full days recorded') +
+      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)), 'exact, between two snapshots') : '') +
+      (vSum > 0 ? mcell('Like rate', (lSum / vSum * 100).toFixed(1) + '%', 'across the listed posts') : '') +
+      '</div>';
+    // week against week, only when both weeks have enough days to be a claim
+    if (last7.length >= 5 && prev7.length >= 5 && sum(prev7) > 0) {
+      const d = Math.round((sum(last7) / sum(prev7) - 1) * 100);
+      html += '<p class="explain" style="margin-bottom:14px">' +
+        (Math.abs(d) < 8 ? 'This week is running level with last week.'
+          : d > 0 ? 'This week is running <b>' + d + '% ahead</b> of last week.'
+                  : 'This week is running <b>' + Math.abs(d) + '% behind</b> last week.') + '</p>';
+    }
+
+    // views per day — the daily series TikTok never provides
+    if (doneKeys.length >= 3) {
+      const ks = doneKeys.slice(-14);
+      const pts = ks.map(k => day.get(k) || 0);
+      const at = ks.map(k => new Date(k + 'T12:00:00').getTime());
+      const tips = ks.map(k => '+' + fmt.format(day.get(k) || 0) + ' views — ' +
+        new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }));
+      html += '<div class="dsection"><h4>Views per day — recorded</h4>' +
+        '<p class="explain">Views your posts gained each full day, summed from the recordings. Today is excluded — it isn’t finished being a day. A missing day is a gap in the recording, not a zero.</p>' +
+        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
+    } else {
+      html += '<p class="dnote">The views-per-day chart needs a few full recorded days — it fills itself in as the Worker keeps sampling.</p>';
+    }
+
+    // follower history — 400 days of snapshots that only ever powered a sparkline
+    if (f.length >= 3) {
+      const cut = recTrendsRange === 0 ? 0 : Date.now() - recTrendsRange * 864e5;
+      const seg = f.filter(s => s[0] >= cut);
+      if (seg.length >= 2) {
+        const pts = seg.map(s => s[1] || 0), at = seg.map(s => s[0]);
+        const tips = seg.map(s => fmt.format(s[1] || 0) + ' followers — ' +
+          new Date(s[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
+        html += '<div class="dsection"><h4>Follower history — recorded every few hours</h4>' +
+          '<div class="range-row" id="recRange">' +
+          [30, 90, 0].map(n => '<button class="ghost' + (recTrendsRange === n ? ' active' : '') + '" data-rec="' + n + '">' + (n === 0 ? 'All' : n + ' days') + '</button>').join('') +
+          '</div>' +
+          lineChart(pts, 'var(--up)', 'Follower history', { at, tips,
+            x0: new Date(seg[0][0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), x1: 'now' }) + '</div>';
+      }
+    }
+
+    // when views actually arrive — hour of the day, the viewer's own clock
+    const hb = new Array(24).fill(0);
+    let hbAny = false;
+    for (const [at2, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+      hb[new Date(at2).getHours()] += b.gain;
+      if (b.gain > 0) hbAny = true;
+    }
+    if (hbAny) {
+      const max = Math.max(...hb, 1);
+      html += '<div class="dsection"><h4>When views actually arrive</h4>' +
+        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>, from the recordings. This is when your audience watches — the Coach room answers when to post, which is a different question.</p>' +
+        '<div class="bars" style="justify-content:space-between">' +
+        hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm') + '"></div>').join('') +
+        '</div>' +
+        '<div class="dnote" style="display:flex;justify-content:space-between;margin-top:4px"><span>12am</span><span>12pm</span><span>11pm</span></div></div>';
+    }
+    el.innerHTML = html;
+    const rr = $('recRange');
+    if (rr) rr.addEventListener('click', e => {
+      const b2 = e.target.closest('[data-rec]');
+      if (!b2) return;
+      recTrendsRange = +b2.dataset.rec;
+      renderRecTrends();
+    });
   }
 
   /* ---------- hashtags, with the account's own record attached ----------

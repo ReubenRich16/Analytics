@@ -73,11 +73,12 @@ const HOT_HOURS   = 48;
 
    Two caveats worth knowing. This comment said a flat "two row-writes" while samples
    carried a second index, and undercounted the whole thing by a third — the arithmetic is
-   checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And the
-   live database still has that second index: schema.sql drops it, but the deploy's schema
-   step has never succeeded — the API token has never carried the D1 permission (see
-   deploy-worker.yml) — so until that is fixed the real bill is ~58,000. Both numbers fit;
-   only one of them is the plan.
+   checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And for
+   a long stretch the live database still carried that second index, because the deploy's
+   schema step failed on every run (the API token lacked the D1 permission — see
+   deploy-worker.yml), leaving the real bill at ~58,000. The token gained the permission
+   and the schema applied on 31 Aug 2026, dropping the index — the bill now matches the
+   ~38,000 plan.
 
    Reading the roster to decide who is due costs under 200 rows every 15 minutes. The
    extra YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs

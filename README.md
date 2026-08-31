@@ -48,7 +48,10 @@ data/             recorded history, committed by the robots
 - **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
   running session total. On TikTok this accumulates each post's own movement rather than
   differencing the account total, because the app fetches at most the 60 newest posts and
-  that total *falls* when an older one scrolls out of the window
+  that total *falls* when an older one scrolls out of the window. A quick reload **resumes**
+  the session (the gap is counted, not dropped); a cold open **backfills** the strip, faded,
+  from the recorded minute samples — never smeared from coarser ones, because nothing on
+  these pages interpolates
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
   the newest upload, so nine slots out of ten showed nothing where a chart belongs
@@ -78,16 +81,24 @@ data/             recorded history, committed by the robots
   side, with a **Ranked** alternative that reads as a list
 - **Per-post drawer** — the full breakdown for any post in the table, not just the recent
   ones the arrows reach
-- **While you were away** (TikTok) — round numbers your account and posts crossed since you
-  last looked, and a ⚡ on anything gaining faster than it was yesterday. The YouTube page's
-  equivalents are its Recent milestones card and the table's ⚡ badge
+- **While you were away** — the whole absence in one line ("While you were away (2d):
+  +1,920 views · +24 subscribers · 2 round numbers crossed"), sized by a per-device stamp of
+  when you last had the page open. Round numbers your account and posts crossed (each post
+  tappable, wearing its thumbnail, opening its full breakdown), a ⚡ on anything gaining
+  faster than it was yesterday, the biggest recorded hour, and yesterday ranked among the
+  days behind it. New-since-you-looked items wear a dot; already-seen ones dim. On YouTube
+  the headline is **exact** — the robot records the channel's own totals, so it is a
+  subtraction, not a sum of samples — and this card replaced the old Recent milestones list
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
-  TikTok (Now · Posts · Account · Coach · Ideas). The two TikTok is missing are missing for
-  a reason rather than for want of building them: its API exposes no audience data of any
-  kind, so an Audience room could only ever be empty, and it publishes no daily series of
-  its own, so a Trends room would hold nothing the Now room does not already show.
-  **Everything TikTok's API can support is now built on both pages** — what separates them
+  TikTok (Now · Posts · Account · Coach · Ideas). The missing Audience room is missing for
+  a reason rather than for want of building it: TikTok's API exposes no audience data of
+  any kind, so it could only ever be empty. The missing Trends room used to be justified
+  the same way — TikTok publishes no daily series of its own — but the Worker's recordings
+  outgrew that: the Account room now carries a **Trends — from your own recordings** card
+  (a pulse tile row, views per day with week-vs-week, 400 days of follower history, and a
+  when-views-arrive clock), every number built from the recordings rather than fetched.
+  **Everything TikTok's API can support is built on both pages** — what separates them
   is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card
   exactly as it was before, so nothing is ever out of reach
@@ -316,11 +327,11 @@ of TikTok. Free, no card.
    `GEMINI_KEY` (optional, for AI) and `TIKTOK_CLIENT_SECRET` (optional, for
    TikTok).
 3. Run **Deploy per-minute Worker to Cloudflare** from the Actions tab. It
-   deploys the code with the KV + D1 bindings and the one-minute cron from
-   [`worker/wrangler.toml`](worker/wrangler.toml), uploads the secrets, and
-   *attempts* to apply [`worker/schema.sql`](worker/schema.sql) to D1 — a step
-   that fails unless the API token carries **Account → D1 → Edit** (the live
-   schema was applied out-of-band; see the note in the workflow).
+   applies [`worker/schema.sql`](worker/schema.sql) to D1, deploys the code with
+   the KV + D1 bindings and the one-minute cron from
+   [`worker/wrangler.toml`](worker/wrangler.toml), and uploads the secrets. (The
+   schema step needs the API token to carry **Account → D1 → Edit** — it has
+   since 31 Aug 2026; the workflow warns loudly if that ever regresses.)
 4. Open the dashboard once with `?worker=https://…workers.dev` appended.
 
 > Adding a repo secret does **not** re-run the workflow — trigger it manually,
@@ -398,10 +409,11 @@ entire allowance — which is why the cadence tapers rather than staying flat. T
 nothing extra at all: the cron already fetched the post list on every pass and was
 discarding every row outside the launch window.
 
-One caveat on that figure: the live database still carries a second, redundant index on
-`samples`, which makes the real bill ~58,000 until it goes. `schema.sql` drops it, but the
-deploy's schema step has never succeeded — the API token has never carried **Account → D1 →
-Edit** — so the drop is queued rather than applied. Both numbers fit the allowance.
+One piece of history on that figure: for a long stretch the live database carried a
+second, redundant index on `samples`, which put the real bill at ~58,000 — `schema.sql`
+drops it, but the deploy's schema step failed on every run while the API token lacked
+**Account → D1 → Edit**. The token gained the permission and the schema applied on
+31 Aug 2026, so the drop is done and the bill matches the plan.
 
 Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
 back only the minutes it hasn't seen, because re-shipping a 48-hour window every three
