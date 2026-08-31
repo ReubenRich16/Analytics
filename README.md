@@ -327,11 +327,11 @@ of TikTok. Free, no card.
    `GEMINI_KEY` (optional, for AI) and `TIKTOK_CLIENT_SECRET` (optional, for
    TikTok).
 3. Run **Deploy per-minute Worker to Cloudflare** from the Actions tab. It
-   deploys the code with the KV + D1 bindings and the one-minute cron from
-   [`worker/wrangler.toml`](worker/wrangler.toml), uploads the secrets, and
-   *attempts* to apply [`worker/schema.sql`](worker/schema.sql) to D1 — a step
-   that fails unless the API token carries **Account → D1 → Edit** (the live
-   schema was applied out-of-band; see the note in the workflow).
+   applies [`worker/schema.sql`](worker/schema.sql) to D1, deploys the code with
+   the KV + D1 bindings and the one-minute cron from
+   [`worker/wrangler.toml`](worker/wrangler.toml), and uploads the secrets. (The
+   schema step needs the API token to carry **Account → D1 → Edit** — it has
+   since 31 Aug 2026; the workflow warns loudly if that ever regresses.)
 4. Open the dashboard once with `?worker=https://…workers.dev` appended.
 
 > Adding a repo secret does **not** re-run the workflow — trigger it manually,
@@ -409,10 +409,11 @@ entire allowance — which is why the cadence tapers rather than staying flat. T
 nothing extra at all: the cron already fetched the post list on every pass and was
 discarding every row outside the launch window.
 
-One caveat on that figure: the live database still carries a second, redundant index on
-`samples`, which makes the real bill ~58,000 until it goes. `schema.sql` drops it, but the
-deploy's schema step has never succeeded — the API token has never carried **Account → D1 →
-Edit** — so the drop is queued rather than applied. Both numbers fit the allowance.
+One piece of history on that figure: for a long stretch the live database carried a
+second, redundant index on `samples`, which put the real bill at ~58,000 — `schema.sql`
+drops it, but the deploy's schema step failed on every run while the API token lacked
+**Account → D1 → Edit**. The token gained the permission and the schema applied on
+31 Aug 2026, so the drop is done and the bill matches the plan.
 
 Two things make that affordable. Reads are **incremental**: a poll sends `?since=` and gets
 back only the minutes it hasn't seen, because re-shipping a 48-hour window every three

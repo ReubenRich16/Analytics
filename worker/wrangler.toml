@@ -20,10 +20,11 @@ id = "24a3e8ab02904af499a07b6928687b48"
 # day, which two or three uploads across both platforms exhaust before lunchtime — a
 # hot post costs one write per minute. D1's free tier allows 100,000 ROW-WRITES a day
 # (each insert bills the row plus one per index — see the accounting in worker.js), and
-# the full tapered load sits under 60% of that, so the launch window can go from 6 hours
-# to 48, kept for 60 days instead of 3. Schema lives in schema.sql; the deploy workflow
-# attempts to apply it, but that step needs the API token to carry Account → D1 → Edit
-# (see deploy-worker.yml — the live schema was applied out-of-band).
+# the tapered load sits around 38% of that, so the launch window can go from 6 hours
+# to 48, kept for 60 days instead of 3. Schema lives in schema.sql and is applied by
+# the deploy workflow (working since 31 Aug 2026, when the API token gained
+# Account → D1 → Edit; before that the step failed and the schema went in out-of-band —
+# see the history in deploy-worker.yml).
 # (A database id is not a secret; like the KV id it only names a resource in the account.)
 [[d1_databases]]
 binding = "DB"

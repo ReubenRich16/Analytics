@@ -6,12 +6,12 @@ name: Create the D1 database (one-off)
 # id so it can go into worker/wrangler.toml. Safe to re-run: if the database already
 # exists, creation is skipped and the existing id is printed instead.
 #
-# Running this also proves whether CLOUDFLARE_API_TOKEN has D1 permission — the token
-# was made with the "Edit Cloudflare Workers" template, which does not include D1
-# (deploy-worker.yml's schema step has failed on every run for exactly this reason).
-# If this job fails on permissions, EDIT the existing token at
-# dash.cloudflare.com/profile/api-tokens and add "Account / D1 / Edit" — editing keeps
-# the same token value, so the repo secret does not need updating.
+# Running this also proves whether CLOUDFLARE_API_TOKEN has D1 permission. The token
+# lacked it from creation until 31 Aug 2026 (deploy-worker.yml's schema step failed on
+# every run during that stretch); it carries Account / D1 / Edit now. If this job ever
+# fails on permissions again, EDIT the existing token at
+# dash.cloudflare.com/profile/api-tokens and re-add the permission — editing keeps the
+# same token value, so the repo secret does not need updating.
 on:
   workflow_dispatch:
 

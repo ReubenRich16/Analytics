@@ -35,17 +35,18 @@ jobs:
       # Apply the D1 schema before deploying, so the tables always exist by the time the
       # new code runs. Every statement is IF NOT EXISTS, so this is a no-op after the first.
       #
-      # Deliberately non-blocking — and CORRECTING an earlier comment here: this step has
-      # in fact failed on EVERY run to date ("Authentication error [code: 10000]"), because
-      # CLOUDFLARE_API_TOKEN has no D1 permission. An earlier version of this comment
-      # called the first failure a transient propagation blip and claimed a later run
-      # succeeded; that was a misreading — continue-on-error makes a failed step's
-      # conclusion read "success" in the step list, and only the warning step below tells
-      # the truth. The live schema is currently correct because it was applied out-of-band
-      # through the Cloudflare connector. To make this step real: EDIT the existing token
-      # at dash.cloudflare.com/profile/api-tokens and add "Account / D1 / Edit" — editing
-      # keeps the same token value, so the repo secret does not need touching (see the
-      # warning step below). Non-blocking stays right either way — a schema step must
+      # This step WORKS now, and the history is worth keeping because it flip-flopped
+      # twice. It failed on every run ("Authentication error [code: 10000]") from the
+      # first deploy until 31 Aug 2026, because CLOUDFLARE_API_TOKEN carried no D1
+      # permission — during that stretch the live schema was applied out-of-band, and an
+      # even earlier comment here wrongly called the failure a transient blip
+      # (continue-on-error makes a failed step read "success" in the step list; only the
+      # warning step below tells the truth). On 31 Aug 2026 the token gained
+      # Account / D1 / Edit, the run's schema step passed for the first time, and the
+      # redundant samples index that had been queued for dropping was finally dropped.
+      # If the warning below ever fires again, the remedy is unchanged: EDIT the token at
+      # dash.cloudflare.com/profile/api-tokens (editing keeps the same value, so the repo
+      # secret needs no update). Non-blocking stays right either way — a schema step must
       # never turn a deploy into an outage.
       - name: Apply D1 schema
         continue-on-error: true
