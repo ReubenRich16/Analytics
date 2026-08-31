@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Channel Command</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin:0; padding:40px 20px; background:#0f1218; color:#e9edf1;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    line-height:1.65; font-size:16px;
+  }
+  main { max-width:760px; margin:0 auto; }
+  h1 { font-size:26px; margin:0 0 6px; }
+  h2 { font-size:17px; margin:32px 0 8px; color:#fff; }
+  .updated { color:#8b96a5; font-size:14px; margin-bottom:28px; }
+  p, li { color:#c9d3de; }
+  ul { padding-left:22px; }
+  a { color:#5aa9ff; }
+  .box { background:#171c25; border:1px solid #232a35; border-radius:10px; padding:16px 18px; margin:22px 0; }
+  footer { margin-top:40px; padding-top:18px; border-top:1px solid #232a35; color:#8b96a5; font-size:14px; }
+  @media (prefers-color-scheme: light) {
+    body { background:#ffffff; color:#1a1a1a; }
+    h2 { color:#000; } p, li { color:#333; }
+    .box { background:#f6f7f9; border-color:#e3e6ea; }
+    .updated, footer { color:#666; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Channel Command &middot; last updated 5 August 2026</div>
+
+  <div class="box">
+    <strong>In short:</strong> Channel Command is a private analytics dashboard used
+    by its owner to view statistics for their own YouTube and TikTok accounts.
+    It is not a public service, it has no other users, and it does not sell,
+    share, or advertise with anyone's data.
+  </div>
+
+  <h2>Who this applies to</h2>
+  <p>
+    Channel Command is a personal tool operated by an individual creator for their
+    own channels and those of a family member who has explicitly authorised it.
+    Access is limited to those accounts; no one else can sign in or view the data.
+  </p>
+
+  <h2>What information the app accesses</h2>
+  <p>When you sign in, the app reads only the following, and only for the account that signed in:</p>
+  <ul>
+    <li><strong>Profile basics</strong> &mdash; display name, avatar, username and account identifier.</li>
+    <li><strong>Account statistics</strong> &mdash; follower/subscriber count, total likes and video count.</li>
+    <li><strong>Your own videos and their public statistics</strong> &mdash; captions/titles, thumbnails,
+      post dates, and counts of views, likes, comments and shares.</li>
+    <li><strong>Analytics reports for your own content</strong> (YouTube only) &mdash; such as watch time,
+      retention and traffic sources, as provided by the platform to the account owner.</li>
+    <li><strong>Comments on your own videos</strong> (YouTube only) &mdash; read-only, to show recent
+      comments and find patterns in them. The Google permission that covers reading comments
+      is technically broader, but the app only ever reads.</li>
+  </ul>
+
+  <h2>What the app never does</h2>
+  <ul>
+    <li>It never reads or stores your password. Sign-in is handled entirely by
+      Google or TikTok, and the app only receives a temporary access token.</li>
+    <li>It never posts, uploads, edits or deletes content on your behalf.</li>
+    <li>It never accesses your private messages, contacts, or files.</li>
+    <li>It never sells, rents, or shares your data with third parties.</li>
+    <li>It contains no advertising, tracking pixels, or third-party analytics.</li>
+  </ul>
+
+  <h2>Where information is stored</h2>
+  <ul>
+    <li><strong>On your device.</strong> Most data is cached in your browser's local
+      storage so the dashboard loads quickly. You can erase it at any time by
+      clearing your browser data, or by using the app's Export/Import controls.</li>
+    <li><strong>On a private server.</strong> To record statistics over time (and to keep
+      several of the owner's devices in sync), public video statistics are stored in
+      private Cloudflare storage (a D1 database with a KV mirror) controlled solely by the
+      app's owner, and limited to the accounts described above. The recorded statistics are
+      of public counts only; some aggregate routes serving them are readable without
+      sign-in, while anything personal &mdash; sync data, AI requests, TikTok data and
+      video pairings &mdash; requires being signed in as the owner of the account.</li>
+    <li><strong>Access tokens.</strong> Platform access tokens are short-lived. Where a refresh
+      token is used to keep recording statistics in the background, it is stored server-side
+      (encrypted at rest by Cloudflare) and is never exposed in the web page. The TikTok
+      session id the browser holds is an opaque random token that identifies the session,
+      not a platform credential; it is long-lived so you stay signed in.</li>
+  </ul>
+
+  <h2>Retention</h2>
+  <p>
+    Recorded statistics are kept only as long as they are useful for tracking
+    channel performance and are pruned automatically over time. You can request
+    deletion of all stored data at any time using the contact address below, and
+    it will be removed.
+  </p>
+
+  <h2>Revoking access</h2>
+  <p>
+    You can disconnect the app at any time, which immediately stops all access:
+  </p>
+  <ul>
+    <li><strong>Google/YouTube:</strong> <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">myaccount.google.com/permissions</a></li>
+    <li><strong>TikTok:</strong> TikTok app &rarr; Settings and privacy &rarr; Security and permissions &rarr; Manage app permissions</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>
+    This tool is not directed at children and is not intended for use by anyone
+    under the age required by the relevant platform's own terms.
+  </p>
+
+  <h2>Changes</h2>
+  <p>
+    If this policy changes, the revised version will be published on this page with
+    an updated date.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    Questions or deletion requests:
+    <a href="mailto:reubenrichardson37@gmail.com">reubenrichardson37@gmail.com</a>
+  </p>
+
+  <footer>
+    Channel Command &mdash; a personal analytics dashboard.
+    <a href="./terms.html">Terms of Service</a> &middot; <a href="./">Dashboard</a>
+  </footer>
+</main>
+</body>
+</html>
