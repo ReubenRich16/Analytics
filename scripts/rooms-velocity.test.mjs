@@ -331,8 +331,10 @@ console.log('\nTikTok view velocity');
   check('the table still opens on newest, not on a delta that is zero on the first poll',
     /let tableSort = \{ key: 'newest'/.test(TT),
     'a delta default reshuffles the whole table on the second poll');
-  check('and the footnote says the counters resume and never go backwards',
-    /a reload within 30 minutes carries on/.test(TT) && /stops being counted rather than counting backwards/.test(TT));
+  // the footnote was cut to three sentences (the Posts room's two-sentence rule, plus the
+  // data limit); it keeps the resume rule
+  check('and the footnote says the counters resume',
+    /a reload within 30 minutes carries on/.test(TT));
 
   for (const [src, page] of [[YT, 'index.html'], [TT, 'tiktok.html']]) {
     check(page + ' hides the per-minute rate until the session is half a minute old',
@@ -380,10 +382,10 @@ console.log('\nwhile you were away');
   check('the phone card labels say what +tick and +session mean',
     /data-label="\+Since refresh"/.test(TT) && /data-label="\+This visit"/.test(TT) && !/\+This session/.test(TT));
   check('the footnote defines both counts and the ⚡',
-    /\+Since refresh = views each post gained since the previous refresh\. \+This visit = views since you opened this page \(a reload within 30 minutes carries on/.test(TT) && /⚡ = speeding up: at least 1\.5× as many views as the 24 hours before, and 50\+ views in the last 24 hours/.test(TT));
+    /\+Since refresh is views since the last refresh; \+This visit is views since you opened the page \(a reload within 30 minutes carries on\)\./.test(TT) && /⚡ means speeding up — 1\.5× the views of the 24 hours before and 50\+ in the last 24\./.test(TT));
   check('the footnote no longer credits the Research API with retention data',
-    /only TikTok's API for Business carries those, and only for Business accounts/.test(TT) && !/Research and Business APIs/.test(TT));
-  check('and states the 60-post limit as the dashboard\'s own', /Only your newest 60 posts are fetched/.test(TT) && !/TikTok's 60-post window/.test(TT));
+    /not watch time or who’s watching/.test(TT) && !/Research and Business APIs/.test(TT));
+  check('and states the 60-post limit as the dashboard\'s own', /TikTok shares only views, likes, comments and shares for your newest 60 posts/.test(TT) && !/TikTok's 60-post window/.test(TT));
   check('the badge is on the table row, with a title that explains it',
     /accelSet\.has\(v\.id\)/.test(TT) && /title="Speeding up \\u2014 gaining at least/.test(TT));
   check('and it is rebuilt before anything renders from it',
@@ -585,7 +587,16 @@ console.log('\nrecorded trends — the charts TikTok never provides');
   check('week-vs-week only speaks with five recorded days on each side',
     /last7\.length >= 5 && prev7\.length >= 5/.test(rt));
   check('the follower delta is exact between snapshots, over its stated span',
-    /'exact change'/.test(rt) && /'Followers, ' \+ fSpanD/.test(rt));
+    /'from your follower count'/.test(rt) && /'Followers, ' \+ fSpanD/.test(rt));
+  // calendar weeks can hold 5 recorded days against 7: compared per recorded day, so two
+  // identical weeks with two days missing from one are "about the same", not "29% fewer"
+  check('week-vs-week compares per recorded day, and says so when a week is short',
+    /\(sum\(last7\) \/ last7\.length\) \/ \(sum\(prev7\) \/ prev7\.length\)/.test(rt) && /'Per recorded day \('/.test(rt));
+  {
+    const d = (l, p) => Math.round(((l.reduce((a, b) => a + b, 0) / l.length) / (p.reduce((a, b) => a + b, 0) / p.length) - 1) * 100);
+    check('five days of 100 against seven of 100 is level', Math.abs(d([100, 100, 100, 100, 100], [100, 100, 100, 100, 100, 100, 100])) < 8);
+  }
+  check('the week line says what it compares — views', /views<\/b> than the 7 before/.test(rt) && /about the same views as the 7 before/.test(rt));
   check('a recording younger than a week answers over its own span instead of abstaining',
     /\|\| \(f\.length > 1 \? f\[0\] : null\)/.test(rt));
   check('the views-per-day chart admits a missing day is a gap, not a zero',
@@ -648,7 +659,7 @@ console.log('\nhashtags ranked by what they returned');
     check('a reused tag with one scored post is waiting, not "used once"', r.waiting.join() === '#reuse', r.waiting.join());
   }
   check('and the typical post is stated so a bar reads as better or worse than usual',
-    /typical post reaches/.test(body));
+    /old enough to grade, the typical one reaches/.test(body));
   check('truncation is admitted rather than silent', /rated\.length > 10/.test(body));
   check('the thinner unranked copy in Coach is gone, not left above it',
     !/Hashtags to lean into/.test(TT), 'saying it twice let the weaker half win by being higher up');
@@ -896,7 +907,7 @@ console.log('\nCoach — hours and rhythm from every post, medians for days');
   const h = run(vids, sc, { video_count: 7 });
   const hh = nw.getHours(), hn = (hh % 12 || 12) + (hh < 12 ? 'am' : 'pm');
   check('the unscored newest post\'s hour is not called empty', !new RegExp('No posts yet at[^.]*\\b' + hn + '\\b').test(h.replace(/–\d+(am|pm)/g, '')) || hh === 10 || hh === 14, h);
-  check('it gets its own "too new to score yet" clause', new RegExp(hn + ' has a post that is too new to score yet').test(h) || hh === 10 || hh === 14, h);
+  check('it gets its own "too new to grade yet" clause, named by the rows\' range', new RegExp('Your ' + hn + '–\\d+(am|pm) post is too new to grade yet').test(h) || hh === 10 || hh === 14, h);
   check('the day and hour rows carry their count on a second line', /<small style="display:block;white-space:nowrap">\d+ posts?<\/small>/.test(h), h.slice(0, 300));
   check('rhythm names its window of posts', /the middle gap between your last 7 posts/.test(h), h.slice(-300));
   check('hour rows say "views" and no longer "avg"', !/ avg · /.test(h));
@@ -950,20 +961,41 @@ console.log('\nYouTube away card — own videos, new highs, no "exact"');
   const drop = make({ channels: { me: [[T - DAY, 235, 1], [T, 235, 1], [NOW - HOUR, 234, 1]] }, videos: {} }, [], {}, T - 30 * MIN, NOW).ytAwayHeadHtml([]);
   check('YouTube — a real loss of one still shows', /−1 subscriber<\/b>/.test(drop), drop);
 
-  // the channel total flips +734 / −734 three times in a day: that day is +734, not +2,202
-  const day = k => { const d = new Date(NOW); d.setDate(d.getDate() - k); d.setHours(9, 0, 0, 0); return d.getTime(); };
-  const flips = [[day(6), 1, 1000], [day(5), 1, 1100], [day(4), 1, 1300], [day(3), 1, 1350], [day(2), 1, 1400]];
-  const y = day(1);
-  for (const [dt, v] of [[0, 1400], [HOUR, 2134], [2 * HOUR, 1400], [3 * HOUR, 2134], [4 * HOUR, 1400], [5 * HOUR, 2134]]) flips.push([y + dt, 1, v]);
-  flips.push([NOW - HOUR, 1, 2134]);
-  const mom = make({ channels: { me: flips }, videos: {} }, [], {}, null, NOW).ytMomentsHtml();
-  check('YouTube — yesterday counts only new highs, so a flipping total is not booked three times',
-    /Yesterday: <b>\+734 views<\/b>/.test(mom), mom);
+  // yesterday's rank is on the rises recorded on your own videos, rolled up by local day
+  // — not the channel's public total, which updates in lumps. One video, read every 30
+  // minutes; day k back gains g(k) views. A stale reading that flips back and forth is
+  // counted once.
+  const dayStart = k => { const d = new Date(NOW); d.setDate(d.getDate() - k); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const vser = (gain, hole) => {
+    const out = []; let v = 1000;
+    for (let t = dayStart(15); t <= NOW; t += 30 * MIN) {
+      const d = new Date(t); d.setHours(0, 0, 0, 0);
+      const k = Math.round((dayStart(0) - d.getTime()) / DAY);
+      v += gain(k) / 48;
+      if (hole && t > hole[0] && t < hole[1]) continue;
+      out.push([t, Math.round(v)]);
+      // yesterday's count flips to a stale reading and back
+      if (k === 1 && d.getTime() + 10 * HOUR === t) out.push([t + 10 * MIN, Math.round(v) - 734], [t + 20 * MIN, Math.round(v)]);
+    }
+    return out;
+  };
+  const lump = [[dayStart(3), 1, 50000], [dayStart(2), 1, 50000], [dayStart(1) + HOUR, 1, 50000], [NOW - HOUR, 1, 58000]];
+  const ymom = (g, hole) => make({ channels: { me: lump }, videos: { mine: vser(g, hole) } }, ['mine'], {}, null, NOW).ytMomentsHtml();
+  const yl = h => (h.replace(/<\/?span[^>]*>/g, '').match(/Yesterday: [^<]*<b>[^<]*<\/b> — [^<]*/) || [''])[0];
+  const mom = ymom(k => k === 1 ? 4800 : 480);
+  check('YouTube — yesterday is ranked on your own videos\' recorded rises, not the lumpy channel total',
+    /Yesterday: <b>\+4,710 views<\/b>/.test(mom), yl(mom));
   check('YouTube — rank 1 names its pool, and a clear record is marked as a win',
-    /<span class="cc-win">your best of the last 5 full days tracked<\/span>/.test(mom), mom);
-  const quiet = flips.slice(0, 5).concat([[y, 1, 1400], [y + HOUR, 1, 1410], [NOW - HOUR, 1, 1410]]);
-  const mq = make({ channels: { me: quiet }, videos: {} }, [], {}, null, NOW).ytMomentsHtml();
-  check('YouTube — the bottom of the pool is called quietest, not "5th best"', /your quietest of the last 5 full days tracked/.test(mq) && !/cc-win/.test(mq), mq);
+    /<span class="cc-win">your best of the last 13 full days tracked<\/span>/.test(mom), mom);
+  const mq = ymom(k => k === 1 ? 48 : 480 + k * 48);
+  check('YouTube — the bottom of the pool is called quietest, not "13th best"', /your quietest of the last 13 full days tracked/.test(mq) && !/cc-win/.test(mq), yl(mq));
+  const mz = ymom(k => k === 1 ? 0 : 480);
+  check('YouTube — a watched day with no rise is a real +0, and ranks', /Yesterday: <b>\+\d+ views<\/b> — your quietest of the last 13/.test(mz), yl(mz));
+  const mt = ymom(k => k === 1 || k === 6 ? 2400 : 480);
+  check('YouTube — a tie for best says "joint best", uncelebrated', /— joint best of the last 13 full days tracked$/.test(yl(mt)) && !/cc-win/.test(mt), yl(mt));
+  const yh = [dayStart(1) + 3 * HOUR, dayStart(1) + 6 * HOUR];
+  const mh = ymom(k => k === 1 ? 4800 : 480, yh);
+  check('YouTube — a yesterday with a recording hole is not ranked short', !/Yesterday:/.test(mh), yl(mh));
 
   // ⚡: +60 today after a day the count was revised down is not "accelerating"
   const rev = [[NOW - 3 * DAY, 1300], [NOW - 2 * DAY, 1300], [NOW - DAY, 1000], [NOW - 10 * MIN, 1060]];

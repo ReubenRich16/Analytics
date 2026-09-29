@@ -64,6 +64,7 @@ console.log('\nthe away card');
     ${arrow(TT, '  const fmtAgo = ts =>')}
     ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}
     ${fn('function ttGainBuckets(from)')}
+    ${fn('function recDayGains(days)')}
     ${fn('function ttAwayHeadHtml(list)')}
     ${fn('function ttMomentsHtml()')}
     return { ttAwayHeadHtml, ttMomentsHtml };`)(hist, videos, me, awaySince, awayUntil, NOW);
@@ -85,16 +86,21 @@ console.log('\nthe away card');
   const best = make(build(k => k === 1 ? 4800 : 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
   check('a best yesterday says what it is best of', /— your best of the last 14 full days tracked$/.test(yline(best)) && /<span class="cc-win">your best of the last 14 full days tracked<\/span>/.test(best), yline(best));
   const tied = make(build(k => k === 1 || k === 4 ? 4800 : 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
-  check('a yesterday tied for best is still "your best", but not celebrated as a record',
-    /— your best of the last 14 full days tracked$/.test(yline(tied)) && !/cc-win/.test(tied), yline(tied));
+  check('a yesterday tied for best says "joint best", and is not celebrated as a record',
+    /— joint best of the last 14 full days tracked$/.test(yline(tied)) && !/cc-win/.test(tied), yline(tied));
+  const level = make(build(() => 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
+  check('a yesterday level with every other day says so, not "your best"',
+    /— level with every other day of the last 14 full days tracked$/.test(yline(level)) && !/cc-win/.test(level), yline(level));
+  const midTie = make(build(k => k === 1 || k === 6 ? 2400 : k >= 10 ? 4800 : 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
+  check('a tie in the middle says "joint", not a sole place', /— joint 6th best of the last 14 full days tracked$/.test(yline(midTie)), yline(midTie));
   const quiet = make(build(k => k === 1 ? 48 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
   check('the quietest day is called that, not "14th best"', /— your quietest of the last 14 full days tracked$/.test(yline(quiet)) && !/cc-win/.test(quiet), yline(quiet));
   const second = make(build(k => k === 1 ? 96 : k === 5 ? 48 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
   check('second from the bottom is "2nd quietest"', /— 2nd quietest of the last 14 full days tracked$/.test(yline(second)), yline(second));
   const mid = make(build(k => k === 1 ? 480 + 12 * 48 + 24 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
   check('the upper half reads as "Nth best"', /— 3rd best of the last 14 full days tracked$/.test(yline(mid)) && !/cc-win/.test(mid), yline(mid));
-  check('and the pool starts at a local midnight, so no partial first day is ranked',
-    /s0\.setHours\(0, 0, 0, 0\); s0\.setDate\(s0\.getDate\(\) - ALERT_DAYS\);/.test(fn('function ttMomentsHtml()')));
+  check('and the days are the Trends card\'s days, on its coverage rules, so the two agree',
+    /const day = recDayGains\(ALERT_DAYS \+ 1\);/.test(fn('function ttMomentsHtml()')));
 
   // the headline: frozen absence, its basis, and followers from the live count
   const hist = build(() => 480);
@@ -304,9 +310,9 @@ console.log('\nthe minute chart');
   const rec = { create_time: t0 / 1000, s: [[t0 + MIN, 5, 0, 0, 0], [t0 + 5 * MIN, 9], [t0 + 6 * MIN, 12, 1, 0, 0], [t0 + 10 * MIN, 15], [t0 + 3 * DAY, 400, 9, 1, 0]] };
   const v = { id: 'p', create_time: t0 / 1000 };
   const html = M({ videos: { p: rec } }, [v], NOW, o => { opts = o; })(v);
-  check('past 48 hours it is titled "as recorded", with the cadence', /Views since it went live — as recorded/.test(html) &&
+  check('past 48 hours it is plainly titled, with the cadence', /<h4>Views since it went live<\/h4>/.test(html) && !/as recorded/.test(html) &&
     /Every minute for the first 48 hours, then every 15 minutes or hourly\./.test(html), html);
-  check('only real readings are counted, not launch-curve points', /3 readings · first /.test(html), html);
+  check('only real readings are counted, not launch-curve points', /3 counts · first /.test(html), html);
   check('its axis ticks are whole numbers', opts.int === true);
   const vids = []; for (let i = 0; i < 25; i++) vids.push({ id: 'n' + i, create_time: (NOW - i * HOUR) / 1000 });
   const oldV = { id: 'old', create_time: (NOW - 30 * DAY) / 1000 };

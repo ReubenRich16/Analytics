@@ -107,6 +107,23 @@ console.log('\nlaunch points merged beside the raw samples');
   const gm = M.gains(T0 - DAY).total;
   check('merging start-stamped points never inflates the total', Math.abs(gm - TRUE) <= TRUE * 0.01, gm + ' vs ' + TRUE);
 
+  // a create_time on a whole minute puts every start-stamped copy on the minute grid too;
+  // they are still early copies, and still go (and an older Worker's :30 stopgap stamps)
+  for (const [lbl, ct, stamp] of [['a whole-minute create_time', Math.floor(T0 / 1000), (t, b) => t + b * 5 * MIN],
+                                  ['an older Worker\'s stopgap stamps', Math.floor(T0 / 1000) + 30, (t, b) => t + b * 5 * MIN + 270e3]]) {
+    const tt0 = ct * 1000, rw = [];
+    for (let slot = Math.ceil(tt0 / MIN) * MIN; slot <= tt0 + 48 * HOUR; slot += MIN) rw.push([slot, views((slot - tt0) / MIN), 1, 0, 0]);
+    const bk = new Map();
+    for (const r of rw) { const b = Math.floor((r[0] - tt0) / (5 * MIN)), cur = bk.get(b); if (!cur || r[1] > cur.v) bk.set(b, { b, v: r[1] }); }
+    const pts = [...bk.values()].map(x => [stamp(tt0, x.b), x.v]);
+    const G = mk();
+    G.hist = { videos: { p: { create_time: ct, s: [...rw.map(r => r.slice()), ...pts].sort((a, b) => a[0] - b[0] || b.length - a.length) } } };
+    check(lbl + ': every launch point sits on the minute grid', pts.every(p => p[0] % MIN === 0));
+    G.hist.videos.p.s = G.dropEarlyLaunchPts(G.hist.videos.p.s);
+    check(lbl + ': the early copies among raw readings are dropped all the same',
+      G.hist.videos.p.s.length === rw.length && G.hist.videos.p.s.every(s => s.length === 5), G.hist.videos.p.s.length + ' vs ' + rw.length);
+  }
+
   // a launch point with no raw reading nearby is the only record of that stretch, and stays
   const H = mk();
   H.mergeHist({ videos: { p: { create_time: CT, s: raw.filter(r => r[0] < t0 + 2 * HOUR || r[0] > t0 + 20 * HOUR).map(r => r.slice()) } } });
@@ -168,7 +185,7 @@ console.log('\na hole in the recording');
   const rd = fn('function recDayGains(days)');
   check('Views per day and the weeks drop a past day with a hole', /for \(const k of g\.incomplete\) if \(k !== tk\) out\.delete\(k\);/.test(rd));
   const mom = fn('function ttMomentsHtml(');
-  check('and Yesterday is not ranked when it has one, nor ranked against one', /for \(const k of gd\.incomplete\) day\.delete\(k\);/.test(mom));
+  check('and Yesterday is not ranked when it has one, nor ranked against one', /const day = recDayGains\(ALERT_DAYS \+ 1\);/.test(mom));
   check('Today so far says when part of today was missed', /part of today wasn’t recorded/.test(TT));
   check('the Trends card says a gap is left out, not guessed',
     /A gap in the recording is left out, not guessed\./.test(TT) && !/a gap in the recording stays a gap/.test(TT));
@@ -381,6 +398,10 @@ console.log('\nrecorded days — coverage');
   check('a watched day with no rise is recorded as +0, not missing', a.has(kOf(qs + HOUR * 12)) && a.get(kOf(qs + HOUR * 12)) === 0,
     String(a.get(kOf(qs + HOUR * 12))));
   check('with an old post kept and no hole, the fortnight is covered', a.has(kOf(now - 13 * DAY)));
+  // the window opens 16 days back at a rolling instant: that first day is partial and dropped
+  const first = new Date(now - 16 * DAY);
+  check('the partial first day of the window is not kept as a full day',
+    first.getHours() + first.getMinutes() === 0 || !a.has(kOf(now - 16 * DAY)), [...a.keys()][0]);
   const b = R({ videos: { p: { create_time: Math.floor((now - 6 * DAY) / 1000), s: series(now - 6 * DAY, 15 * MIN) } } });
   const cut = now - 4 * DAY;
   check('days before the oldest kept post\'s first two days are dropped',

@@ -214,7 +214,7 @@ function world(targetAgeMin) {
   // retirement, empty, and the no-op guards
   const w = world(9 * 1440);
   const retired = build('latest').run(w.target, w.hist, w.videos);
-  check('past a week the race retires, saying it is a page limit', /the race has retired — this page only compares the first week of your posts/.test(retired));
+  check('past a week the race retires, saying it is a page limit', /This post is over a week old, and the race only compares posts in their first week\./.test(retired) && !/retired/.test(retired));
   check('and still says where the post got to', /views<\/b> at/.test(retired));
   check('with no bars under it', !/hbar-row/.test(retired));
 
@@ -484,10 +484,14 @@ console.log('\nreport card — honest reasons, one typical like rate');
   check('past 5 hours the reason drops the age', /Reach is graded once this post’s first 48 hours can be estimated/.test(b), b);
   const small = card(young, [young, ...others.slice(0, 3)], sc);
   check('a genuinely small pool keeps the four-posts reason', /A reach grade needs at least 4 other posts to compare with/.test(small), small);
-  check('and grades on engagement with the band in the headline', /Beats \d+% of your other posts on like rate — (about|above|below) your usual \(\d+%\)/.test(small), small);
+  // 93 views is under the Like rate chip's 200-view floor, so the card prints no % either
+  check('under 200 views the like rate is "too few views to judge yet", as the chip says',
+    /Like rate too few views to judge yet/.test(small) && !/% of your usual/.test(small) && /— Not graded yet/.test(small), small);
+  const small2 = card({ ...young, view_count: 300, like_count: 24 }, [young, ...others.slice(0, 3)], sc);
+  check('and grades on engagement with the band in the headline', /Beats \d+% of your other posts on like rate — (about|above|below) your usual \(\d+%\)/.test(small2), small2);
   const ranked = { id: 'r', create_time: (NOW - 10 * H) / 1000, view_count: 2725, like_count: 260 };
   const r = card(ranked, [ranked, ...others], { ...sc, r: 5393 });
-  check('the headline says the percentile is reach', /Beats \d+% of your 28 other posts on reach/.test(r), r);
+  check('the headline says the percentile is reach', /Beats (\d+% of your 28 other posts|all 28 of your other posts) on reach/.test(r) && !/Beats 100%/.test(r), r);
   check('a launching post’s reach reads as an estimate by 48h, not as views', /~5,393 by 48h/.test(r) && !/5,393 views/.test(r), r);
   check('the reach explainer admits older posts carry a longer tail', /Older posts have had longer to pick up late views/.test(r), r);
   const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };

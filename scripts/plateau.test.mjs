@@ -26,7 +26,7 @@ const slice = (from, to) => {
 };
 const model = slice('const PJ_HORIZON', '  function renderProjection()');
 const fmt = new Intl.NumberFormat('en-US');
-const M = new Function('fmt', 'const esc=String, niceScale=()=>({lo:0,hi:1,ticks:[0,1]}), axisNum=String;\n' + model +
+const M = new Function('fmt', 'const PJ_NOUN = \'video\', esc=String, niceScale=()=>({lo:0,hi:1,ticks:[0,1]}), axisNum=String;\n' + model +
   '\nreturn {PJ_HORIZON,PJ_MIN_AGE,PJ_SAFETY,PJ_WEEK,PJ_WEEK_COVER,pjAt,pjRef,pjWeekRefs,pjWeek,pjMed,pjShares,pjFloorAt,pjError,pjSettle,pjDur,pjProject,pjBarHtml,pjWaitHtml,pjSentenceHtml,pjWeekHtml,pjWeekWaitHtml,pjCurveHtml,pjBodyHtml,pjClean,pjWhen,pjView,PJ_MIN_REFS,pjScore,pjRank,PJ_HORIZON};')(fmt);
 
 let pass = 0, fail = 0;
@@ -456,7 +456,7 @@ function loo(all, h) {
   // up to 80% of the way: a countdown to the 90% point, worded as exactly that
   const early = M.pjProject(refs, 6 * 60, 500);
   check('under 80% the bar counts down to the 90% point', early.pct <= .8 &&
-    /your usual post reaches 90% of its total in another .+/.test(strip(M.pjBarHtml(early, 500))), strip(M.pjBarHtml(early, 500)));
+    /your usual video reaches 90% of its total in another .+/.test(strip(M.pjBarHtml(early, 500))), strip(M.pjBarHtml(early, 500)));
   check('and never says "most of the rest"', !/most of the rest/i.test(M.pjBarHtml(early, 500) + M.pjSentenceHtml(early)));
   // past 80%: less than half of what is left lands by the 90% mark, so no countdown
   const late = { ...early, pct: .89, rest: 60 };
@@ -472,7 +472,7 @@ function loo(all, h) {
   check('with enough posts but a loose spread it says they vary, not "-1 more"',
     /vary too much at this age/.test(M.pjWeekWaitHtml(4, 'loose')) && !/-1|0 more/.test(M.pjWeekWaitHtml(4, 'loose')));
   check('and with too few recorded at this age it says that',
-    /not enough of your full-week posts were tracked at this age/.test(M.pjWeekWaitHtml(3, 'few-at-age')));
+    /not enough of your full-week videos were tracked at this age/.test(M.pjWeekWaitHtml(3, 'few-at-age')));
   const wide = [scurve(2000, 2), scurve(1400, 20), scurve(900, 6), scurve(1600, 12)].map(c => {
     const out = c.map(p => [p[0], p[1]]); for (let m = 49 * 60; m <= 8 * 1440; m += 120) out.push([m, Math.round(c[c.length - 1][1] * (1 + (m - 48 * 60) / 1440 * .02))]);
     return M.pjRef(out); });
@@ -486,10 +486,10 @@ function loo(all, h) {
   const w1 = M.pjProject([], 6 * 60, 400, [done]);
   check('one finished launch is on track but not recording', w1.onTrack === 1 && w1.recording === 0, JSON.stringify(w1));
   check('so the wait card does not say "still recording"',
-    !/being tracked now/.test(M.pjWaitHtml(w1)) && /One post has its first 48 hours tracked so far/.test(M.pjWaitHtml(w1)), strip(M.pjWaitHtml(w1)));
+    !/being tracked now/.test(M.pjWaitHtml(w1)) && /One video has its first 48 hours tracked so far/.test(M.pjWaitHtml(w1)), strip(M.pjWaitHtml(w1)));
   const rec = { curve: scurve(1000, 8).filter(p => p[0] <= 20 * 60), age: 20 * 60 };
   const w2 = M.pjProject([], 6 * 60, 400, [rec]);
-  check('one still going says so', w2.recording === 1 && /One post is being tracked now/.test(M.pjWaitHtml(w2)));
+  check('one still going says so', w2.recording === 1 && /One video is being tracked now/.test(M.pjWaitHtml(w2)));
 
   // early is two different waits
   const young = M.pjProject(refs, 3 * 60, 90);

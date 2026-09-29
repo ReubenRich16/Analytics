@@ -177,7 +177,7 @@
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid" style="display:none">
     <div class="stat" title="Change since the last refresh, counting only posts seen both times"><div class="label" id="viewsLabel">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div><div class="sparkslot" id="ttViewsSpark"></div></div>
-    <div class="stat" title="Your account's total likes, as on your profile. The small figure is the change since the last refresh"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="ttLikesSpark"></div></div>
+    <div class="stat" title="Your account's total likes, as on your profile. The small figure is the change since the last refresh"><div class="label">Account likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="ttLikesSpark"></div></div>
     <div class="stat" title="Your followers, as on your profile. The small figure is the change since the last refresh"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div><div class="sparkslot" id="ttFollowersSpark"></div></div>
     <div class="stat" title="Change since the last refresh, counting only posts seen both times"><div class="label" id="commentsLabel">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="ttCommentsSpark"></div></div>
   </div>
@@ -257,7 +257,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">+Since refresh = views each post gained since the previous refresh. +This visit = views since you opened this page (a reload within 30 minutes carries on; after that it starts again from zero). ⚡ = speeding up: at least 1.5× as many views as the 24 hours before, and 50+ views in the last 24 hours. TikTok only shares views, likes, comments and shares with apps like this — not watch time, where viewers came from or who they are (only TikTok's API for Business carries those, and only for Business accounts). Only your newest 60 posts are fetched; an older post stops being counted rather than counting backwards.</p>
+    <p class="dnote" style="padding:10px 16px">+Since refresh is views since the last refresh; +This visit is views since you opened the page (a reload within 30 minutes carries on). ⚡ means speeding up — 1.5× the views of the 24 hours before and 50+ in the last 24. TikTok shares only views, likes, comments and shares for your newest 60 posts — not watch time or who’s watching.</p>
   </div>
   </div>
 
@@ -267,7 +267,7 @@
   <!-- ACCOUNT BREAKDOWN -->
   <div class="card" id="breakdownCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
-    <p class="explain" style="margin-top:8px">Totals and averages for the posts TikTok shares with this dashboard (your newest 60 at most).</p>
+    <p class="explain" style="margin-top:8px">Totals and averages across your posts.</p>
     <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
@@ -1257,17 +1257,19 @@
      series zigzagged instead, and every climb back was counted as new views.
 
      A launch point is a bare [ts, views] pair; every raw reading carries likes, comments and
-     shares too. Such a pair OFF the minute grid, with a raw reading within five minutes, is
-     one of those early copies: the raw readings already hold the real values there, so it
-     goes. One with no raw reading nearby is the only record of that stretch and stays. The
-     Worker now stamps each point at its reading's own time (on the grid, on top of the raw
-     sample), so this only ever finds points saved before that, or sent by an older Worker. */
+     shares too. Such a pair with a raw reading within five minutes is one of those early
+     copies: the raw readings already hold the real values there, so it goes. One with no
+     raw reading nearby is the only record of that stretch and stays. There is no exemption
+     for a pair on the minute grid: a post whose create_time ends in :00 (or :30, for an
+     older Worker's stopgap stamps) puts every early copy on the grid too. Nothing is lost —
+     the Worker now stamps each point at its reading's own time, on top of the raw sample,
+     and mergeHist folds such a point into that reading; the page writes no bare pairs. */
   function dropEarlyLaunchPts(arr) {
     if (!Array.isArray(arr) || !arr.some(p => p.length > 2)) return arr;
     const raw = arr.filter(p => p.length > 2).map(p => p[0]);
     let j = 0;
     return arr.filter(p => {
-      if (p.length > 2 || p[0] % 60000 === 0) return true;
+      if (p.length > 2) return true;
       while (j < raw.length && raw[j] < p[0]) j++;
       const near = (j < raw.length && raw[j] - p[0] <= 5 * 60e3) || (j > 0 && p[0] - raw[j - 1] <= 5 * 60e3);
       return !near;
@@ -1777,6 +1779,9 @@
      escapes its own band. Hence
      PJ_MIN_AGE — under four hours the honest answer is that nobody can tell, and the
      card says so rather than showing a range so wide it still reads as a prediction. */
+  // the page's word for one item in the shared projection renderers below, which are
+  // pinned character-identical across the two dashboards
+  const PJ_NOUN = 'post';
   const PJ_HORIZON = 48 * 60;   // minutes — the launch window the Worker records in full
   const PJ_MIN_AGE = 5 * 60;   // measured: at 4h one of the three recorded curves still escapes its band
   const PJ_COVER = 44 * 60;     // a reference curve has to almost reach the horizon
@@ -2083,8 +2088,8 @@
       // never round up to a flat 100 while the projection still expects more to arrive —
       // "100% of the way there · most of the rest lands in the next 3 hours" is nonsense
       '<div class="pjnote">about ' + (views >= p.mid ? 100 : Math.min(99, Math.round(p.pct * 100))) + '% of the way there' +
-      (!(p.rest > 0) ? ' · by this age your usual post has had 90% of its ' + (p.span > PJ_HORIZON ? 'first-week' : 'first-48-hour') + ' views'
-        : p.pct <= .8 ? ' · your usual post reaches 90% of its total in another ' + pjDur(p.rest)
+      (!(p.rest > 0) ? ' · by this age your usual ' + PJ_NOUN + ' has had 90% of its ' + (p.span > PJ_HORIZON ? 'first-week' : 'first-48-hour') + ' views'
+        : p.pct <= .8 ? ' · your usual ' + PJ_NOUN + ' reaches 90% of its total in another ' + pjDur(p.rest)
         : ' · the last few percent trickle in over the rest of its ' + (p.span > PJ_HORIZON ? 'first week' : 'first 48 hours')) +
       '</div></div>';
   }
@@ -2098,14 +2103,14 @@
     const when = p.when;
     return '<div class="pjwait">' +
       '<div class="pjwaitn">' + have + ' of ' + PJ_MIN_REFS + '</div>' +
-      '<div><b>Needs ' + PJ_MIN_REFS + ' past posts with their first 48 hours fully tracked.</b><br>' +
+      '<div><b>Needs ' + PJ_MIN_REFS + ' past ' + PJ_NOUN + 's with their first 48 hours fully tracked.</b><br>' +
       (when != null
         ? 'Ready in about <b>' + pjDur(when) + '</b> — it switches on by itself.'
         : p.onTrack
           ? (p.recording
-            ? 'One post is being tracked now. Two are needed, so your next post starts the other.'
-            : 'One post has its first 48 hours tracked so far. Two are needed, so your next post completes the pair 2 days after it goes up.')
-          : 'None of your posts qualify yet — your next post starts one, and it counts once it is 2 days old.') +
+            ? 'One ' + PJ_NOUN + ' is being tracked now. Two are needed, so your next ' + PJ_NOUN + ' starts the other.'
+            : 'One ' + PJ_NOUN + ' has its first 48 hours tracked so far. Two are needed, so your next ' + PJ_NOUN + ' completes the pair 2 days after it goes up.')
+          : 'None of your ' + PJ_NOUN + 's qualify yet — your next ' + PJ_NOUN + ' starts one, and it counts once it is 2 days old.') +
       '</div></div>';
   }
 
@@ -2114,7 +2119,7 @@
   function pjWeekHtml(wk) {
     return '<p class="pjline">And by the end of its first week, about <b>' + fmt.format(wk.mid) + ' views</b> — likely ' +
       fmt.format(wk.lo) + ' to ' + fmt.format(wk.hi) + '. Based on ' + wk.n +
-      ' of your posts tracked for a full first week.</p>';
+      ' of your ' + PJ_NOUN + 's tracked for a full first week.</p>';
   }
   // Why there is no week figure yet, with the number that would turn it on. The alternative
   // was to stretch PJ_FLOOR — a margin measured at 48 hours — across seven days and print
@@ -2122,9 +2127,9 @@
   function pjWeekWaitHtml(have, why) {
     const n = have || 0, need = PJ_MIN_REFS + 1;
     if (n >= need) return '<p class="dnote">' + (why === 'loose'
-      ? 'No first-week estimate yet — your posts’ first weeks vary too much at this age. It may appear as this post gets older.'
-      : 'No first-week estimate yet — not enough of your full-week posts were tracked at this age.') + '</p>';
-    return '<p class="dnote">No first-week estimate yet. It needs ' + need + ' of your posts tracked for a full first week — ' +
+      ? 'No first-week estimate yet — your ' + PJ_NOUN + 's’ first weeks vary too much at this age. It may appear as this ' + PJ_NOUN + ' gets older.'
+      : 'No first-week estimate yet — not enough of your full-week ' + PJ_NOUN + 's were tracked at this age.') + '</p>';
+    return '<p class="dnote">No first-week estimate yet. It needs ' + need + ' of your ' + PJ_NOUN + 's tracked for a full first week — ' +
       n + ' ' + (n === 1 ? 'has' : 'have') + ' been so far, so ' + (need - n) + ' more to go.</p>';
   }
 
@@ -2132,8 +2137,8 @@
   function pjSentenceHtml(p) {
     return '<p class="pjline">Heading for about <b>' + fmt.format(p.mid) + ' views</b> in its first 48 hours — likely ' +
       fmt.format(p.lo) + ' to ' + fmt.format(p.hi) + '. ' +
-      (!(p.rest > 0) ? 'By this age your usual post has had 90% of its first-48-hour views.'
-        : p.pct <= .8 ? 'Your usual post reaches 90% of its total in another ' + pjDur(p.rest) + '.'
+      (!(p.rest > 0) ? 'By this age your usual ' + PJ_NOUN + ' has had 90% of its first-48-hour views.'
+        : p.pct <= .8 ? 'Your usual ' + PJ_NOUN + ' reaches 90% of its total in another ' + pjDur(p.rest) + '.'
         : 'The last few percent trickle in over the rest of its first 48 hours.') +
       '</p>';
   }
@@ -2389,7 +2394,7 @@
     const head = '<p class="explain" style="margin-bottom:10px"><b style="color:var(--text)">' + fmt.format(views) + ' views</b> at <b style="color:var(--text)">' + fmtAge(t) + '</b> old' +
       (pace >= 0.05 ? ' · averaging ' + (pace >= 10 ? Math.round(pace) : pace.toFixed(1)) + ' views/min since posting' : '') + '</p>';
     if (t > TT_RACE_MAX_AGE) {
-      el.innerHTML = head + '<p class="dnote">Past a week old, so the race has retired — this page only compares the first week of your posts. Its whole history is in the hourly chart below.</p>';
+      el.innerHTML = head + '<p class="dnote">This post is over a week old, and the race only compares posts in their first week. Its whole history is in the hourly chart below.</p>';
       return;
     }
     let rivals = [];
@@ -2633,7 +2638,7 @@
     // already past 1,000 means the crossing happened while nobody was watching
     if (first[1] < 1000) {
       const k = s.findIndex(p => p[1] >= 1000);
-      if (k >= 0) cells.push(mcell('To 1,000 views', '≤ ' + lifeAgeTxt(ages[k])));
+      if (k >= 0) cells.push(mcell('To 1,000 views', 'within ' + lifeAgeTxt(ages[k])));
     }
     const late = lifeHour(d, first) >= 1;
     cells.push(mcell('Recorded', lifeAgeTxt(late ? lastAge - ages[0] : lastAge), s.length + ' hourly point' + (s.length === 1 ? '' : 's')));
@@ -2653,7 +2658,7 @@
           ? (entry.old
             ? 'Only ' + (entry.n || 0) + ' hourly point' + (entry.n === 1 ? '' : 's') + ' recorded — too few to draw a line.'
             : 'Less than 3 hours recorded so far — it adds a point each hour.')
-          : 'Couldn’t reach your Worker for the hourly record' + (entry.detail ? ' (' + esc(entry.detail) + ')' : '') + ' — it retries shortly.';
+          : 'Couldn’t load the hourly record' + (entry.detail ? ' (' + esc(entry.detail) + ')' : '') + ' — it retries shortly.';
       ch.innerHTML = '';
       wrap.style.display = 'block';
       return;
@@ -2680,9 +2685,9 @@
     const late = lifeHour(d, d.s[0]) >= 1;
     const pastKeep = Date.now() - t0 >= 60 * 864e5;
     ex.innerHTML =
-      'Recorded by your own Worker, one point an hour, from ' + (late ? '<b>' + lifeAgeTxt(ages[0]) + ' old</b>' : 'posting') +
-      ' to <b>' + lifeAgeTxt(lastAge) + ' old</b>' + (pastKeep ? ' — your Worker keeps each reading for 60 days' : '') + '. ' +
-      'TikTok only ever shows the count right now, so this is the only record of how it grew. ' +
+      'Tracked in the background, one point an hour, from ' + (late ? '<b>' + lifeAgeTxt(ages[0]) + ' old</b>' : 'posting') +
+      ' to <b>' + lifeAgeTxt(lastAge) + ' old</b>' + (pastKeep ? ' — each hour is kept for 60 days' : '') + '. ' +
+      'TikTok only shows today’s count, so this is the only record of how it grew. ' +
       'A gap in the line is a gap in tracking, not a pause in views.';
     // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
     // label is the third positional argument, not an opts key
@@ -2895,15 +2900,15 @@
       // a raw reading carries likes, comments and shares too; a bare [ts, views] pair is a
       // launch-curve point, which is not counted as a reading of its own
       const raw = rec.s.filter(s => s.length > 2).length;
-      html += '<div class="dsection"><h4>Views since it went live — ' + (past48 ? 'as recorded' : 'recorded minute by minute') + '</h4>' +
+      html += '<div class="dsection"><h4>Views since it went live</h4>' +
         '<p class="explain">Tracked in the background, even while this page is closed.</p>' +
-        (past48 ? '<p class="dnote">Every minute for the first 48 hours, then every 15 minutes or hourly.</p>' : '') +
+        '<p class="dnote">' + (past48 ? 'Every minute for the first 48 hours, then every 15 minutes or hourly.' : 'Every minute for the first 48 hours.') + '</p>' +
         lineChart(pts, 'var(--live)', 'Views over time', {
           at: rec.s.map(s => s[0]), int: true,
           tips: rec.s.map(s => fmt.format(s[1]) + ' views — ' + fmtAgo(s[0])),
           x0: fmtAgo(rec.s[0][0]), x1: 'now'
         }) +
-        '<p class="dnote" style="margin-top:6px">' + (raw ? raw + ' reading' + (raw === 1 ? '' : 's') + ' · ' : '') + 'first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
+        '<p class="dnote" style="margin-top:6px">' + (raw ? raw + ' count' + (raw === 1 ? '' : 's') + ' · ' : '') + 'first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
     } else {
       /* "No recording" and "outside what this chart carries" are different things, and
          saying the first when the second is true is a lie about her own data. What decides
@@ -2951,7 +2956,10 @@
       // like rates only from posts that have views — a 0-view post has no rate, not 0%
       const engPool = others.filter(x => (x.view_count || 0) > 0).map(engOf);
       const medEng = typicalLikeRate(v.id);
-      const hasEng = (v.view_count || 0) > 0 && medEng > 0;
+      // the same 200-view floor as the Like rate chip: under it a like rate is too noisy
+      // to judge, and the card must not print a % the chip beside it refuses to
+      const thinEng = (v.view_count || 0) > 0 && (v.view_count || 0) < 200;
+      const hasEng = (v.view_count || 0) >= 200 && medEng > 0;
       const idx = hasEng ? Math.round(engOf(v) / medEng * 100) : null;
       const engRank = hasEng ? pjRank(engPool, engOf(v)) : null;
       const engBeats = engRank ? Math.round(engRank.pct) : null;
@@ -2967,8 +2975,10 @@
           ? (!((v.view_count || 0) > 0) ? 'Reach is graded once this post has views counted.'
             : ageM < PJ_MIN_AGE ? 'Reach is graded once this post is ' + Math.round(PJ_MIN_AGE / 60) + ' hours old and its first 48 hours can be estimated.'
             : 'Reach is graded once this post’s first 48 hours can be estimated.')
+          : thinEng ? 'A reach grade needs at least 4 other posts to compare with, and a like rate needs 200 views to judge.'
           : 'Graded on like rate only (likes per view). A reach grade needs at least 4 other posts to compare with.';
-      const head = rank ? 'Beats ' + beats + '% of your ' + rank.n + ' other posts on reach'
+      // "Beats 100%" reads as over 100 at a glance, so a clean sweep says "all"
+      const head = rank ? (beats === 100 ? 'Beats all ' + rank.n + ' of your other posts on reach' : 'Beats ' + beats + '% of your ' + rank.n + ' other posts on reach')
         : waiting ? 'Not graded yet'
         : engBeats != null ? 'Beats ' + engBeats + '% of your other posts on like rate — ' + band + ' (' + idx + '%)'
         : 'Not graded yet';
@@ -2979,7 +2989,8 @@
         (rank ? '<div class="gbar"><span class="gl">Reach</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.round(rank.pct)) + '%;background:' + col + '"></span></span><span class="gv">' +
           // a launching post's figure is an estimate of its 48-hour total, not a count
           (ageM < PJ_HORIZON ? '~' + fmt.format(Math.round(mine)) + ' by 48h' : fmt.format(Math.round(mine)) + ' views') + '</span></div>' : '') +
-        (idx != null ? '<div class="gbar"><span class="gl">Like rate</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + engCol + '"></span></span><span class="gv">' + idx + '% of your usual</span></div>' : '') +
+        (idx != null ? '<div class="gbar"><span class="gl">Like rate</span><span class="gt"><span class="gf" style="width:' + Math.max(3, Math.min(100, idx / 2)) + '%;background:' + engCol + '"></span></span><span class="gv">' + idx + '% of your usual</span></div>'
+          : thinEng ? '<div class="gbar"><span class="gl">Like rate</span><span class="gv">too few views to judge yet</span></div>' : '') +
         '</div></div></div></div>';
     }
     return html;
@@ -3067,7 +3078,9 @@
       : t > med ? 'Busier than usual.' : 'Quieter than usual.';
     // the verdict is against the usual, so the usual is printed first — otherwise
     // "quieter than usual" sits next to "above the 24 hours before" with no way to square them
-    const pct = med >= 5 && Math.abs(t - med) > noise ? Math.round((t / med - 1) * 100) : null;
+    // a loss or a flat 24 hours has no sensible percentage against a positive usual —
+    // "130% below" is not a thing — so the figures are printed and the % is left out
+    const pct = t > 0 && med >= 5 && Math.abs(t - med) > noise ? Math.round((t / med - 1) * 100) : null;
     const usual = !week.length ? ''
       : 'Your usual 24 hours lately: ' + fmt.format(Math.round(med)) + ' ' + u(med) +
         (pct != null ? ' — this one is ' + Math.abs(pct) + '% ' + (pct > 0 ? 'above' : 'below') + ' that' : '') + '. ';
@@ -3078,7 +3091,7 @@
         : 'The 24 hours before weren’t fully recorded, so there is nothing to hold it against.')
       : Math.abs(t - yv) <= Math.max(2, Math.sqrt(Math.abs(yv)))
         ? 'About the same as the 24 hours before (' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ').'
-        : yv < 5
+        : yv < 5 || t <= 0
           ? 'The 24 hours before came to ' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ' ' + u(yv) + '.'
           : (() => {
               const d = Math.round((t / yv - 1) * 100);
@@ -3116,8 +3129,8 @@
       // three different reasons, and only one of them fills in by itself
       if (Date.now() - latest[0] > 6 * 3600e3) return { h: 'No recent count.', f: fmt.format(latest[1] || 0) + ' followers',
         p: 'No follower count since ' + fmtAgo(latest[0]) + '. Your tracker may have stopped checking.' };
-      if (b[0] && b[0].why === 'fall') return { h: 'Followers are down.', f: fmt.format(latest[1] || 0) + ' followers',
-        p: 'Followers are down ' + fmt.format(-b[0].gain) + ' over the last 24 hours.' };
+      // no 'fall' case: followers are bucketed with allowNeg, so a loss is an ok bucket and
+      // is reported through weekPlace ('Down over the last 24 hours.')
       return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
         p: 'The last 24 hours aren’t fully tracked yet, so there is nothing fair to compare. It fills in after the next follower check.' };
     }
@@ -3155,13 +3168,13 @@
     }
     // the same threshold as the report card: four OTHER posts with a figure
     const pool = videos.filter(v => v.id !== newest.id).map(scoreOf).filter(v => v != null);
-    if (pool.length < 4) return { h: 'Too early to grade.', f: views,
+    if (pool.length < 4) return { h: 'Not enough posts to compare yet.', f: views,
       p: q + ' can be graded, but only ' + pool.length + ' of your other posts can so far. At least 4 are needed before a ranking means anything.' };
     const rk = pjRank(pool, mine);
     const beats = Math.round(rk.pct);
     const verdict = beats >= 80 ? 'It landed well.' : beats >= 50 ? 'It’s doing fine.' : beats >= 25 ? 'It’s under your usual.' : 'A quiet one.';
-    return { h: verdict, f: 'Beats ' + beats + '%',
-      p: q + ' ranks ahead of ' + beats + '% of your other ' + rk.n + ' posts on views. A post under 2 days old counts at its estimated first-48-hour total.' +
+    return { h: verdict, f: beats === 100 ? 'Beats all ' + rk.n : 'Beats ' + beats + '%',
+      p: q + ' ranks ahead of ' + (beats === 100 ? 'all ' + rk.n + ' of your other posts' : beats + '% of your other ' + rk.n + ' posts') + ' on views. A post under 2 days old counts at its estimated first-48-hour total.' +
          (ageM < PJ_HORIZON ? ' This one is under 2 days old, so it can still change.' : '') };
   }
 
@@ -3181,7 +3194,8 @@
     else {
       const rate = (newest.like_count || 0) / nv * 100, idx = typ > 0 ? Math.round(rate / typ * 100) : null;
       vs = ' Your newest: ' + rate.toFixed(1) + '%' + (idx == null ? '.'
-        : ', ' + idx + '% of your usual — ' + (idx > 115 ? 'above' : idx < 85 ? 'below' : 'within') + ' your normal spread.');
+        // the band is a fixed ±15%, not a spread measured on this account, so it says so
+        : ', ' + idx + '% of your usual — ' + (idx > 115 ? 'more than 15% above' : idx < 85 ? 'more than 15% below' : 'within 15% of') + ' it.');
     }
     return { h: 'Your typical like rate.', f: typ.toFixed(1) + '% typical',
       p: 'Half your ' + n + ' earlier posts sit above ' + typ.toFixed(1) + '% and half below.' + vs +
@@ -3191,17 +3205,17 @@
   function answerNext() {
     const pubs = videos.map(v => (v.create_time || 0) * 1000).filter(Boolean).sort((a, b) => b - a);
     if (!pubs.length) return { h: 'Nothing to go on yet.', f: '—', p: 'After a few posts, this tells you when you’re due.' };
-    // hours under a day, whole days elapsed after that — "0 days" three hours after
-    // posting, or 36 hours rounded up to "2 days", is not how anyone counts
+    // hours under a day, then days to one decimal — the same form the usual gap is given
+    // in (and the Coach's Posting rhythm), so the comparison the verdict makes is visible:
+    // "1 day" beside "about 1 day" and a verdict of "due" was a riddle
     const hrs = (Date.now() - pubs[0]) / 3600e3;
-    const sinceTxt = hrs < 24 ? Math.max(1, Math.round(hrs)) + ' hour' + (Math.round(hrs) <= 1 ? '' : 's')
-      : Math.floor(hrs / 24) + ' day' + (Math.floor(hrs / 24) === 1 ? '' : 's');
+    const dTxt = d => d.toFixed(1) === '1.0' ? '1 day' : d.toFixed(1) + ' days';
+    const sinceTxt = hrs < 24 ? Math.max(1, Math.round(hrs)) + ' hour' + (Math.round(hrs) <= 1 ? '' : 's') : dTxt(hrs / 24);
     if (pubs.length < 4) return { h: hrs < 48 ? 'Just posted.' : 'Keep going.', f: sinceTxt,
       p: 'Time since your last post. After a few more posts this can tell you your usual gap.' };
     // the same gaps the Coach's Posting rhythm reads, so the two agree by construction
     const ug = usualGap(10), k = ug.posts, med = ug.med, days = hrs / 24;
-    const gapTxt = med < 1 ? Math.max(1, Math.round(med * 24)) + ' hour' + (Math.round(med * 24) <= 1 ? '' : 's')
-      : Math.round(med) + ' day' + (Math.round(med) === 1 ? '' : 's');
+    const gapTxt = med < 1 / 24 ? 'less than an hour' : med < 1 ? Math.round(med * 24) + ' hour' + (Math.round(med * 24) === 1 ? '' : 's') : dTxt(med);
     const verdict = days <= med ? 'You’re on schedule.' : days <= med * 2 ? 'You’re due.' : 'It’s been a while.';
     return { h: verdict, f: sinceTxt,
       p: 'Time since your last post. You usually leave about ' + gapTxt + ' between posts (based on your last ' + k + ').' };
@@ -3281,7 +3295,7 @@
     // the pool is the posts the Worker is still recording (the newest, up to 60 days old),
     // not every post — a resurfacing older one can't be seen here, so say which posts
     const of = share + '% of the ~' + fmt.format(total) + ' gained by the ' + (n === 1 ? 'one post' : n + ' newest posts') + ' being tracked.';
-    return { h: verdict, f: '+' + fmt.format(best.gain) + ' in 24h',
+    return { h: verdict, f: '+' + fmt.format(best.gain) + ' views in 24h',
       p: best.whole
         ? q + ' has gained ' + fmt.format(best.gain) + ' views since it went up ' + fmtAgo(best.born) + ' — ' + of
         : q + ' gained about ' + fmt.format(best.gain) + ' views over the last 24 hours — ' + of };
@@ -3383,17 +3397,21 @@
     // the true middle of the current view counts, on the same basis as Avg views and the
     // scatter's "typical" line, so the card prints one typical figure, not three
     const vc = videos.map(v => v.view_count || 0).filter(x => x > 0);
-    let html = '<div class="dsection"><h4>Totals</h4><p class="explain">The ' + n + ' posts TikTok shares with this dashboard (your newest, 60 at most).</p><div class="metric-grid m8">' +
+    // "your newest, 60 at most" only when the list really is cut short
+    const capped = me.video_count ? me.video_count > n : n >= 60;
+    let html = '<div class="dsection"><h4>Totals</h4><p class="explain">' +
+      (capped ? 'Your newest ' + n + ' posts — TikTok shares 60 at most.' : n === 1 ? 'Your one post.' : 'All ' + n + ' of your posts.') +
+      '</p><div class="metric-grid m8">' +
       mcell('Posts', fmt.format(n)) +
       mcell('Followers', fmt.format(me.follower_count || 0)) +
       mcell('Views', fmt.format(t.views)) +
-      mcell('Likes', fmt.format(t.likes)) +
+      mcell('Likes on these posts', fmt.format(t.likes), n + ' post' + (n === 1 ? '' : 's')) +
       mcell('Comments', fmt.format(t.comments)) +
       mcell('Shares', fmt.format(t.shares)) +
       mcell('Account likes', fmt.format(me.likes_count || 0), 'lifetime, all posts') +
       mcell('Following', fmt.format(me.following_count || 0)) +
       '</div></div>';
-    html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">Averages get pulled up by your biggest hits — the median is your typical post.</p><div class="metric-grid m8">' +
+    html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">Averages get pulled up by your biggest hits — the middle post (Median views) is the better guide to a typical one.</p><div class="metric-grid m8">' +
       mcell('Avg views', fmt.format(Math.round(t.views / n))) +
       mcell('Median views', vc.length ? fmt.format(Math.round(pjMed(vc))) : '\u2014', 'the middle post') +
       mcell('Avg likes', fmt.format(Math.round(t.likes / n))) +
@@ -3505,7 +3523,7 @@
     // daysOut travels with it, matching the YouTube page's shape — the answer chip
     // uses it to tell a dated projection apart from the flat-growth sentence above
     return { cur, target, daysOut, text: 'At ' + (typical ? 'your typical ' : '') + '<b>+' + rate + ' ' + unit + ' a day</b> (' +
-      (typical ? 'the middle of the last ' + (d.length >= 14 ? '14 days' : d.length + ' days tracked') : 'the average over the last ' + Math.max(1, Math.round(days)) + ' day' + (Math.round(days) === 1 ? '' : 's')) +
+      (typical ? 'a typical day of the last ' + (d.length >= 14 ? '14' : d.length + ' days tracked') : 'the average over the last ' + Math.max(1, Math.round(days)) + ' day' + (Math.round(days) === 1 ? '' : 's')) +
       ') you should reach <b>' + fmt.format(target) + '</b> ' + when + '.' };
   }
   function milestoneHtml(p) {
@@ -3757,18 +3775,11 @@
       rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
         at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
     }
-    // yesterday, ranked among the full local days the recordings cover. The window starts
-    // at a local midnight, so its first day is a whole day and not a partial one ranked
-    // short. A day with a hole in the recording is left out, not ranked short, and
-    // yesterday itself is only ranked when it is complete.
-    const day = new Map();
-    const s0 = new Date(); s0.setHours(0, 0, 0, 0); s0.setDate(s0.getDate() - ALERT_DAYS);
-    const gd = ttGainBuckets(s0.getTime());
-    for (const [at, b] of gd.hours) {
-      const k = new Date(at).toLocaleDateString('en-CA');
-      day.set(k, (day.get(k) || 0) + b.gain);
-    }
-    for (const k of gd.incomplete) day.delete(k);
+    // yesterday, ranked among the full local days the recordings cover — the same days,
+    // on the same rules, as Trends' views per day (recDayGains): a partial first day, a day
+    // with a hole, and a day from before what this device keeps are left out, not ranked
+    // short, and a watched day with no rise is a real +0. So the two cards agree.
+    const day = recDayGains(ALERT_DAYS + 1);
     const y = new Date(); y.setDate(y.getDate() - 1);
     const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
     const done = [...day.entries()].filter(([k]) => k !== tk);
@@ -3778,11 +3789,14 @@
       const yv = day.get(yk), n = done.length;
       const rank = done.filter(([, v]) => v > yv).length + 1, q = done.filter(([, v]) => v < yv).length + 1;
       const of = ' of the last ' + n + ' full days tracked';
+      // a day level with another says "joint", as the Today chip does
+      const joint = done.some(([k, v]) => k !== yk && v === yv) ? 'joint ' : '';
       // a clear record (nothing tied with it) is marked for motion.js to celebrate
       rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
-        (rank === 1 ? (q === n && n > 1 ? '<span class="cc-win">your best' + of + '</span>' : 'your best' + of)
-          : rank > n / 2 ? (q === 1 ? 'your quietest' : ordinal(q) + ' quietest') + of
-          : ordinal(rank) + ' best' + of), at: '' });
+        (rank === 1 && q === 1 ? 'level with every other day' + of
+          : rank === 1 ? (joint ? 'joint best' + of : '<span class="cc-win">your best' + of + '</span>')
+          : rank > n / 2 ? (q === 1 ? (joint ? 'joint quietest' : 'your quietest') : joint + ordinal(q) + ' quietest') + of
+          : joint + ordinal(rank) + ' best' + of), at: '' });
     }
     if (!rows.length) return '';
     return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
@@ -3891,6 +3905,10 @@
     }
     const tk = kOf(now);
     for (const k of g.incomplete) if (k !== tk) out.delete(k);
+    // the window opens at a rolling instant, so its first day holds only the hours after
+    // it — a short day, not a full one — and is dropped unless a reading sits at midnight
+    const f0 = new Date(from); f0.setHours(0, 0, 0, 0);
+    if (from > f0.getTime() && kOf(from) !== tk) out.delete(kOf(from));
     times.sort((a, b) => a - b);
     let resume = -Infinity;
     for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] > 6 * 3600e3) resume = times[i];
@@ -3942,15 +3960,20 @@
       mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? wkSub(prev7)
         : day.notKept && day.coverFrom > new Date(dk(8) + 'T00:00:00').getTime() ? 'older days aren’t kept on this device' : 'no full days recorded') +
       (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)),
-        fNowStale() ? 'last checked ' + fmtAgo(fNow[0]) : 'exact change') : '') +
+        fNowStale() ? 'last checked ' + fmtAgo(fNow[0]) : 'from your follower count') : '') +
       '</div>';
-    // week against week, only when both weeks have enough days to be a claim
+    // week against week, only when both weeks have enough days to be a claim. The weeks
+    // are calendar weeks, so one can hold fewer recorded days than the other: the compare is
+    // per recorded day, and the sentence says so when a week is short, otherwise 5 days
+    // against 7 of the same daily views reads as "29% fewer"
     if (last7.length >= 5 && prev7.length >= 5 && sum(prev7) > 0) {
-      const d = Math.round((sum(last7) / sum(prev7) - 1) * 100);
-      html += '<p class="explain" style="margin-bottom:14px">' +
-        (Math.abs(d) < 8 ? 'Your last 7 days are about level with the 7 before.'
-          : d > 0 ? 'Your last 7 days are <b>' + d + '% ahead</b> of the 7 before.'
-                  : 'Your last 7 days are <b>' + Math.abs(d) + '% behind</b> the 7 before.') + '</p>';
+      const d = Math.round(((sum(last7) / last7.length) / (sum(prev7) / prev7.length) - 1) * 100);
+      const full = last7.length === 7 && prev7.length === 7;
+      const lead = full ? 'Your last 7 days gained '
+        : 'Per recorded day (' + last7.length + ' of the last 7, ' + prev7.length + ' of the 7 before), your last 7 days gained ';
+      html += '<p class="explain" style="margin-bottom:14px">' + lead +
+        (Math.abs(d) < 8 ? 'about the same views as the 7 before.'
+          : '<b>' + Math.abs(d) + '% ' + (d > 0 ? 'more' : 'fewer') + ' views</b> than the 7 before.') + '</p>';
     }
 
     // views per day — the daily series TikTok never provides
@@ -4087,8 +4110,12 @@
     })), { color: 'var(--up)' });
     // where the median sits, so a bar is readable as better or worse than usual rather
     // than only as longer or shorter than the bar above it
-    html += '<p class="dnote" style="margin-top:8px">Your typical post reaches <b>' +
-      fmt.format(Math.round(med)) + ' views</b> (a post under two days old counts by its estimated 48-hour total), so a tag above that is helping. ' +
+    // named with its basis: the other cards' "typical" is the middle of every post's current
+    // count, this one is the middle of the posts old enough to grade, and two unexplained
+    // "typical" figures on one page is a contradiction
+    html += '<p class="dnote" style="margin-top:8px">Among your ' + all.length + ' post' + (all.length === 1 ? '' : 's') +
+      ' old enough to grade, the typical one reaches <b>' +
+      fmt.format(Math.round(med)) + ' views</b>, so a tag above that is helping. ' +
       'The count under each tag is how many posts its figure is based on.</p>';
     if (rated.length > 10) html += '<p class="dnote">' + (rated.length - 10) + ' more ranked tags aren’t shown — just the top 10.</p>';
     el.innerHTML = html + leftovers();
@@ -4128,7 +4155,7 @@
       html += section('Best day to post', 'Typical (middle) views per post, by the weekday you posted it, so one viral post can’t carry a day. Your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
         hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.med), valText: fmt.format(Math.round(x.med)) + ' views typical', sub: plural(x.n, 'post') })), { color: 'var(--up)' }) +
         (left.length ? '<p class="dnote" style="margin-top:8px">' + leftTxt + (left.length === 1 ? ' is' : ' are') +
-          ' left out — a weekday needs at least 2 scored posts before it gets a figure.</p>' : ''));
+          ' left out — a weekday needs at least 2 posts old enough to grade before it gets a figure.</p>' : ''));
     }
     const byHour = [];
     for (let h = 0; h < 24; h++) {
@@ -4160,7 +4187,8 @@
     const youngTxt = young.map(h => {
       const vs = postedAt.get(h);
       const tooNew = vs.every(v => Date.now() - v.create_time * 1000 < 2 * 864e5);
-      return hName(h) + (vs.length === 1 ? ' has a post that is ' : ' has posts that are ') + (tooNew ? 'too new to score yet' : 'not scored yet');
+      // the same range label the rows use, so "4am" here is "4am–5am" there
+      return 'Your ' + hourLabel(h) + (vs.length === 1 ? ' post is ' : ' posts are ') + (tooNew ? 'too new to grade yet' : 'not graded yet');
     });
     const capped = me && (me.video_count || 0) > videos.length;
     if (byHour.length >= 2) html += section('Best time to post — hour by hour',
@@ -4169,8 +4197,7 @@
       '. Check each row’s post count — an hour with one post is an anecdote, not a pattern.',
       hbarList(byHour, { color: 'var(--accent)' }) +
       (quiet.length || youngTxt.length ? '<p class="dnote" style="margin-top:8px">' +
-        (quiet.length ? 'No posts yet at ' + quiet.join(', ') + (capped ? ' among your newest ' + videos.length + ' posts' : '') +
-          ' — no data for those hours yet.' : '') +
+        (quiet.length ? 'No posts yet at ' + quiet.join(', ') + (capped ? ' among your newest ' + videos.length + ' posts' : '') + '.' : '') +
         (youngTxt.length ? (quiet.length ? ' ' : '') + youngTxt.join('; ') + '.' : '') + '</p>' : ''));
     /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
        of their own with the figures attached — saying the same thing twice, once without
@@ -4179,7 +4206,7 @@
     if (ug && ug.gaps >= 3) {
       const med = ug.med, hrs = Math.round(med * 24);
       html += '<div class="dsection"><h4>Posting rhythm</h4><p class="explain">You post roughly every <b>' +
-        (med < 1 / 24 ? 'less than an hour' : med < 1 ? hrs + (hrs === 1 ? ' hour' : ' hours') : med.toFixed(1) + ' days') +
+        (med < 1 / 24 ? 'less than an hour' : med < 1 ? hrs + (hrs === 1 ? ' hour' : ' hours') : med.toFixed(1) === '1.0' ? '1 day' : med.toFixed(1) + ' days') +
         '</b> — the middle gap between your last ' + ug.posts + ' posts.</p></div>';
     }
     el.innerHTML = html || '<p class="dnote">Not enough posts yet to spot patterns — check back after a few more.</p>';

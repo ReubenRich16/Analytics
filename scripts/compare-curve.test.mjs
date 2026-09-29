@@ -190,6 +190,7 @@ console.log('\n8. Time to a thousand claims only what the brackets guarantee');
   check('a wide one reads as the bracket', bt([0, 10]) === 'between 0 and 10 hrs', bt([0, 10]));
   check('and in hours on both ends', bt([3, 10]) === 'between 3 and 10 hrs', bt([3, 10]));
   check('nothing observed says so', bt(null) === 'not recorded');
+  check('one hour is singular', bt([0.8, 1]) === 'by 1 hr' && bt([1, 10]) === 'between 1 and 10 hrs', bt([0.8, 1]) + ' / ' + bt([1, 10]));
   check('the ratio is YouTube\'s lower bound over TikTok\'s upper, floored',
     /Math\.floor\(yb\[0\] \/ tb\[1\]\)/.test(src) && /at least ' \+ x \+ '× faster/.test(src));
   check('"normal for the format" and "no units problem" are gone',

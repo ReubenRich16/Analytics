@@ -960,11 +960,11 @@
     const [lo, hi] = b;
     if (hi - lo <= 1) return 'by ' + fmtDur(hi);
     const a = fmtDur(lo), z = fmtDur(hi);
-    return 'between ' + (lo === 0 ? '0' : / hrs$/.test(a) && / hrs$/.test(z) ? a.replace(/ hrs$/, '') : a) + ' and ' + z;
+    return 'between ' + (lo === 0 ? '0' : / hrs?$/.test(a) && / hrs?$/.test(z) ? a.replace(/ hrs?$/, '') : a) + ' and ' + z;
   };
   const fmtDur = hrs => hrs == null ? '—' :
     hrs < 1 ? Math.round(hrs * 60) + ' min' :
-    hrs < 48 ? (Math.round(hrs * 10) / 10) + ' hrs' :
+    hrs < 48 ? (h => h + (h === 1 ? ' hr' : ' hrs'))(Math.round(hrs * 10) / 10) :
     Math.floor(hrs / 24) + 'd ' + Math.round(hrs % 24) + 'h';
 
   function renderT1k() {

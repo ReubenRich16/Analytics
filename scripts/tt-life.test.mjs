@@ -64,7 +64,7 @@ console.log('\nthe lifetime-results strip');
   check('and says how long it recorded, counting hourly points (not "readings")',
     /Recorded=40d \(\d+ hourly points\)/.test(full), full);
   check('a crossing observed inside the recording gets a time-to-1,000',
-    /To 1,000 views=≤ /.test(full), full);
+    /To 1,000 views=within /.test(full), full);
 
   // a recording that started at day 3 — the account was connected late
   const late = M.lifeStripHtml(rec(12000, 3 * 24, 40 * 24));
@@ -85,7 +85,7 @@ console.log('\npaintLife — every outcome is visible');
   const ok = host();
   M.paintLife(ok.wrap, { d: rec(5000, 0, 48), at: Date.now() });
   check('success paints the strip and the chart', /<cell>/.test(ok.wrap.ch.innerHTML) && /<svg/.test(ok.wrap.ch.innerHTML));
-  check('and the explain says what the recording is', /Recorded by your own Worker/.test(ok.wrap.ex.innerHTML));
+  check('and the explain says what the recording is', /one point an hour/.test(ok.wrap.ex.innerHTML) && !/Worker/.test(ok.wrap.ex.innerHTML));
   check('and the section is shown', ok.wrap.style.display === 'block');
 
   const nf = host();
@@ -106,7 +106,7 @@ console.log('\npaintLife — every outcome is visible');
   const un = host();
   M.paintLife(un.wrap, { why: 'unreachable', detail: 'HTTP 502', at: Date.now() });
   check('an unreachable Worker names the error and promises the retry',
-    /Couldn’t reach your Worker/.test(un.wrap.ex.innerHTML) && /HTTP 502/.test(un.wrap.ex.innerHTML) && /retries/.test(un.wrap.ex.innerHTML));
+    /Couldn’t load the hourly record/.test(un.wrap.ex.innerHTML) && /HTTP 502/.test(un.wrap.ex.innerHTML) && /retries/.test(un.wrap.ex.innerHTML));
 }
 
 console.log('\nloadLife — the cache does the work');
@@ -175,7 +175,7 @@ console.log('\nhourly points sit at the end of their hour, and say what they are
   const h2 = host();
   M.paintLife(h2.wrap, { d: late, at: Date.now() });
   check('a late-started recording says where it starts, not "from posting"',
-    /from <b>20d old<\/b> to <b>60d old<\/b> — your Worker keeps each reading for 60 days/.test(h2.wrap.ex.innerHTML), h2.wrap.ex.innerHTML);
+    /from <b>20d old<\/b> to <b>60d old<\/b> — each hour is kept for 60 days/.test(h2.wrap.ex.innerHTML), h2.wrap.ex.innerHTML);
   check('and its Recorded cell is the span it covers', /Recorded=40d \(961 hourly points\)/.test(h2.wrap.ch.innerHTML), h2.wrap.ch.innerHTML);
   check('with no first hour or day it never saw', !/First hour=|First day=/.test(h2.wrap.ch.innerHTML));
 

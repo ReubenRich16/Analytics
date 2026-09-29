@@ -287,7 +287,7 @@
     </div>
     <div class="tscroll">
       <table>
-        <thead><tr id="thRow"><th></th><th data-sort="title" style="text-align:left" title="Click to sort">Video</th><th data-sort="views" title="Click to sort">Views</th><th data-sort="tickV" title="Click to sort">+tick</th><th data-sort="sessV" title="Click to sort">+session</th><th data-sort="likes" title="Click to sort">Likes</th><th data-sort="dislikes" title="Only you can see dislikes — official stats, last 28 days, lag 24-48h. Click to sort">Dislikes†</th><th data-sort="saves" title="Times saved to a playlist or Watch Later — official stats, last 28 days. Click to sort">Saves†</th><th data-sort="comments" title="Click to sort">Comments</th><th data-sort="avgPct" title="Official stats, last 28 days, lag 24-48h. Click to sort">Avg %†</th><th data-sort="subs" title="Official stats, last 28 days, lag 24-48h. Click to sort">Subs†</th><th data-sort="shares" title="Official stats, last 28 days, lag 24-48h. Click to sort">Shares†</th></tr></thead>
+        <thead><tr id="thRow"><th></th><th data-sort="title" style="text-align:left" title="Click to sort">Video</th><th data-sort="views" title="Click to sort">Views</th><th data-sort="tickV" title="Views this video gained since the last refresh. Click to sort">+Since refresh</th><th data-sort="sessV" title="Views this video has gained since you opened this page (a reload within 30 minutes carries on). Click to sort">+This visit</th><th data-sort="likes" title="Click to sort">Likes</th><th data-sort="dislikes" title="Only you can see dislikes — official stats, last 28 days, lag 24-48h. Click to sort">Dislikes†</th><th data-sort="saves" title="Times saved to a playlist or Watch Later — official stats, last 28 days. Click to sort">Saves†</th><th data-sort="comments" title="Click to sort">Comments</th><th data-sort="avgPct" title="Official stats, last 28 days, lag 24-48h. Click to sort">Avg %†</th><th data-sort="subs" title="Official stats, last 28 days, lag 24-48h. Click to sort">Subs†</th><th data-sort="shares" title="Official stats, last 28 days, lag 24-48h. Click to sort">Shares†</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -442,7 +442,8 @@
          (each video's high-water mark, the same basis as the biggest hour). The channel's
          public total updates in lumps and is not used for it. Subscribers are the channel's
          recorded count, with a stale dip-and-recover reading left out.
-       · yesterday's rank is measured on the channel's daily views, counting only new highs.
+       · yesterday's rank is measured on the same basis: the rises recorded on your own
+         videos, rolled up by local day. A day a recording hole touches is left out.
 
      Same rules as the TikTok card otherwise: a per-device, per-account stamp of the
      last time the page was open sizes the headline, items newer than it wear a dot,
@@ -491,8 +492,13 @@
     from = Math.max(from, now - 14 * 864e5);
     let total = 0;
     const own = ownIds();
+    // seen: local days (en-CA) with a reading, so a watched day with no rise is a real +0;
+    // incomplete: local days a rise across a hole of more than 90 minutes touches, whose
+    // views can't be placed in an hour and so would read short
+    const seen = new Set(), incomplete = new Set();
     for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
       if (!own.has(id) || !Array.isArray(arr) || !arr.length) continue;
+      for (const x of arr) if (x[0] >= from && x[0] <= now) seen.add(new Date(x[0]).toLocaleDateString('en-CA'));
       let hi = arr[0][1] || 0, i = 1;
       for (; i < arr.length && arr[i][0] <= from; i++) hi = Math.max(hi, arr[i][1] || 0);
       for (; i < arr.length; i++) {
@@ -503,7 +509,11 @@
         hi = v;
         if (arr[i - 1][0] < from) continue;
         total += d;
-        if (arr[i][0] - arr[i - 1][0] > 90 * 60e3) continue;
+        if (arr[i][0] - arr[i - 1][0] > 90 * 60e3) {
+          const day = new Date(arr[i - 1][0]); day.setHours(0, 0, 0, 0);
+          for (; day.getTime() < arr[i][0]; day.setDate(day.getDate() + 1)) incomplete.add(day.toLocaleDateString('en-CA'));
+          continue;
+        }
         const h = new Date(arr[i][0] - 1); h.setMinutes(0, 0, 0);
         const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
         b.gain += d;
@@ -511,7 +521,7 @@
         hours.set(h.getTime(), b);
       }
     }
-    return { total, hours };
+    return { total, hours, seen, incomplete, from };
   }
 
   /* The feed. Crossings between two recorded samples only — no "you are close to" and no
@@ -592,11 +602,14 @@
 
   /* Two moments as plain lines: the biggest recorded hour (naming a carrier only when
      one video genuinely carried ≥60% of it), and yesterday ranked among the local
-     calendar days behind it, from midnight 14 days ago. A day is the channel total's NEW
-     highs on that day: the public total flips back and forth (+734, −734, +734), and
-     counting every rise would book the same views two or three times. A day with readings
-     but no new high is a recorded day of +0 and still counts. Today never ranks, because
-     it is not finished being a day; the rank abstains below three recorded days. */
+     calendar days behind it. A day is the NEW highs recorded on your own videos that day
+     — the same basis as the biggest hour. Not the channel's public total: that updates in
+     lumps (a day it sat still would read +0 beside a biggest hour of hundreds, and the
+     next day would take the lump and be called best), and it flips back and forth. A day
+     with readings but no new high is a recorded day of +0 and still counts; a day a
+     recording hole touches is left out, and so is the window's first day, which the
+     14-day limit opens part-way through. Today never ranks, because it is not finished
+     being a day; the rank abstains below three recorded days. */
   function ytMomentsHtml() {
     const rows = [];
     const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
@@ -614,20 +627,18 @@
       rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
         at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
     }
-    const chn = chanSeries(), day = new Map();
+    const day = new Map();
     const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - ALERT_DAYS);
-    let hi = null, firstDay = null;
-    for (let i = 0; i < chn.length; i++) {
-      const v = chn[i][2] || 0;
-      if (chn[i][0] < start.getTime()) { hi = hi == null ? v : Math.max(hi, v); continue; }
-      const k = new Date(chn[i][0]).toLocaleDateString('en-CA');
-      // with no reading before the window, the first day's start is unknown: it counts from
-      // its first reading, so it is part-recorded and does not rank
-      if (hi == null) { hi = v; firstDay = k; }
-      day.set(k, (day.get(k) || 0) + Math.max(0, v - hi));
-      hi = Math.max(hi, v);
+    const gd = ytGainBuckets(start.getTime());
+    for (const k of gd.seen) day.set(k, 0);
+    for (const [at, b] of gd.hours) {
+      const k = new Date(at).toLocaleDateString('en-CA');
+      day.set(k, (day.get(k) || 0) + b.gain);
     }
-    if (firstDay) day.delete(firstDay);
+    for (const k of gd.incomplete) day.delete(k);
+    // the window opens part-way through its first day unless it starts on a midnight
+    const f0 = new Date(gd.from); f0.setHours(0, 0, 0, 0);
+    if (gd.from > f0.getTime()) day.delete(new Date(gd.from).toLocaleDateString('en-CA'));
     const y = new Date(); y.setDate(y.getDate() - 1);
     const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
     const done = [...day.entries()].filter(([k]) => k !== tk);
@@ -636,12 +647,14 @@
       const rank = done.filter(([, v]) => v > yv).length + 1;
       const q = done.filter(([, v]) => v < yv).length + 1;
       const tail = ' of the last ' + N + ' full days tracked';
+      // a day level with another says "joint", as the Today chip does
+      const joint = done.some(([k, v]) => k !== yk && v === yv) ? 'joint ' : '';
       rows.push({ t: 'Yesterday: <b>+' + fmt.format(yv) + ' views</b> — ' +
         (rank === 1 && q === 1 ? 'level with every other day' + tail
           // a clear record (nothing tied with it) is marked for motion.js to celebrate
-          : rank === 1 ? (q === N ? '<span class="cc-win">your best' + tail + '</span>' : 'your best' + tail)
-          : rank > N / 2 ? (q === 1 ? 'your quietest' : ordinal(q) + ' quietest') + tail
-          : ordinal(rank) + ' best' + tail), at: '' });
+          : rank === 1 ? (joint ? 'joint best' + tail : '<span class="cc-win">your best' + tail + '</span>')
+          : rank > N / 2 ? (q === 1 ? (joint ? 'joint quietest' : 'your quietest') : joint + ordinal(q) + ' quietest') + tail
+          : joint + ordinal(rank) + ' best' + tail), at: '' });
     }
     if (!rows.length) return '';
     return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
@@ -1591,8 +1604,8 @@
         '<td class="thumbcell">' + (r.thumb ? '<img class="vthumb" loading="lazy" alt="" src="' + esc(r.thumb) + '">' : '') + '</td>' +
         '<td class="title">' + (accelSet.has(r.id) ? '<span title="Accelerating — views coming in 1.5x+ faster than yesterday">⚡ </span>' : '') + esc(r.title) + '</td>' +
         '<td data-label="Views">' + fmt.format(r.views) + '</td>' +
-        '<td data-label="+tick">' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
-        '<td data-label="+session">' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="+Since refresh">' + (r.tickV > 0 ? '<span class="tickup">+' + fmt.format(r.tickV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
+        '<td data-label="+This visit">' + (r.sessV > 0 ? '<span class="tickup">+' + fmt.format(r.sessV) + '</span>' : '<span class="zero">·</span>') + '</td>' +
         '<td data-label="Likes">' + fmt.format(r.likes) + '</td>' +
         '<td data-label="Dislikes">' + (r.ru.dislikes != null ? (r.ru.dislikes > 0 ? fmt.format(r.ru.dislikes) : '0') : '<span class="zero">·</span>') + '</td>' +
         '<td data-label="Saves">' + (r.ru.saves != null ? fmt.format(r.ru.saves) : '<span class="zero">·</span>') + '</td>' +
@@ -2350,7 +2363,7 @@
     }
     if (hourBuckets.some(v => v > 0)) {
       const hTips = hourBuckets.map((v, h2) => fmt.format(v) + ' views recorded — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm'));
-      aud += section('When views actually arrive (recorded by the app)', 'Views gained per hour of the day, in <b>your own local time</b>, from the minute-history recorded on recent uploads — by this page while it’s open, and around the clock by your Worker if one is connected. It fills in over time — YouTube’s API has no official hour-by-hour data.',
+      aud += section('When views actually arrive', 'Views gained per hour of the day, in <b>your own local time</b>, tracked by this dashboard on your recent uploads. It fills in over time — YouTube doesn’t share hour-by-hour data.',
         barChartHtml(hourBuckets, hTips, 'Views by hour of day', { color: 'var(--gold)', x0: '12am', xMid: '12pm', x1: '11pm' }));
     }
 
@@ -2359,7 +2372,7 @@
     if (chn && chn.length > 1) {
       const sPts = chn.map(s2 => s2[1]);
       const sTips = chn.map(s2 => fmt.format(s2[1]) + ' subs — ' + new Date(s2[0]).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric' }));
-      aud += section('Subscriber history — recorded hourly', 'From the repo’s snapshot robot. YouTube publicly shows rounded subscriber counts, so the line moves in steps — this is the only free way to see movement between days.',
+      aud += section('Subscriber history — recorded hourly', 'Tracked every hour. YouTube rounds public subscriber counts, so the line moves in steps.',
         // `at`, because the robot's channel history is not evenly spaced either — it writes
         // every ~5 minutes around a launch and hourly otherwise, so index-spacing stretched
         // the busy days and squeezed the quiet ones
@@ -2372,7 +2385,7 @@
         const own = growth(chn);
         if (own) rows2.push({ label: '★ Your channel', val: Math.max(0.01, own.pct), valText: own.pct.toFixed(1) + '% · ' + fmt.format(own.now) + ' subs', color: 'var(--live)', strong: true });
         for (const b of bIds) { const g = growth(hist.bench[b]); if (g) rows2.push({ label: (hist.benchMeta && hist.benchMeta[b]) || b, val: Math.max(0.01, g.pct), valText: g.pct.toFixed(1) + '% · ' + fmt.format(g.now) + ' subs' }); }
-        if (rows2.length > 1) aud += section('Benchmark channels — subscriber growth, last 30 days', 'Similar channels tracked by the snapshot robot (set channel IDs in the BENCH_CHANNELS repo secret).',
+        if (rows2.length > 1) aud += section('Benchmark channels — subscriber growth, last 30 days', 'Similar channels your dashboard tracks.',
           hbarList(rows2.sort((a, b) => b.val - a.val)));
       }
     }
@@ -2396,11 +2409,11 @@
       if (rr) html += section('Search rank tracker — weekly', 'Where your videos rank in YouTube search for your target keywords. Edit data/keywords.json in the repo to choose them (max 10).', rr);
     }
     if (!hist) {
-      html += '<div class="dsection"><h4>Unlock hourly history 🔓</h4><p class="explain">A snapshot robot is installed in the repo but needs a one-time setup — follow <b>“The history robots”</b> in the repo README (about 3 minutes). Once set, this card grows: exact subscriber history, views-per-hour on every video, ⚡ acceleration badges, milestone alerts, rival-channel tracking and weekly search ranks.</p></div>';
+      html += '<div class="dsection"><h4>Unlock hourly history 🔓</h4><p class="explain">Hourly tracking needs a one-time setup — follow <b>“The history robots”</b> in the repo README (about 3 minutes). Once set, this card grows: exact subscriber history, views-per-hour on every video, ⚡ acceleration badges, milestone alerts, rival-channel tracking and weekly search ranks.</p></div>';
     }
 
     $('trendsContent').innerHTML = html || '<p class="dnote">No channel data for this period yet — YouTube usually takes a day or two to catch up.</p>';
-    $('audienceContent').innerHTML = aud || '<p class="dnote">Nothing recorded for this period yet — the hourly robot fills this in over time.</p>';
+    $('audienceContent').innerHTML = aud || '<p class="dnote">Nothing tracked for this period yet — it fills in over time.</p>';
   }
 
   /* ---------- minute-by-minute tracking ---------- */
@@ -2610,7 +2623,7 @@
       .map(id => ({ id, at: viewsAtAge(id, t) }))
       .filter(r => r.at !== null);
     if (!rivals.length) {
-      el.innerHTML = head + '<p class="dnote">No minute-by-minute history exists for your older uploads yet — YouTube doesn’t share it, so the dashboard records its own: this page while it’s open, and your Worker around the clock if one is connected. From your <b>next upload</b> onwards, new videos will race right here in real time.</p>';
+      el.innerHTML = head + '<p class="dnote">No minute-by-minute history exists for your older uploads yet — YouTube doesn’t share it, so the dashboard tracks its own, around the clock. From your <b>next upload</b> onwards, new videos will race right here in real time.</p>';
       return;
     }
     if (raceMode === 'best') rivals = rivals.sort((a, b) => b.at.v - a.at.v).slice(0, 10);
@@ -2640,6 +2653,9 @@
      is where PJ_MIN_AGE comes from — under four hours the honest answer is that
      nobody can tell, and the card says so rather than showing a range so wide it
      still reads as a prediction. */
+  // the page's word for one item in the shared projection renderers below, which are
+  // pinned character-identical across the two dashboards
+  const PJ_NOUN = 'video';
   const PJ_HORIZON = 48 * 60;   // minutes — the launch window the Worker records in full
   const PJ_MIN_AGE = 5 * 60;   // measured: at 4h one of the three recorded curves still escapes its band
   const PJ_COVER = 44 * 60;     // a reference curve has to almost reach the horizon
@@ -2950,8 +2966,8 @@
       // never round up to a flat 100 while the projection still expects more to arrive —
       // "100% of the way there · most of the rest lands in the next 3 hours" is nonsense
       '<div class="pjnote">about ' + (views >= p.mid ? 100 : Math.min(99, Math.round(p.pct * 100))) + '% of the way there' +
-      (!(p.rest > 0) ? ' · by this age your usual post has had 90% of its ' + (p.span > PJ_HORIZON ? 'first-week' : 'first-48-hour') + ' views'
-        : p.pct <= .8 ? ' · your usual post reaches 90% of its total in another ' + pjDur(p.rest)
+      (!(p.rest > 0) ? ' · by this age your usual ' + PJ_NOUN + ' has had 90% of its ' + (p.span > PJ_HORIZON ? 'first-week' : 'first-48-hour') + ' views'
+        : p.pct <= .8 ? ' · your usual ' + PJ_NOUN + ' reaches 90% of its total in another ' + pjDur(p.rest)
         : ' · the last few percent trickle in over the rest of its ' + (p.span > PJ_HORIZON ? 'first week' : 'first 48 hours')) +
       '</div></div>';
   }
@@ -2965,14 +2981,14 @@
     const when = p.when;
     return '<div class="pjwait">' +
       '<div class="pjwaitn">' + have + ' of ' + PJ_MIN_REFS + '</div>' +
-      '<div><b>Needs ' + PJ_MIN_REFS + ' past posts with their first 48 hours fully tracked.</b><br>' +
+      '<div><b>Needs ' + PJ_MIN_REFS + ' past ' + PJ_NOUN + 's with their first 48 hours fully tracked.</b><br>' +
       (when != null
         ? 'Ready in about <b>' + pjDur(when) + '</b> — it switches on by itself.'
         : p.onTrack
           ? (p.recording
-            ? 'One post is being tracked now. Two are needed, so your next post starts the other.'
-            : 'One post has its first 48 hours tracked so far. Two are needed, so your next post completes the pair 2 days after it goes up.')
-          : 'None of your posts qualify yet — your next post starts one, and it counts once it is 2 days old.') +
+            ? 'One ' + PJ_NOUN + ' is being tracked now. Two are needed, so your next ' + PJ_NOUN + ' starts the other.'
+            : 'One ' + PJ_NOUN + ' has its first 48 hours tracked so far. Two are needed, so your next ' + PJ_NOUN + ' completes the pair 2 days after it goes up.')
+          : 'None of your ' + PJ_NOUN + 's qualify yet — your next ' + PJ_NOUN + ' starts one, and it counts once it is 2 days old.') +
       '</div></div>';
   }
 
@@ -2981,7 +2997,7 @@
   function pjWeekHtml(wk) {
     return '<p class="pjline">And by the end of its first week, about <b>' + fmt.format(wk.mid) + ' views</b> — likely ' +
       fmt.format(wk.lo) + ' to ' + fmt.format(wk.hi) + '. Based on ' + wk.n +
-      ' of your posts tracked for a full first week.</p>';
+      ' of your ' + PJ_NOUN + 's tracked for a full first week.</p>';
   }
   // Why there is no week figure yet, with the number that would turn it on. The alternative
   // was to stretch PJ_FLOOR — a margin measured at 48 hours — across seven days and print
@@ -2989,9 +3005,9 @@
   function pjWeekWaitHtml(have, why) {
     const n = have || 0, need = PJ_MIN_REFS + 1;
     if (n >= need) return '<p class="dnote">' + (why === 'loose'
-      ? 'No first-week estimate yet — your posts’ first weeks vary too much at this age. It may appear as this post gets older.'
-      : 'No first-week estimate yet — not enough of your full-week posts were tracked at this age.') + '</p>';
-    return '<p class="dnote">No first-week estimate yet. It needs ' + need + ' of your posts tracked for a full first week — ' +
+      ? 'No first-week estimate yet — your ' + PJ_NOUN + 's’ first weeks vary too much at this age. It may appear as this ' + PJ_NOUN + ' gets older.'
+      : 'No first-week estimate yet — not enough of your full-week ' + PJ_NOUN + 's were tracked at this age.') + '</p>';
+    return '<p class="dnote">No first-week estimate yet. It needs ' + need + ' of your ' + PJ_NOUN + 's tracked for a full first week — ' +
       n + ' ' + (n === 1 ? 'has' : 'have') + ' been so far, so ' + (need - n) + ' more to go.</p>';
   }
 
@@ -2999,8 +3015,8 @@
   function pjSentenceHtml(p) {
     return '<p class="pjline">Heading for about <b>' + fmt.format(p.mid) + ' views</b> in its first 48 hours — likely ' +
       fmt.format(p.lo) + ' to ' + fmt.format(p.hi) + '. ' +
-      (!(p.rest > 0) ? 'By this age your usual post has had 90% of its first-48-hour views.'
-        : p.pct <= .8 ? 'Your usual post reaches 90% of its total in another ' + pjDur(p.rest) + '.'
+      (!(p.rest > 0) ? 'By this age your usual ' + PJ_NOUN + ' has had 90% of its first-48-hour views.'
+        : p.pct <= .8 ? 'Your usual ' + PJ_NOUN + ' reaches 90% of its total in another ' + pjDur(p.rest) + '.'
         : 'The last few percent trickle in over the rest of its first 48 hours.') +
       '</p>';
   }
@@ -3556,7 +3572,7 @@
     const unit = rate === '1.0' ? (labelOne || label) : label;
     return { cur, target, perDay, daysOut, label,
       text: 'At ' + (typical ? 'your typical ' : '') + '<b>+' + rate + ' ' + unit + ' a day</b> (' +
-        (typical ? 'the middle of the last ' + (d.length >= 14 ? '14 days' : d.length + ' days tracked') : 'the average over the last ' + Math.max(1, Math.round(days)) + ' day' + (Math.round(days) === 1 ? '' : 's')) +
+        (typical ? 'a typical day of the last ' + (d.length >= 14 ? '14' : d.length + ' days tracked') : 'the average over the last ' + Math.max(1, Math.round(days)) + ' day' + (Math.round(days) === 1 ? '' : 's')) +
         ') you should reach <b>' + fmt.format(target) + '</b> ' + when + '.' };
   }
   function milestoneHtml(p) {
@@ -3640,7 +3656,9 @@
       : t > med ? 'Busier than usual.' : 'Quieter than usual.';
     // the verdict is against the usual, so the usual is printed first — otherwise
     // "quieter than usual" sits next to "above the 24 hours before" with no way to square them
-    const pct = med >= 5 && Math.abs(t - med) > noise ? Math.round((t / med - 1) * 100) : null;
+    // a loss or a flat 24 hours has no sensible percentage against a positive usual —
+    // "130% below" is not a thing — so the figures are printed and the % is left out
+    const pct = t > 0 && med >= 5 && Math.abs(t - med) > noise ? Math.round((t / med - 1) * 100) : null;
     const usual = !week.length ? ''
       : 'Your usual 24 hours lately: ' + fmt.format(Math.round(med)) + ' ' + u(med) +
         (pct != null ? ' — this one is ' + Math.abs(pct) + '% ' + (pct > 0 ? 'above' : 'below') + ' that' : '') + '. ';
@@ -3651,7 +3669,7 @@
         : 'The 24 hours before weren’t fully recorded, so there is nothing to hold it against.')
       : Math.abs(t - yv) <= Math.max(2, Math.sqrt(Math.abs(yv)))
         ? 'About the same as the 24 hours before (' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ').'
-        : yv < 5
+        : yv < 5 || t <= 0
           ? 'The 24 hours before came to ' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ' ' + u(yv) + '.'
           : (() => {
               const d = Math.round((t / yv - 1) * 100);
@@ -3703,8 +3721,7 @@
       // three different reasons, and only one of them fills in by itself
       if (Date.now() - latest[0] > 6 * 3600e3) return { h: 'No recent count.', f: fmt.format(latest[2] || 0) + ' views',
         p: 'Your channel’s all-time total. No count from your tracker since ' + fmtAgo(latest[0]) + ' — it may have stopped.' };
-      if (b[0] && b[0].why === 'fall') return { h: 'Still counting.', f: fmt.format(latest[2] || 0) + ' views',
-        p: 'Your channel’s all-time total. The count came back lower than it was 24 hours ago — YouTube revises counts for a day or two — so there is nothing fair to compare.' };
+      // no 'fall' case: ownViewSeries is a high-water sum, so it never goes backwards
       return { h: 'Still counting.', f: fmt.format(latest[2] || 0) + ' views',
         p: 'Your channel’s all-time total. The last 24 hours aren’t fully tracked yet, so there is nothing fair to compare. It fills in after the next check.' };
     }
@@ -3720,7 +3737,7 @@
     const q = cap ? '“' + cap + '”' : 'Your newest video';
     const views = fmt.format(perVideo[latestVid].views) + ' views';
     const up = ' went up ' + fmtAgo(pub);
-    if (!me || rows.length < 4) return { h: 'Too early to grade.', f: views, p: q + up + '. It needs a few more uploads to compare against.' };
+    if (!me || rows.length < 4) return { h: 'Not enough uploads to compare yet.', f: views, p: q + up + '. It needs a few more uploads to compare against.' };
     const others = rows.filter(r => r.id !== latestVid);
     const pool = others.map(o => o.score).filter(v => v != null);
     // Every other branch here returns {h,f,p}, and paintAnswer reads those OUTSIDE its
@@ -3736,12 +3753,12 @@
       return { h: 'Too early to compare.', f: views,
         p: q + up + ' — too soon to grade: not enough of your earlier videos have their first 48 hours fully tracked to estimate this one yet. It gets a grade by 2 days old either way.' };
     }
-    if (pool.length < 4) return { h: 'Too early to grade.', f: views,
+    if (pool.length < 4) return { h: 'Not enough uploads to compare yet.', f: views,
       p: q + ' can be graded, but only ' + pool.length + ' of your other videos can so far. At least 4 are needed before a ranking means anything.' };
     const rk = pjRank(pool, me.score);
     const beats = Math.round(rk.pct);
     const verdict = beats >= 80 ? 'It landed well.' : beats >= 50 ? 'It’s doing fine.' : beats >= 25 ? 'It’s under your usual.' : 'It’s struggling.';
-    return { h: verdict, f: 'Beats ' + beats + '%', p: q + ' is ahead of ' + beats + '% of your other ' + rk.n + ' videos on total views' + (me.score > (perVideo[me.id] || {}).views ? ' (counted at its estimated first-48-hour total — it’s under 2 days old)' : '') + '.' };
+    return { h: verdict, f: beats === 100 ? 'Beats all ' + rk.n : 'Beats ' + beats + '%', p: q + ' is ahead of ' + (beats === 100 ? 'all ' + rk.n + ' of your other videos' : beats + '% of your other ' + rk.n + ' videos') + ' on total views' + (me.score > (perVideo[me.id] || {}).views ? ' (counted at its estimated first-48-hour total — it’s under 2 days old)' : '') + '.' };
   }
   function answerAudience() {
     const lt = chanLifetime;
@@ -3764,17 +3781,17 @@
   function answerNext() {
     const pubs = videoIds.map(id => meta[id] && new Date(meta[id].publishedAt).getTime()).filter(Boolean).sort((a, b) => b - a);
     if (!pubs.length) return { h: 'Nothing to go on yet.', f: '—', p: 'After a few uploads, this tells you when you’re due.' };
-    // hours under a day, whole days elapsed after that — "0 days" three hours after an
-    // upload, or 36 hours rounded up to "2 days", is not how anyone counts
+    // hours under a day, then days to one decimal — the same form the usual gap is given
+    // in (and the Coach's Posting rhythm), so the comparison the verdict makes is visible:
+    // "1 day" beside "about 1 day" and a verdict of "due" was a riddle
     const hrs = (Date.now() - pubs[0]) / 3600e3;
-    const sinceTxt = hrs < 24 ? Math.max(1, Math.round(hrs)) + ' hour' + (Math.round(hrs) <= 1 ? '' : 's')
-      : Math.floor(hrs / 24) + ' day' + (Math.floor(hrs / 24) === 1 ? '' : 's');
+    const dTxt = d => d.toFixed(1) === '1.0' ? '1 day' : d.toFixed(1) + ' days';
+    const sinceTxt = hrs < 24 ? Math.max(1, Math.round(hrs)) + ' hour' + (Math.round(hrs) <= 1 ? '' : 's') : dTxt(hrs / 24);
     if (pubs.length < 4) return { h: hrs < 48 ? 'Just posted.' : 'Keep going.', f: sinceTxt, p: 'Time since your last upload. After a few more uploads, this shows your usual gap.' };
     const k = Math.min(pubs.length, 10), gaps = [];
     for (let i = 1; i < k; i++) gaps.push((pubs[i - 1] - pubs[i]) / 864e5);
     const med = pjMed(gaps), days = hrs / 24;
-    const gapTxt = med < 1 ? Math.max(1, Math.round(med * 24)) + ' hour' + (Math.round(med * 24) <= 1 ? '' : 's')
-      : Math.round(med) + ' day' + (Math.round(med) === 1 ? '' : 's');
+    const gapTxt = med < 1 / 24 ? 'less than an hour' : med < 1 ? Math.round(med * 24) + ' hour' + (Math.round(med * 24) === 1 ? '' : 's') : dTxt(med);
     const verdict = days <= med ? 'You’re on schedule.' : days <= med * 2 ? 'You’re due.' : 'It’s been a while.';
     return { h: verdict, f: sinceTxt, p: 'Time since your last upload. Lately you upload about every ' + gapTxt + ' (last ' + k + ' uploads). The Idea Studio in the Ideas tab has titles in your own style.' };
   }
@@ -3844,7 +3861,7 @@
     const cap = shortCap(videoTitle(best.id), 60, '');
     const q = cap ? '“' + cap + '”' : 'One video';
     const of = share + '% of the ~' + fmt.format(total) + ' gained across your ' + (n === 1 ? 'one tracked video' : n + ' tracked videos') + '.';
-    return { h: verdict, f: '+' + fmt.format(best.gain) + ' in 24h',
+    return { h: verdict, f: '+' + fmt.format(best.gain) + ' views in 24h',
       p: best.whole
         ? q + ' has gained ' + fmt.format(best.gain) + ' views since it went up ' + fmtAgo(best.born) + ' — ' + of
         : q + ' gained about ' + fmt.format(best.gain) + ' views over the last 24 hours — ' + of };
@@ -3948,7 +3965,7 @@
     for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
     if (gaps.length >= 3) {
       const g2 = gaps.slice().sort((a, b) => a - b), medGap = g2[g2.length >> 1], sameDay = gaps.filter(x => x < 0.5).length;
-      let note = 'You upload roughly every <b>' + (medGap < 1 / 24 ? 'less than an hour' : medGap < 1 ? Math.round(medGap * 24) + (Math.round(medGap * 24) === 1 ? ' hour' : ' hours') : medGap.toFixed(1) + ' days') + '</b>.';
+      let note = 'You upload roughly every <b>' + (medGap < 1 / 24 ? 'less than an hour' : medGap < 1 ? Math.round(medGap * 24) + (Math.round(medGap * 24) === 1 ? ' hour' : ' hours') : medGap.toFixed(1) === '1.0' ? '1 day' : medGap.toFixed(1) + ' days') + '</b>.';
       if (sameDay >= 2) note += ' You’ve bunched ' + sameDay + ' uploads into a single day a few times — spreading them out gives each its own launch window and push from YouTube.';
       html += noteSection('Posting rhythm', note);
     }
@@ -4032,7 +4049,7 @@
     // the true middle of the current view counts, on the same basis as Avg views and the
     // scatter's "typical" line, so the card prints one typical figure, not three
     const vc = videoIds.map(id => (perVideo[id] && perVideo[id].views) || 0).filter(x => x > 0);
-    html += '<div class="dsection"><h4>Per-video averages</h4><p class="explain">Averages get pulled up by your biggest hits — the median is your typical video.</p><div class="metric-grid m8">' +
+    html += '<div class="dsection"><h4>Per-video averages</h4><p class="explain">Averages get pulled up by your biggest hits — the middle video (Median views) is the better guide to a typical one.</p><div class="metric-grid m8">' +
       mcell('Avg views', fmt.format(Math.round(tv / n)), 'per video') +
       mcell('Median views', vc.length ? fmt.format(Math.round(med(vc))) : '\u2014', 'the middle video') +
       mcell('Avg likes', fmt.format(Math.round(tl / n)), 'per video') +
@@ -4762,7 +4779,7 @@
           new Date(harr[i][0]).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric' }));
       }
       if (hPts.length > 1) html += '<div class="dsection"><h4>Views per hour — recorded history</h4>' +
-        '<p class="explain">From the snapshot robot, which records even when nobody has the dashboard open — the over-time view YouTube never provides. Hover for exact times.</p>' +
+        '<p class="explain">Tracked in the background, even when nobody has the dashboard open — the over-time view YouTube never provides. Hover for exact times.</p>' +
         lineChartHtml(hPts, hTips2, 'var(--gold)', { label: 'Views per hour', at: hAt,
           x0: shortDate(localDay(hAt[0])), x1: 'now' }) + '</div>';
     }
