@@ -418,15 +418,22 @@ async function d1Life(env, platform, id) {
   const bucketOf = '(CAST((ts - ?) / ? AS INTEGER))';
   const sres = await env.DB.prepare(
     'SELECT ' + bucketOf + ' AS b, MAX(views) AS views, MAX(likes) AS likes,' +
-    ' MAX(comments) AS comments, MAX(shares) AS shares' +
+    ' MAX(comments) AS comments, MAX(shares) AS shares, MAX(ts) AS t' +
     ' FROM samples WHERE platform = ? AND video_id = ? AND ts >= ?' +
     ' GROUP BY ' + bucketOf + ' ORDER BY b'
   ).bind(v.published_at, LIFE_STEP, platform, String(id), v.published_at, v.published_at, LIFE_STEP).all();
 
-  // [ageMs, views, likes, comments, shares] — same column order the bundles use
-  const s = (sres.results || []).map(r => [r.b * LIFE_STEP, r.views, r.likes, r.comments, r.shares]);
+  /* [ageMs, views, likes, comments, shares] — same column order the bundles use.
+     The age is that of the LAST reading in the hour (MAX(ts) − published_at), not the
+     hour's start: a point stamped at its start carried a count from up to an hour later,
+     so every tooltip read an hour early ('0 min old' for the first hour's views). With
+     `age: 'reading'` the page knows the ages are real; an older Worker's bucket starts
+     are shifted to the hour's end on the page instead. */
+  const rows = sres.results || [];
+  const real = rows.length > 0 && rows.every(r => r.t != null);
+  const s = rows.map(r => [real ? r.t - v.published_at : r.b * LIFE_STEP, r.views, r.likes, r.comments, r.shares]);
   return {
-    found: true, id: v.video_id, step: LIFE_STEP, title: v.title || '',
+    found: true, id: v.video_id, step: LIFE_STEP, title: v.title || '', ...(real ? { age: 'reading' } : {}),
     ...(isTt(platform) ? { create_time: Math.round(v.published_at / 1000), cover: v.cover || '' }
                        : { pub: isoOf(v.published_at) }),
     s

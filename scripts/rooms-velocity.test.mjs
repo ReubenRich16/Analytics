@@ -272,10 +272,12 @@ console.log('\nTikTok view velocity');
     let { perPost, velHistory, velSession, velStart } = state;
     const MAX_BARS = 60;
     let velBackfilled = 0;              // the reload-resume additions ride the same render
+    let velBg = state.velBg || [], velLastAt = state.velLastAt || 0;
+    const intervalMs = state.intervalMs || 60000, backBin = () => Math.max(intervalMs, 60e3);
     const saveVel = () => {};
     ${body}
-    renderVelocity();
-    return { perPost, velHistory, velSession, velStart };
+    const step = renderVelocity();
+    return { perPost, velHistory, velSession, velStart, velBg, velLastAt, step };
   `);
   const out = {}, els = {};
   const $ = id => (els[id] = els[id] || {
@@ -523,7 +525,7 @@ console.log('\nvelocity survives a reload');
     check(page + ' — the silent lead-in is trimmed, not shown as a wall of zeros',
       /while \(s < bars\.length && bars\[s\] === 0\) s\+\+;/.test(src));
     check(page + ' — backfilled bars are faded and say what they are',
-      /\(back \? ' back' : ''\)/.test(src) && /recorded before this tab opened/.test(src));
+      /\(back(?: \|\| bg)? \? ' back' : ''\)/.test(src) && /recorded before this tab opened/.test(src));
     check(page + ' — faded bars age out of the left edge',
       /if \(velBackfilled > 0\) velBackfilled--;/.test(src));
   }

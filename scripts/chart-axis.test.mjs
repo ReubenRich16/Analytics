@@ -8,7 +8,7 @@ const src = fs.readFileSync(new URL('../yt-dashboard/index.html', import.meta.ur
 const cut=(a,b)=>{const i=src.indexOf(a);return src.slice(i,src.indexOf(b,i));};
 const F = new Function('reducedMotion','fmt',
   'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-  cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+  cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
   cut('const LINE_GEO','  // A column chart.') +
   '\nreturn {lineChartHtml, axisNum, niceScale, chartFrame, CH};')(true, new Intl.NumberFormat('en-US'));
 let pass=0,fail=0; const check=(n,c,x='')=>{c?(pass++,console.log('  ✓',n)):(fail++,console.log('  ✗',n,x));};
@@ -91,7 +91,7 @@ console.log('\nsmall bars');
      most of the job of a sparse daily chart. */
   const B = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('const LINE_GEO','  // several lines on one chart') +
     '\nreturn {barChartHtml, CH};')(new Intl.NumberFormat('en-US'));
   const bars = h => (h.match(/<path d="M/g) || []).length;
@@ -210,7 +210,7 @@ console.log('\nscatter, corrected');
 {
   const P = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
     cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
     '\nreturn {ratePlotHtml, rankListHtml, CH};')(new Intl.NumberFormat('en-US'));
@@ -269,7 +269,7 @@ console.log('\nranked view');
 {
   const P = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
     cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
     '\nreturn {rankListHtml, CH};')(new Intl.NumberFormat('en-US'));

@@ -466,11 +466,14 @@
     touchSeen();
   }
   const chanSeries = () => (hist && ((hist.channels && hist.channels[chanId]) || hist.channel)) || [];
+  /* Hours up to two days, whole days after that, and never rounded UP: 36 hours is '36h',
+     not '2d', and 59.6 minutes is '59m', not '60m' — a label that overstates an age or an
+     absence is the one direction that misleads. */
   const fmtAgo = ts => {
     const s = (Date.now() - ts) / 1000;
-    if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
-    if (s < 86400) return Math.round(s / 3600) + 'h ago';
-    return Math.round(s / 86400) + 'd ago';
+    if (s < 3600) return Math.min(59, Math.max(1, Math.round(s / 60))) + 'm ago';
+    if (s < 172800) return Math.max(1, Math.floor(s / 3600)) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
   };
 
   /* Per-video view-gains bucketed by local hour — the biggest-hour line's evidence.
@@ -1643,12 +1646,14 @@
      "0 · 500 · 1,000" rather than "0 · 437 · 874", and every gridline carries
      its value — so the tooltip enhances the chart instead of being the only
      way to read it. */
-  function niceScale(lo, hi, target) {
+  // `int` is for a count: whole-number gridlines only, never 0.3 or 2.5 views
+  function niceScale(lo, hi, target, int) {
     if (!(hi > lo)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const n = raw / mag;
-    const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    let step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    if (int) step = step < 1 ? 1 : step === 2.5 ? 2 : step;
     const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
     const ticks = [];
     for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
@@ -1885,7 +1890,7 @@
     const PW = g.w - g.L - g.R, PH = g.h - g.T - g.B;
     // target 5, not 4: niceScale(0, 2410, 4) rounds up to 3000 and throws away a fifth of
     // the width on empty space — a bug the old chart shipped with
-    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 5);
+    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 5, true);
     // snap the rate axis to a fixed ladder so the labels are always numbers a person
     // recognises, and so the axis does not silently rescale between visits
     const LAD = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
@@ -3015,7 +3020,7 @@
     const w = 620, h = 190, L = 66, R = 18, T = 18, B = 30, base = h - B;
     const rec = (curve || []).filter(pt => pt[0] <= age + 1 && pt[1] != null);
     const ceil = p.mid == null ? Math.max(views, ...rec.map(pt => pt[1] || 0), 1) : p.hi;
-    const sc = niceScale(0, ceil, 4);
+    const sc = niceScale(0, ceil, 4, true);
     const X = t => L + (w - L - R) * Math.max(0, Math.min(1, t / span));
     const Y = v => base - (base - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
     let frame = '';
@@ -4901,21 +4906,36 @@
 
     const HOURMS = 3600e3;
     const pub = Date.parse(d.pub);
-    const at = d.s.map(p => pub + p[0]);
+    const step = d.step || HOURMS;
+    /* A point is the count at the END of its hour. A current Worker sends the age of the
+       hour's last reading (`age: 'reading'`); an older one sent the hour's start, which is
+       moved to the hour's end here — never past the video's current age. */
+    const ages = d.s.map(p => d.age === 'reading' ? p[0] : Math.min(p[0] + step, Date.now() - pub));
+    const hourOf = p => Math.floor(p[0] / step);
+    const ageTxt = ms => fmtAge(Math.round(ms / 60000)).replace(/ 0[mh]$/, '');
+    const at = ages.map(a => pub + a);
     const views = d.s.map(p => p[1]);
-    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views · ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
-      (i ? ' · +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
-    const lastAge = d.s[d.s.length - 1][0];
-    const days = lastAge / 864e5;
+    const tips = d.s.map((p, i) => {
+      let t = fmt.format(p[1]) + ' views by ' + ageTxt(ages[i]) + ' old';
+      if (i) {
+        const dv = p[1] - d.s[i - 1][1], hrs = hourOf(p) - hourOf(d.s[i - 1]);
+        t += dv < 0 ? ' · count revised down by ' + fmt.format(-dv)
+          : hrs > 1 ? ' · +' + fmt.format(dv) + ' over ' + hrs + ' hours'
+          : ' · +' + fmt.format(dv) + ' that hour';
+      }
+      return t;
+    });
+    const lastAge = ages[ages.length - 1];
+    const late = hourOf(d.s[0]) >= 1;
 
     $('lifeExplain').innerHTML =
-      'Recorded by your own Worker, one point an hour, from publication to ' +
-      '<b>' + (days < 1 ? Math.round(lastAge / HOURMS) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
-      'YouTube\u2019s own figures only go down to a day, so this is the finest record that exists for the ' +
-      'stretch after the launch. Every point is a real reading \u2014 a gap in the line is a gap in the recording.';
+      'Recorded by your own Worker, one point an hour, from ' + (late ? '<b>' + ageTxt(ages[0]) + ' old</b>' : 'publication') +
+      ' to <b>' + ageTxt(lastAge) + ' old</b>' + (Date.now() - pub >= 60 * 864e5 ? ' — your Worker keeps each reading for 60 days' : '') + '. ' +
+      'YouTube’s own figures only go down to a day, so this is the finest record that exists for the ' +
+      'stretch after the launch. Every point is a real reading — a gap in the line is a gap in the recording.';
     $('lifeChart').innerHTML = lineChartHtml(views, tips, 'var(--accent)', {
       at, label: 'Views every hour since publication', unit: '',
-      x0: 'published', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+      x0: ageTxt(ages[0]) + ' old', x1: ageTxt(lastAge) + ' old'
     });
     wrap.style.display = 'block';
   }

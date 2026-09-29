@@ -176,10 +176,10 @@
 
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid" style="display:none">
-    <div class="stat"><div class="label">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div><div class="sparkslot" id="ttViewsSpark"></div></div>
-    <div class="stat"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="ttLikesSpark"></div></div>
-    <div class="stat"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div><div class="sparkslot" id="ttFollowersSpark"></div></div>
-    <div class="stat"><div class="label">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="ttCommentsSpark"></div></div>
+    <div class="stat" title="Change since the last refresh, counting only posts seen both times"><div class="label" id="viewsLabel">Views</div><div class="stat-num" id="viewsNum">–</div><div class="delta" id="viewsDelta"></div><div class="sparkslot" id="ttViewsSpark"></div></div>
+    <div class="stat" title="Your account's total likes, as on your profile. The small figure is the change since the last refresh"><div class="label">Likes</div><div class="stat-num" id="likesNum">–</div><div class="delta" id="likesDelta"></div><div class="sparkslot" id="ttLikesSpark"></div></div>
+    <div class="stat" title="Your followers, as on your profile. The small figure is the change since the last refresh"><div class="label">Followers</div><div class="stat-num" id="followersNum">–</div><div class="delta" id="followersDelta"></div><div class="sparkslot" id="ttFollowersSpark"></div></div>
+    <div class="stat" title="Change since the last refresh, counting only posts seen both times"><div class="label" id="commentsLabel">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="ttCommentsSpark"></div></div>
   </div>
 
   <div class="card velocity" id="velocityPanel">
@@ -188,6 +188,7 @@
       <div class="rate" id="rateText"></div>
     </div>
     <div class="bars" id="bars"></div>
+    <div class="session" id="barsNote"></div>
     <div class="session" id="sessionText"></div>
   </div>
 
@@ -230,7 +231,7 @@
         <option value="views">Sort: most views</option>
         <option value="tickV">Sort: moving right now</option>
         <option value="sessV">Sort: hottest this session</option>
-        <option value="pace">Sort: views/day pace</option>
+        <option value="pace">Sort: average views/day</option>
         <option value="likes">Sort: most likes</option>
         <option value="comments">Sort: most comments</option>
         <option value="shares">Sort: most shares</option>
@@ -251,7 +252,7 @@
           <th data-sort="comments" title="Click to sort">Comments</th>
           <th data-sort="shares" title="Click to sort">Shares</th>
           <th data-sort="eng" title="Likes per view. Click to sort">Eng %</th>
-          <th data-sort="pace" title="Views per day since posting. Click to sort">Views/day</th>
+          <th data-sort="pace" title="Average views per day since posting (total ÷ age) — not today's speed. Click to sort">Avg/day</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -383,6 +384,13 @@
      churn in which posts the API felt like returning. */
   const MAX_BARS = 60;
   let velHistory = [], velSession = null, velStart = 0, perPost = {};
+  /* velBg runs beside velHistory: 0 for an ordinary refresh bar, or the minutes the page
+     spent in the background when one refresh had to book a long stretch (a locked phone).
+     velLastAt is when the last bar was booked. */
+  let velBg = [], velLastAt = 0;
+  // set when TikTok answered with only part of the post list and there was no earlier
+  // full list to keep showing
+  let listPartial = false;
 
   const setStatus = t => { $('statusText').textContent = t; };
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
@@ -432,7 +440,15 @@
     }
     return words !== s && Array.from(words).length <= n ? words.replace(/[\s,;:.–—-]+$/u, '') + '…' : clip(words, n);
   };
-  const paceOf = v => (v.view_count || 0) / ageDays(v);
+  /* Average views per day since posting (total ÷ age) — a lifetime average, not today's
+     speed. Null under a day old: 93 views in 3 hours is not '744 a day', and stretching it
+     to one would be inventing the other 21 hours. */
+  const paceOf = v => ageDays(v) < 1 ? null : (v.view_count || 0) / ageDays(v);
+  // '93 in 3h' — the real count and age of a post too new for a daily figure
+  const youngCount = v => {
+    const h = (Date.now() - (v.create_time || 0) * 1000) / 3600e3;
+    return fmt.format(v.view_count || 0) + ' in ' + (h < 1 ? Math.max(1, Math.floor(h * 60)) + 'm' : Math.floor(h) + 'h');
+  };
   /* The comparable figure for every post — see pjScore. Built once per render because it
      needs the whole recorded history to project a launch that is still running, and cached
      on the post id so the ranking helpers below can just look it up. Null for a post too
@@ -478,11 +494,14 @@
     return r.length ? pjMed(r) : null;
   };
   const hashtagsOf = v => [...new Set(((v.title || '') + ' ' + (v.video_description || '')).toLowerCase().match(/#[\p{L}0-9_]+/gu) || [])];
+  /* Hours up to two days, whole days after that, and never rounded UP: 36 hours is '36h',
+     not '2d', and 59.6 minutes is '59m', not '60m' — a label that overstates an age or an
+     absence is the one direction that misleads. */
   const fmtAgo = ts => {
     const s = (Date.now() - ts) / 1000;
-    if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
-    if (s < 86400) return Math.round(s / 3600) + 'h ago';
-    return Math.round(s / 86400) + 'd ago';
+    if (s < 3600) return Math.min(59, Math.max(1, Math.round(s / 60))) + 'm ago';
+    if (s < 172800) return Math.max(1, Math.floor(s / 3600)) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
   };
   // an age in minutes rather than an instant — same helper the YouTube page has, and
   // having it here is what lets the projection block be character-identical across the
@@ -537,12 +556,15 @@
   const chartReg = new Map();
   let chartCi = 0;
   const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };
-  function niceScale(lo, hi, target) {
+  // `int` is for a count (views, likes): its gridlines are whole numbers, so a post with
+  // three views is not drawn against ticks of 0.3 and 0.8
+  function niceScale(lo, hi, target, int) {
     if (!(hi > lo)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const n = raw / mag;
-    const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    let step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+    if (int) step = step < 1 ? 1 : step === 2.5 ? 2 : step;
     const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
     const ticks = [];
     for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
@@ -564,7 +586,7 @@
     if (!pts || pts.length < 2) return '';
     opts = opts || {};
     const w = 620, h = 178, L = 66, R = 18, T = 18, B = 30;
-    const sc = niceScale(Math.min(...pts, 0), Math.max(...pts, 1), 4);
+    const sc = niceScale(Math.min(...pts, 0), Math.max(...pts, 1), 4, opts.int);
     // opts.at is the real time of each point. Without it the x axis is the array index,
     // which is only the same thing while samples arrive at a perfectly steady rate — and
     // they don't: a missed cron tick, an API hiccup, or a spell of serving from the coarser
@@ -653,7 +675,9 @@
     opts = opts || {};
     const g = { w: 620, h: 190, L: 66, R: 18, T: 16, B: 30 };
     const maxLen = Math.max(2, ...series.map(s2 => s2.pts.length));
-    const sc = niceScale(0, Math.max(1, ...series.flatMap(s2 => s2.pts).filter(v => v != null)), 4);
+    // opts.yMax sets the top of the scale (a line above it is clipped at the plot's edge);
+    // without it the tallest point decides
+    const sc = niceScale(0, opts.yMax > 0 ? opts.yMax : Math.max(1, ...series.flatMap(s2 => s2.pts).filter(v => v != null)), 4, opts.int);
     const Y = v => g.h - g.B - (v - sc.lo) / (sc.hi - sc.lo || 1) * (g.h - g.T - g.B);
     const X = i => g.L + i * (g.w - g.L - g.R) / (maxLen - 1);
     const base = g.h - g.B;
@@ -669,7 +693,9 @@
     if (opts.x1) frame += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     const xs = []; for (let i = 0; i < maxLen; i++) xs.push(X(i));
     const ci = chartPush({ tips, xs, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, color: 'var(--live)' });
+    const clip = opts.yMax > 0 ? 'ttclip' + ci : '';
     let out = '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'chart') + '">' +
+      (clip ? '<defs><clipPath id="' + clip + '"><rect x="' + g.L + '" y="' + g.T + '" width="' + (g.w - g.L - g.R) + '" height="' + (base - g.T) + '"/></clipPath></defs>' : '') +
       frame + (opts.nowAt != null ? '<line class="refline" x1="' + X(opts.nowAt).toFixed(1) + '" y1="' + g.T + '" x2="' + X(opts.nowAt).toFixed(1) + '" y2="' + base + '"/>' +
         '<text class="ax" x="' + (X(opts.nowAt) + 6).toFixed(1) + '" y="' + (g.T + 10) + '">now</text>' : '') +
       '<line class="cline" y1="' + g.T + '" y2="' + base + '" style="display:none"/>';
@@ -683,7 +709,7 @@
         open = true; last = i;
       }
       if (!d) continue;
-      out += '<path class="line" d="' + d + '" style="fill:none;stroke:' + s2.color + ';stroke-width:' + (s2.width || 1.5) + ';opacity:' + (s2.opacity != null ? s2.opacity : 1) + '"/>';
+      out += '<path class="line" d="' + d + '"' + (clip ? ' clip-path="url(#' + clip + ')"' : '') + ' style="fill:none;stroke:' + s2.color + ';stroke-width:' + (s2.width || 1.5) + ';opacity:' + (s2.opacity != null ? s2.opacity : 1) + '"/>';
       // the focus series gets an end marker so it stays findable in the tangle
       if (s2.dot && last >= 0) out += '<circle cx="' + X(last).toFixed(1) + '" cy="' + Y(s2.pts[last]).toFixed(1) + '" r="4.5" style="fill:' + s2.color + ';stroke:var(--ink);stroke-width:2"/>';
     }
@@ -724,7 +750,7 @@
     const PW = g.w - g.L - g.R, PH = g.h - g.T - g.B;
     // target 5, not 4: niceScale(0, 2410, 4) rounds up to 3000 and throws away a fifth of
     // the width on empty space — a bug the old chart shipped with
-    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 5);
+    const sx = niceScale(0, Math.max(1, ...points.map(p => p.x)), 5, true);
     // snap the rate axis to a fixed ladder so the labels are always numbers a person
     // recognises, and so the axis does not silently rescale between visits
     const LAD = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
@@ -1397,8 +1423,8 @@
     await ttSyncPull();
     await pullHistory();
     await pullLaunches();
+    intervalMs = +$('interval').value;   // before restoreVel: the backfill bins by it
     restoreVel();   // resume a quick reload, or backfill the strip from the recordings
-    intervalMs = +$('interval').value;
     await poll();
     if (timer) clearInterval(timer);
     timer = setInterval(poll, intervalMs);
@@ -1428,14 +1454,18 @@
     try {
       localStorage.setItem(velKey(), JSON.stringify({
         at: Date.now(), start: velStart, session: velSession,
-        bars: velHistory.slice(-MAX_BARS), back: velBackfilled,
+        bars: velHistory.slice(-MAX_BARS), bg: velBg.slice(-MAX_BARS), back: velBackfilled, last: velLastAt,
         perPost: Object.fromEntries(Object.entries(perPost).map(([id, p]) =>
           [id, { views: p.views, likes: p.likes, comments: p.comments, shares: p.shares, sessV: p.sessV || 0 }]))
       }));
     } catch (e) {}
   }
+  /* Binned by the refresh interval, so a faded bar and a live one measure the same stretch
+     — but never finer than a minute: the recordings are minute samples, and splitting one
+     into two 30-second bars would be inventing where inside the minute the views landed. */
+  const backBin = () => Math.max(intervalMs || 60e3, 60e3);
   function backfillBars() {
-    const now = Date.now(), bars = new Array(MAX_BARS).fill(0);
+    const now = Date.now(), bars = new Array(MAX_BARS).fill(0), bin = backBin();
     let any = false;
     for (const rec of Object.values((hist && hist.videos) || {})) {
       const arr = (rec && rec.s) || [];
@@ -1448,7 +1478,7 @@
         const d = v - hi;
         hi = v;
         if (arr[i][0] - arr[i - 1][0] > 2 * 60e3) continue;   // not minute data — no vote
-        const slot = Math.floor((now - arr[i][0]) / 60e3);
+        const slot = Math.floor((now - arr[i][0]) / bin);
         if (slot < 0 || slot >= MAX_BARS) continue;
         bars[MAX_BARS - 1 - slot] += d; any = true;
       }
@@ -1462,9 +1492,11 @@
     try { saved = JSON.parse(localStorage.getItem(velKey()) || 'null'); } catch (e) {}
     if (saved && Array.isArray(saved.bars) && saved.session && Date.now() - saved.at <= VEL_RESUME) {
       velHistory = saved.bars.map(Number).filter(v => isFinite(v));
+      velBg = velHistory.map((_, i) => +((saved.bg || [])[i]) || 0);
       velBackfilled = Math.max(0, Math.min(+saved.back || 0, velHistory.length));
       velSession = saved.session;
       velStart = +saved.start || Date.now();
+      velLastAt = +saved.last || +saved.at || Date.now();
       perPost = {};
       for (const [id, p] of Object.entries(saved.perPost || {})) perPost[id] = { ...p, tickV: 0 };
       return;   // the first poll now diffs across the reload gap instead of dropping it
@@ -1472,6 +1504,7 @@
     const bars = backfillBars();
     if (bars.length) {
       velHistory = bars;
+      velBg = bars.map(() => 0);
       velBackfilled = bars.length;
       velSession = { views: 0, likes: 0, comments: 0, shares: 0 };   // nothing watched yet
       velStart = Date.now();
@@ -1482,10 +1515,20 @@
     const seen = {};
     let tick = 0;
     const step = { views: 0, likes: 0, comments: 0, shares: 0 };
+    const now = Date.now();
+    // Nothing to diff against yet (a cold open after backfill, or a session that just
+    // restarted): this reading only becomes the baseline. Pushing a bar here would draw a
+    // '+0' refresh that never happened, right where the faded bars meet the live ones.
+    const hadBase = Object.keys(perPost).length > 0;
     for (const x of videos) {
       const cur = { views: +x.view_count || 0, likes: +x.like_count || 0,
                     comments: +x.comment_count || 0, shares: +x.share_count || 0 };
-      const was = perPost[x.id];
+      /* A post published after this page opened starts from zero, a fact rather than an
+         estimate, so its first views count. Anything else seen for the first time — a post
+         back inside the 60-post window, or every post on the first reading — has no
+         baseline, and contributes nothing. */
+      const was = perPost[x.id] || (velSession && hadBase && (x.create_time || 0) * 1000 > velStart + 60e3
+        ? { views: 0, likes: 0, comments: 0, shares: 0, sessV: 0 } : null);
       /* The table's "+tick" and "+session" columns ride on this same record rather than
          accumulating a second time. renderVelocity runs before renderTable on every poll,
          so by the time the table draws, this holds the current tick's gains keyed by post.
@@ -1507,27 +1550,42 @@
     }
     const first = !velSession;
     perPost = seen;
-    if (first) { velSession = { views: 0, likes: 0, comments: 0, shares: 0 }; velStart = Date.now(); return; }
-    for (const k of ['views', 'likes', 'comments', 'shares']) velSession[k] += step[k];
-    velHistory.push(tick);
-    if (velHistory.length > MAX_BARS) {
-      velHistory.shift();
-      if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
+    const lastAt = velLastAt;
+    velLastAt = now;
+    if (first) { velSession = { views: 0, likes: 0, comments: 0, shares: 0 }; velStart = now; return null; }
+    if (hadBase) {
+      for (const k of ['views', 'likes', 'comments', 'shares']) velSession[k] += step[k];
+      velHistory.push(tick);
+      /* A refresh that had to cover far more than one interval (the phone was locked, the
+         tab hidden) still counts in the totals, but its bar is marked as background time
+         and does not set the scale, so it cannot flatten every ordinary bar beside it. */
+      const gapMs = lastAt ? now - lastAt : 0;
+      velBg.push(gapMs > 2.5 * intervalMs ? Math.max(1, Math.round(gapMs / 60e3)) : 0);
+      while (velBg.length < velHistory.length) velBg.unshift(0);
+      if (velHistory.length > MAX_BARS) {
+        velHistory.shift(); velBg.shift();
+        if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
+      }
     }
     const wrap = $('bars');
     if (wrap) {
       wrap.innerHTML = '';
-      const max = Math.max(1, ...velHistory);
+      const max = Math.max(1, ...velHistory.filter((_, i) => !velBg[i]));
+      const binM = Math.round(backBin() / 60e3);
       velHistory.forEach((v, i) => {
-        const back = i < velBackfilled;
+        const back = i < velBackfilled, bg = velBg[i] || 0;
         const b = document.createElement('div');
-        b.className = 'bar' + (v === 0 ? ' zero' : '') + (back ? ' back' : '');
-        b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
-        b.title = '+' + fmt.format(v) + ' views' + (back ? ' — recorded before this tab opened' : '');
+        b.className = 'bar' + (v === 0 ? ' zero' : '') + (back || bg ? ' back' : '');
+        b.style.height = Math.min(100, Math.max(3, Math.round((v / max) * 100))) + '%';
+        b.title = '+' + fmt.format(v) + ' views' + (back
+          ? (binM === 1 ? ' in that minute' : ' in those ' + binM + ' minutes') + ' — recorded before this tab opened'
+          : bg ? ' while the page was in the background (' + bg + 'm)' : '');
         wrap.appendChild(b);
       });
     }
-    const mins = Math.max(1 / 60, (Date.now() - velStart) / 60000);
+    const note = $('barsNote');
+    if (note) note.textContent = velBackfilled > 0 ? 'Faded: recorded before you opened the page (posts under 2 days old).' : '';
+    const mins = Math.max(1 / 60, (now - velStart) / 60000);
     $('sessionText').innerHTML = 'session: <b>+' + fmt.format(velSession.views) + '</b> views · <b>+' +
       fmt.format(velSession.likes) + '</b> likes · <b>+' + fmt.format(velSession.comments) + '</b> comments · <b>+' +
       fmt.format(velSession.shares) + '</b> shares · ' + Math.round(mins) + 'm';
@@ -1537,8 +1595,10 @@
     // thousands — a number that is arithmetically correct and describes nothing.
     const pm = velSession.views / mins;
     $('rateText').textContent = mins >= 0.5 && pm >= 0.05
-      ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min' : '';
+      ? '≈ ' + (pm >= 10 ? Math.round(pm) : pm.toFixed(1)) + ' views/min this session' : '';
+    return hadBase ? step : null;
   }
+
 
   async function poll(force) {
     if (!session) return;
@@ -1548,25 +1608,60 @@
     setStatus('fetching…');
     try {
       const [v, u] = await Promise.all([api('/tiktok/videos'), api('/tiktok/me')]);
-      videos = (v.videos || []).filter(x => x && x.id);
+      const got = (v.videos || []).filter(x => x && x.id);
+      /* TikTok sometimes fails part-way through the list and the Worker says so (`partial`).
+         Adopting the shorter list would book its missing posts as a fall, and their return
+         next refresh as a huge fresh gain, so the last full reading stays on screen and this
+         refresh books nothing. With no earlier list there is nothing better to show. */
+      if (v.partial && videos.length && got.length < videos.length) {
+        setStatus('TikTok sent only part of the list — showing the last full reading');
+        return;
+      }
+      listPartial = !!v.partial;
+      videos = got;
       me = u || me;
       checkMilestones(me);
-      const totals = { views: 0, likes: 0, comments: 0, followers: me.follower_count || 0 };
-      for (const x of videos) { totals.views += x.view_count || 0; totals.likes += x.like_count || 0; totals.comments += x.comment_count || 0; }
+      // A long break with the tab alive (a locked phone) starts a fresh session, the same
+      // rule a reload follows — the away card tells that story, not one giant bar.
+      if (velSession && velLastAt && Date.now() - velLastAt > VEL_RESUME) {
+        perPost = {};
+        velSession = { views: 0, likes: 0, comments: 0, shares: 0 };
+        velStart = Date.now();
+        velHistory = backfillBars();
+        velBg = velHistory.map(() => 0);
+        velBackfilled = velHistory.length;
+      }
+      /* Velocity first: its per-post step (gains on posts present in both readings) is what
+         the Views and Comments tiles report, so a post scrolling out of the 60-post window,
+         or a new one arriving, can never show as a loss or a gain. Followers and Likes are
+         the account's own figures from the profile, the same ones the header shows. */
+      const step = renderVelocity();
+      const totals = { views: 0, comments: 0, likes: me.likes_count || 0, followers: me.follower_count || 0 };
+      for (const x of videos) { totals.views += x.view_count || 0; totals.comments += x.comment_count || 0; }
+      const partOf = (me.video_count || 0) > videos.length;
+      $('viewsLabel').textContent = partOf ? 'Views · newest ' + videos.length : 'Views';
+      $('commentsLabel').textContent = partOf ? 'Comments · newest ' + videos.length : 'Comments';
       [['viewsNum', 'viewsDelta', 'views'], ['likesNum', 'likesDelta', 'likes'], ['followersNum', 'followersDelta', 'followers'], ['commentsNum', 'commentsDelta', 'comments']]
         .forEach(([n, dl, k]) => {
           const el = $(n);
           animateNum(el, prevTotals ? prevTotals[k] : null, totals[k]);
-          const d = prevTotals ? totals[k] - prevTotals[k] : null;
+          const perPostTile = k === 'views' || k === 'comments';
+          let d = null;
+          if (prevTotals) {
+            if (!perPostTile) d = totals[k] - prevTotals[k];
+            // a zero step beside a sum that moved means posts left or joined the list — no
+            // honest ± to print, so say nothing
+            else if (step) d = step[k] > 0 ? step[k] : (totals[k] === prevTotals[k] ? 0 : null);
+          }
           if (d > 0) { flash(el); const t = el.closest('.stat'); if (t) { t.classList.remove('hit'); void t.offsetWidth; t.classList.add('hit'); } }
           const de = $(dl);
           if (d === null) { de.textContent = ''; de.className = 'delta'; }
           else if (d > 0) { de.textContent = '+' + fmt.format(d); de.className = 'delta up'; }
+          else if (d < 0) { de.textContent = '−' + fmt.format(-d); de.className = 'delta down'; }
           else { de.textContent = '±0'; de.className = 'delta'; }
         });
       $('ttMeta').textContent = fmt.format(me.follower_count || 0) + ' followers · ' +
         fmt.format(me.likes_count || 0) + ' likes · ' + fmt.format(me.video_count || 0) + ' posts';
-      renderVelocity();
       prevTotals = totals;
       // re-pull the Worker's recordings periodically so the minute chart keeps growing
       // while a launch is live, not only when Refresh is pressed
@@ -1608,6 +1703,8 @@
     const get = SORT_VAL[tableSort.key] || SORT_VAL.newest, dir = tableSort.dir;
     const rows = videos.slice().sort((a, b) => {
       const x = get(a), y = get(b);
+      // a post with no figure (under a day old, for the average) sorts last either way
+      if (x == null || y == null) return x == null && y == null ? (b.create_time || 0) - (a.create_time || 0) : x == null ? 1 : -1;
       let c = typeof x === 'string' ? x.localeCompare(y) : x - y;
       if (c === 0) c = (a.view_count || 0) - (b.view_count || 0);
       return c * dir;
@@ -1619,7 +1716,8 @@
       th.classList.toggle('desc', on && dir === -1);
       th.classList.toggle('asc', on && dir === 1);
     });
-    $('tableLabel').textContent = 'Posts \u2014 tracking ' + rows.length + ' \u00b7 tap a row for the full breakdown, \u2197 to open it on TikTok';
+    $('tableLabel').textContent = 'Posts \u2014 tracking ' + rows.length + ' \u00b7 tap a row for the full breakdown, \u2197 to open it on TikTok' +
+      (listPartial ? ' \u00b7 TikTok sent only part of the list' : '');
     const tb = $('tbody'); tb.innerHTML = '';
     for (const v of rows) {
       const tr = document.createElement('tr');
@@ -1635,7 +1733,7 @@
         '<td data-label="Comments">' + fmt.format(v.comment_count || 0) + '</td>' +
         '<td data-label="Shares">' + fmt.format(v.share_count || 0) + '</td>' +
         '<td data-label="Engagement">' + engOf(v).toFixed(1) + '%</td>' +
-        '<td data-label="Views/day">' + fmt.format(Math.round(paceOf(v))) + '</td>';
+        '<td data-label="Avg views/day">' + (paceOf(v) == null ? '<span class="zero" title="Under a day old \u2014 no daily figure yet">\u2014</span>' : fmt.format(Math.round(paceOf(v)))) + '</td>';
       /* The row now opens the breakdown rather than TikTok. The way out is not lost, and
          is better than it was: the ↗ in the caption cell is a real anchor, so middle-click,
          ⌘-click and "copy link address" all work — none of which window.open ever gave —
@@ -2041,7 +2139,7 @@
     const w = 620, h = 190, L = 66, R = 18, T = 18, B = 30, base = h - B;
     const rec = (curve || []).filter(pt => pt[0] <= age + 1 && pt[1] != null);
     const ceil = p.mid == null ? Math.max(views, ...rec.map(pt => pt[1] || 0), 1) : p.hi;
-    const sc = niceScale(0, ceil, 4);
+    const sc = niceScale(0, ceil, 4, true);
     const X = t => L + (w - L - R) * Math.max(0, Math.min(1, t / span));
     const Y = v => base - (base - T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
     let frame = '';
@@ -2133,7 +2231,7 @@
   // Progress by default, the curve one tap away. Not persisted — like the other view
   // switches here it resets each visit.
   let pjView = 'bar', pjCur = null;
-  function pjBodyHtml(p, views, curve, refs, age) {
+  function pjBodyHtml(p, views, curve, refs, age, life48) {
     if (p.state === 'early') return '<p class="dnote">' + (p.noViews
       ? 'No views counted yet, so there is nothing to project from.'
       : 'Too early to call — the estimate switches on at ' + Math.round(PJ_MIN_AGE / 60) + ' hours old, in about ' + pjDur(PJ_MIN_AGE - age) + '.') + '</p>';
@@ -2150,10 +2248,19 @@
        report: the data had not stopped, the card had. */
     if (p.state === 'settled' || p.state === 'done') {
       const f = curve ? pjAt(curve, PJ_HORIZON) : null;
-      if (f == null) return '<p class="dnote">Past its first 48 hours, and none of the launch was recorded, so there is nothing to carry forward here.</p>';
-      const settled = Math.round(f);
-      const head = '<p class="pjline">Its launch window is over — it took <b>' + fmt.format(settled) + ' views</b> in its first 48 hours' +
-        (views > settled ? ', and has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>';
+      /* No minute-level launch on this page is not the same as no recording: only the
+         newest posts' launches are loaded here. The hourly record (life48, the highest
+         reading in hour 47) answers when it has that hour; otherwise nothing is asserted. */
+      if (f == null && life48 == null) return '<p class="dnote">' + (p.state === 'done'
+        ? 'Its first week is over, so the projection has retired — the lifetime count is the number that matters now. The hourly record below shows how it got there.'
+        : 'Past its first 48 hours. Its minute-by-minute launch isn’t loaded on this page (only your newest posts’ launches are). The hourly record below shows how it started, if your Worker still holds it.') + '</p>';
+      const settled = Math.round(f != null ? f : life48);
+      const head = f != null
+        ? '<p class="pjline">Its launch window is over — it took <b>' + fmt.format(settled) + ' views</b> in its first 48 hours' +
+          (views > settled ? ', and has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>'
+        : '<p class="pjline">About <b>' + fmt.format(settled) + ' views</b> by the end of its first 48 hours (from the hourly record)' +
+          (views > settled ? ', and it has added ' + fmt.format(views - settled) + ' since.' : '.') + '</p>';
+      if (f == null && p.state !== 'done') return head;   // no loaded curve to chart or project the week from
       if (p.state === 'done') return head +
         '<p class="dnote">Its first week is over too, so the projection has retired. From here the lifetime count is the honest number — nothing about a post past its first week needs estimating.</p>';
       const wk = p.week;
@@ -2203,7 +2310,7 @@
       ? '<p class="explain">No guessing: your finished launches already say what share of a post’s first-48-hour total has usually arrived by this age. The count so far divided by that share is the estimate, and the spread between your own posts is the margin.</p>'
       : '';
     el.innerHTML = '<div class="dsection"><h4>Where this one is heading</h4>' + why +
-      pjBodyHtml(p, v.view_count || 0, curve, refs, age) + '</div>';
+      pjBodyHtml(p, v.view_count || 0, curve, refs, age, lifeAt48(v.id)) + '</div>';
   }
   // delegated, because the block redraws itself on every poll
   document.addEventListener('click', e => {
@@ -2271,7 +2378,7 @@
     const head = '<p class="explain" style="margin-bottom:10px"><b style="color:var(--text)">' + fmt.format(views) + ' views</b> at <b style="color:var(--text)">' + fmtAge(t) + '</b> old' +
       (pace >= 0.05 ? ' · averaging ' + (pace >= 10 ? Math.round(pace) : pace.toFixed(1)) + ' views/min' : '') + '</p>';
     if (t > TT_RACE_MAX_AGE) {
-      el.innerHTML = head + '<p class="dnote">Past a week old, so the minute race has retired — your Worker\u2019s recordings of the other posts do not reach this age either, and racing against their last known counts would not be a race. Every hour of this one\u2019s life is on the chart below.</p>';
+      el.innerHTML = head + '<p class="dnote">Past a week old, so the race has retired — this page only compares the first week of your posts. Its hourly record is on the chart below.</p>';
       return;
     }
     let rivals = [];
@@ -2297,9 +2404,11 @@
       ...rivals.map(r => ({ label: ttRaceTitle(r.id, r.rec), val: r.at.v, valText: fmt.format(r.at.v) + ' views' + (r.at.stale ? ' (last known)' : '') }))
     ].sort((a, b) => b.val - a.val);
     const rank = rows.findIndex(r => r.strong) + 1;
+    // the real number of rows, not the mode's cap of ten
+    const n = rivals.length, pl = n === 1 ? '' : 's';
     el.innerHTML = head +
       '<p class="explain" style="margin-bottom:10px"><b>#' + rank + ' of ' + rows.length + '</b> vs ' +
-      (ttRaceMode === 'best' ? 'your <b>10 best recorded openings</b>' : 'your <b>10 most recent recorded posts</b>') +
+      (ttRaceMode === 'best' ? 'your <b>' + n + ' best recorded opening' + pl + '</b>' : 'your <b>' + n + ' most recent recorded post' + pl + '</b>') +
       ' when they were exactly this old</p>' +
       hbarList(rows, { color: 'var(--accent)' });
   }
@@ -2368,8 +2477,11 @@
       .slice(0, TTC_MAX);
     if (!others.length && (!focus || focus.length < 2)) { holder.innerHTML = ''; return; }
     const grid = ttLaunchGrid();
-    // every curve DRAWS; only a curve with no disqualifying hole VOTES on the median
-    const voters = others.filter(c => pjClean(c) >= 0);
+    /* Every curve DRAWS; only a FINISHED launch votes on the median — recorded cleanly from
+       its first hour to (nearly) 48 hours. An unfinished one, or one first recorded half
+       way through, stops or starts voting mid-chart and makes the gold line jump, even
+       dip, where nothing happened. */
+    const voters = others.filter(c => pjClean(c) >= PJ_COVER && c[0][0] <= PJ_GAP);
     const oPts = others.map(c => grid.map(t => ttcAt(c, t)));
     const vPts = voters.map(c => grid.map(t => ttcAt(c, t)));
     const med = grid.map((t, i) => {
@@ -2386,17 +2498,28 @@
       { pts: med, color: 'var(--gold)', width: 1.5, name: 'Typical launch' },
       ...(fPts.filter(x => x != null).length > 1 ? [{ pts: fPts, color: 'var(--live)', width: 2, dot: true, name: 'This post' }] : [])
     ];
+    /* The scale follows this post and the typical line, with headroom — not the tallest grey
+       line, or one viral post flattens everything else to the floor. A grey line above it
+       is clipped at the top edge, and the note says how many. */
+    const peak = a => Math.max(0, ...a.filter(x => x != null));
+    const hasFocus = fPts.filter(x => x != null).length > 1;
+    const top = Math.max(hasFocus ? peak(fPts) : 0, peak(med));
+    const yMax = med.some(x => x != null) && top > 0 ? top * 1.6 : 0;
+    const scTop = yMax ? niceScale(0, yMax, 4, true).hi : Infinity;
+    const clipped = oPts.filter(a => peak(a) > scTop).length;
+    const offTop = clipped ? '<p class="dnote" style="margin-top:6px">' + clipped + ' past launch' + (clipped === 1 ? ' runs' : 'es run') + ' off the top.</p>' : '';
     const thin = voters.length < TTC_MIN_VOTES
       ? '<p class="dnote" style="margin-top:6px">No typical line yet — that needs at least ' + TTC_MIN_VOTES +
-        ' of your posts recorded cleanly through the same hours, and your Worker has ' + voters.length +
-        '. It records every new post automatically, so this fills itself in.</p>'
+        ' of your posts recorded cleanly through their first 48 hours, and this page has ' + voters.length +
+        ' finished so far. It records every new post automatically, so this fills itself in.</p>'
       : '<p class="dnote" style="margin-top:6px">The gold line stops wherever fewer than ' + TTC_MIN_VOTES +
         ' of your posts had been recorded that long — one surviving curve is an anecdote, not a typical launch. ' +
         'A break in any line is a break in the recording, never a flat stretch.</p>';
-    holder.innerHTML = '<div class="dsection"><h4>Launch curves \u2014 every post\u2019s first 48 hours, aligned by age</h4>' +
-      '<p class="explain">Grey lines are your previous launches, each measured from its own posting moment. Gold is your typical launch, and the bright line is this post — above gold means it is beating your usual start.</p>' +
-      multiLineHtml(series, tips, { label: 'Launch curves', x0: 'posted', xMid: '24h', x1: '48h',
-        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null }) + thin + '</div>';
+    holder.innerHTML = '<div class="dsection"><h4>Launch curves \u2014 first 48 hours, aligned by age</h4>' +
+      '<p class="explain">Grey lines are up to ' + TTC_MAX + ' of your most recent other launches, each measured from its own posting moment. Gold is your typical launch' +
+      (hasFocus ? ', and the bright line is this post — above gold means it is beating your usual start.' : ' — this post\u2019s own launch isn\u2019t loaded here.') + '</p>' +
+      multiLineHtml(series, tips, { label: 'Launch curves', x0: 'posted', xMid: '24h', x1: '48h', int: true, yMax,
+        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null }) + offTop + thin + '</div>';
   }
 
   function renderLatest(v) {
@@ -2457,26 +2580,50 @@
   const LIFE_FRESH = 10 * 60e3;          // a growing recording is re-asked this often
   const LIFE_RETRY = 60e3;               // a failure may be retried this often
 
+  /* Each point's age. A current Worker sends the age of the last reading in each hour
+     (`age: 'reading'`); an older one sent the hour's START with a count from up to an hour
+     later, so those are moved to the hour's end — never past the post's current age. */
+  const lifeAges = d => {
+    const step = d.step || 3600e3, cap = Date.now() - (d.create_time || 0) * 1000;
+    return d.s.map(p => d.age === 'reading' ? p[0] : Math.min(p[0] + step, cap));
+  };
+  const lifeAgeTxt = ms => fmtAge(Math.round(ms / 60000)).replace(/ 0[mh]$/, '');
+  // the hour of life a point belongs to (0 = the first hour), whichever way it is stamped
+  const lifeHour = (d, p) => Math.floor(p[0] / (d.step || 3600e3));
+  /* What the post had by the end of its first 48 hours, read from the hourly record: the
+     highest reading in hour 47. Null when that hour was not recorded — nothing is carried
+     across a gap to fill it. The projection block uses it for a post whose minute-level
+     launch is not loaded on this page. */
+  function lifeAt48(id) {
+    const e = lifeCache[id], d = e && e.d;
+    if (!d || !d.s) return null;
+    const p = d.s.find(q => lifeHour(d, q) === Math.round(48 * 3600e3 / (d.step || 3600e3)) - 1);
+    return p ? p[1] : null;
+  }
+  // set by the projection block: lifeCache fills after it has drawn, so a fresh record
+  // has to ask it to draw again
+  let lifeHook = null;
+
   // the recorded life as results — what the post had at the marks its recording
   // actually reached, each mark abstaining rather than guessing when it cannot answer
   function lifeStripHtml(d) {
-    const s = d.s, step = d.step || 3600e3, first = s[0], lastAge = s[s.length - 1][0];
-    const atAge = a => { let v = null; for (const p of s) { if (p[0] <= a) v = p[1]; else break; } return v; };
+    const s = d.s, step = d.step || 3600e3, ages = lifeAges(d), first = s[0], lastAge = ages[ages.length - 1];
     const cells = [];
     for (const [label, a] of [['First hour', 3600e3], ['First day', 864e5], ['First week', 7 * 864e5]]) {
-      // both guards are honesty: a recording that never reached the mark, or one that
-      // STARTED after it (account connected late), cannot say what the post had there
-      if (lastAge < a || first[0] >= a) continue;
-      const v = atAge(a - 1);
-      if (v != null) cells.push(mcell(label, fmt.format(v) + ' views'));
+      // only the hour that ENDS at the mark answers it. A recording that never reached the
+      // mark, started after it (account connected late), or has a hole right there cannot
+      // say what the post had at that moment
+      const p = s.find(q => lifeHour(d, q) === Math.round(a / step) - 1);
+      if (p) cells.push(mcell(label, fmt.format(p[1]) + ' views'));
     }
     // observed only: the count has to cross 1,000 inside the recording — a first sample
     // already past 1,000 means the crossing happened while nobody was watching
     if (first[1] < 1000) {
-      const hit = s.find(p => p[1] >= 1000);
-      if (hit) cells.push(mcell('To 1,000 views', '≤ ' + fmtAge(Math.round((hit[0] + step) / 60000))));
+      const k = s.findIndex(p => p[1] >= 1000);
+      if (k >= 0) cells.push(mcell('To 1,000 views', '≤ ' + lifeAgeTxt(ages[k])));
     }
-    cells.push(mcell('Recorded', lastAge < 864e5 ? Math.round(lastAge / 3600e3) + 'h' : Math.round(lastAge / 864e5) + ' days', s.length + ' readings'));
+    const late = lifeHour(d, first) >= 1;
+    cells.push(mcell('Recorded', lifeAgeTxt(late ? lastAge - ages[0] : lastAge), s.length + ' hourly point' + (s.length === 1 ? '' : 's')));
     return '<div class="metric-grid" style="margin-bottom:10px">' + cells.join('') + '</div>';
   }
 
@@ -2488,9 +2635,11 @@
       // the honest misses — each names its cause, because a hidden section reads as
       // "this feature doesn't exist" when the truth is one of these three
       ex.innerHTML = entry.why === 'notfound'
-        ? 'Your Worker has <b>no recording of this post</b>. Recording starts when a post is first seen after the account is connected — anything posted before then has no history to draw, and TikTok itself keeps none to backfill from.'
+        ? '<b>No recording of this post yet.</b> Your Worker picks up a new post within about five minutes and keeps recording it until it is 60 days old or drops out of your 60 newest — so check back shortly, unless this post is older than that.'
         : entry.why === 'thin'
-          ? 'The recording has only ' + (entry.n || 0) + ' reading' + (entry.n === 1 ? '' : 's') + ' so far — too few to draw a line. It grows by the hour; check back soon.'
+          ? (entry.old
+            ? 'Only ' + (entry.n || 0) + ' hourly point' + (entry.n === 1 ? '' : 's') + ' recorded — too few to draw a line.'
+            : 'Less than 3 hours recorded so far — it adds a point each hour.')
           : 'Couldn’t reach your Worker for the hourly record' + (entry.detail ? ' (' + esc(entry.detail) + ')' : '') + ' — it retries on the next refresh.';
       ch.innerHTML = '';
       wrap.style.display = 'block';
@@ -2498,22 +2647,35 @@
     }
     const d = entry.d;
     const t0 = (d.create_time || 0) * 1000;
-    const at = d.s.map(p => t0 + p[0]);
+    const ages = lifeAges(d);
+    const at = ages.map(a => t0 + a);
     const views = d.s.map(p => p[1]);
-    const tips = d.s.map((p, i) => fmt.format(p[1]) + ' views · ' + fmtAge(Math.round(p[0] / 60000)) + ' old' +
-      (i ? ' · +' + fmt.format(p[1] - d.s[i - 1][1]) + ' that hour' : ''));
-    const lastAge = d.s[d.s.length - 1][0];
-    const days = lastAge / 864e5;
+    /* 'by 1h old', because a point is the count at the END of its hour. A rise across a
+       hole in the recording is not one hour's views, and a fall is TikTok revising its
+       count, not views leaving — each tip says which. */
+    const tips = d.s.map((p, i) => {
+      let t = fmt.format(p[1]) + ' views by ' + lifeAgeTxt(ages[i]) + ' old';
+      if (i) {
+        const dv = p[1] - d.s[i - 1][1], hrs = lifeHour(d, p) - lifeHour(d, d.s[i - 1]);
+        t += dv < 0 ? ' · count revised down by ' + fmt.format(-dv)
+          : hrs > 1 ? ' · +' + fmt.format(dv) + ' over ' + hrs + ' hours'
+          : ' · +' + fmt.format(dv) + ' that hour';
+      } else if (lifeHour(d, p) === 0) t += ' · +' + fmt.format(p[1]) + ' that hour';   // from zero at posting
+      return t;
+    });
+    const lastAge = ages[ages.length - 1];
+    const late = lifeHour(d, d.s[0]) >= 1;
+    const pastKeep = Date.now() - t0 >= 60 * 864e5;
     ex.innerHTML =
-      'Recorded by your own Worker, one point an hour, from posting to <b>' +
-      (days < 1 ? Math.round(lastAge / 3600e3) + ' hours' : Math.round(days) + ' days') + ' old</b>. ' +
+      'Recorded by your own Worker, one point an hour, from ' + (late ? '<b>' + lifeAgeTxt(ages[0]) + ' old</b>' : 'posting') +
+      ' to <b>' + lifeAgeTxt(lastAge) + ' old</b>' + (pastKeep ? ' — your Worker keeps each reading for 60 days' : '') + '. ' +
       'TikTok keeps no history at all — it only ever tells you the count right now — so this is the ' +
       'only record that this post had a shape. Every point is a real reading; a gap in the line is a gap ' +
       'in the recording.';
     // this page's chart is lineChart(pts, color, label, opts) — tips ride in opts, and the
     // label is the third positional argument, not an opts key
     ch.innerHTML = lifeStripHtml(d) + lineChart(views, 'var(--accent)', 'Views every hour since posting', {
-      at, tips, x0: 'posted', x1: fmtAge(Math.round(lastAge / 60000)) + ' old'
+      at, tips, int: true, x0: lifeAgeTxt(ages[0]) + ' old', x1: lifeAgeTxt(lastAge) + ' old'
     });
     wrap.style.display = 'block';
   }
@@ -2538,9 +2700,11 @@
     } else if (!d || !d.found) {
       lifeCache[id] = { why: 'notfound', at: Date.now() };
     } else if (!d.s || d.s.length < 3) {
-      lifeCache[id] = { why: 'thin', n: (d.s || []).length, at: Date.now() };
+      lifeCache[id] = { why: 'thin', n: (d.s || []).length, at: Date.now(),
+        old: !!d.create_time && Date.now() - d.create_time * 1000 >= 60 * 864e5 };
     } else {
       lifeCache[id] = { d, at: Date.now() };
+      if (lifeHook) lifeHook(id);   // the projection block may now have a 48-hour figure
     }
     if (!wrap.isConnected || wrap.dataset.lifeSeq !== seq) return;   // a newer render won, or the host is gone
     paintLife(wrap, lifeCache[id]);
@@ -2639,6 +2803,12 @@
      was inverted — it skipped the refetch precisely when a chart HAD been drawn, right
      after wiping it, so the hourly chart vanished on the first repaint and never returned.
      scripts/tt-life.test.mjs pins the working shape.) */
+  // a fresh hourly record can give an old post's projection block its 48-hour figure
+  lifeHook = id => {
+    if (pjCur && pjCur.id === id) renderProjection();
+    const b = $('ttdBody'), m = b && ttdVid && ttdVid.id === id ? b.querySelector('[data-ttd="pj"]') : null;
+    if (m) renderProjection(ttdVid, m);
+  };
   function ttdRepaint() {
     const dr = $('ttDrawer');
     if (!dr || dr.style.display !== 'block' || !ttdId) return;
@@ -2657,22 +2827,26 @@
   function ttdHashtagsHtml(v) {
     const tags = hashtagsOf(v);
     if (!tags.length) return '<div class="dsection"><h4>Hashtags</h4><p class="dnote">No hashtags in this caption.</p></div>';
-    const pool = scored();
+    /* Median against median, and never the post's own figure: each tag's number is the
+       typical (middle) total of your OTHER posts carrying it, over your typical post
+       leaving this one out — the same exclusion the report card beside it makes. A tag
+       whose other posts number fewer than two gets no figure. */
+    const pool = scored().filter(x => x.id !== v.id);
     const stat = {};
     for (const x of pool) {
       const sc = scoreOf(x);
       if (sc == null) continue;
-      for (const t of hashtagsOf(x)) { (stat[t] = stat[t] || { n: 0, s: 0 }).n++; stat[t].s += sc; }
+      for (const t of hashtagsOf(x)) (stat[t] = stat[t] || []).push(sc);
     }
     const all = pool.map(scoreOf).filter(x => x != null);
     const med = all.length ? pjMed(all) : 0;
     const chips = tags.map(t => {
       const e = stat[t];
-      const idx = (e && e.n >= 2 && med > 0) ? Math.round(e.s / e.n / med * 100) : null;
+      const idx = (e && e.length >= 2 && med > 0) ? Math.round(pjMed(e) / med * 100) : null;
       return '<span class="chip">' + esc(t) + (idx != null ? ' <b>' + idx + '%</b>' : '') + '</span>';
     }).join('');
     return section('Hashtags in this caption',
-      'The figure is the average total views of your posts carrying that tag \u2014 or the projected 48-hour total for one still launching \u2014 against your typical post. Shown only for a tag you have used at least twice.',
+      'The figure is the typical (middle) total views of your other posts carrying that tag \u2014 or the estimated 48-hour total for one still launching \u2014 against your typical post. Shown only for a tag on at least two of your other posts.',
       '<div class="chiprow">' + chips + '</div>');
   }
 
@@ -2690,7 +2864,8 @@
       mcell('Comments', fmt.format(v.comment_count || 0)) +
       mcell('Shares', fmt.format(v.share_count || 0)) +
       mcell('Engagement', (v.view_count || 0) > 0 ? engOf(v).toFixed(1) + '%' : '—', 'likes per view') +
-      mcell('Views/day', fmt.format(Math.round(paceOf(v))), 'since posting') +
+      (paceOf(v) == null ? mcell('Avg views/day', youngCount(v), 'too new for a daily rate')
+                         : mcell('Avg views/day', fmt.format(Math.round(paceOf(v))), 'since posting')) +
       mcell('Length', (v.duration || 0) + 's') +
       mcell('Age', fmtAgo(v.create_time * 1000)) +
       '</div>';
@@ -2700,35 +2875,37 @@
   // this post's own recorded line, or an honest note about why there isn't one
   function ttMinuteChartHtml(v) {
     let html = '';
-    // minute-by-minute, recorded by the Worker even with no browser open
+    // recorded by the Worker even with no browser open: every minute for the first 48
+    // hours, then every 15 minutes or hourly
     const rec = hist && hist.videos && hist.videos[v.id];
     if (rec && rec.s && rec.s.length > 1) {
       const pts = rec.s.map(s => s[1]);
-      html += '<div class="dsection"><h4>Views since it went live — recorded minute by minute</h4>' +
+      const past48 = (Date.now() - v.create_time * 1000) / 60000 > PJ_HORIZON;
+      // a raw reading carries likes, comments and shares too; a bare [ts, views] pair is a
+      // launch-curve point, which is not counted as a reading of its own
+      const raw = rec.s.filter(s => s.length > 2).length;
+      html += '<div class="dsection"><h4>Views since it went live — ' + (past48 ? 'as recorded' : 'recorded minute by minute') + '</h4>' +
         '<p class="explain">Captured by your Worker in the background, even when nobody had this page open.</p>' +
+        (past48 ? '<p class="dnote">Every minute for the first 48 hours, then every 15 minutes or hourly.</p>' : '') +
         lineChart(pts, 'var(--live)', 'Views over time', {
-          at: rec.s.map(s => s[0]),
+          at: rec.s.map(s => s[0]), int: true,
           tips: rec.s.map(s => fmt.format(s[1]) + ' views — ' + fmtAgo(s[0])),
           x0: fmtAgo(rec.s[0][0]), x1: 'now'
         }) +
-        '<p class="dnote" style="margin-top:6px">' + rec.s.length + ' samples · first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
+        '<p class="dnote" style="margin-top:6px">' + (raw ? raw + ' reading' + (raw === 1 ? '' : 's') + ' · ' : '') + 'first ' + fmtAgo(rec.s[0][0]) + '</p></div>';
     } else {
-      /* "No recording" and "the recording is outside what this view carries" are different
-         things, and saying the first when the second is true is a lie about the user's own
-         data. /tiktok/history serves an absolute three-day window (the Worker's KEEP_DAYS),
-         so a post recorded perfectly at the time drops out of THIS chart on its fourth day
-         while its samples sit in D1 for two months. The old copy told her an eight-day-old
-         post was never recorded and that the next one "will appear here in real time" —
-         when it had been recorded, and the hourly chart below is about to draw it.
-         Age is what tells the two apart. */
-      const HIST_WINDOW_D = 3;      // matches KEEP_DAYS in worker.js — the served bundle
+      /* "No recording" and "outside what this chart carries" are different things, and
+         saying the first when the second is true is a lie about her own data. What decides
+         it is whether this post is in the page's store, which keeps the 20 newest posts —
+         not its age. A post outside those has dropped out of this chart while its samples
+         sit in D1; a new one inside them simply has not been picked up (or synced) yet. */
+      const newer = videos.filter(x => (x.create_time || 0) > (v.create_time || 0)).length;
       const ageD = (Date.now() - v.create_time * 1000) / 864e5;
-      html += ageD > HIST_WINDOW_D
-        ? '<p class="dnote">The minute-by-minute chart only carries the last ' + HIST_WINDOW_D + ' days, so this ' +
-          'post has scrolled out of it. The hourly record below carries whatever the Worker holds of its ' +
-          'whole life — and says so if it holds nothing.</p>'
-        : '<p class="dnote">No minute-by-minute recording for this post yet. Your Worker records the first ' +
-          '48 hours of each new post automatically — the next thing you publish will appear here in real time.</p>';
+      html += newer >= 20
+        ? '<p class="dnote">This chart keeps your 20 newest posts, so this one has dropped out of it. The hourly record below carries whatever the Worker holds of its whole life.</p>'
+        : ageD <= 3
+          ? '<p class="dnote">No minute-by-minute recording for this post yet — your Worker picks new posts up within about five minutes and records their first 48 hours automatically.</p>'
+          : '<p class="dnote">Your Worker hasn’t sent this page any recent readings of this post. The hourly record below carries whatever the Worker holds of its whole life.</p>';
     }
     return html;
   }
@@ -3355,7 +3532,9 @@
      is honest: this device genuinely doesn't know when you last looked. The stamp is
      deliberately not synced or exported; "when did I last look on THIS device" is the
      question, and another device's answer would be a lie here. */
-  let awaySince = null;
+  /* awayUntil is when this device came back — the moment loadSeen ran. The absence is
+     printed as awayUntil − awaySince, so the '(19h)' stops growing while she reads. */
+  let awaySince = null, awayUntil = null;
   const seenKey = () => 'tt_seen:' + ((me && me.open_id) || '');
   function touchSeen() {
     if (!me || !me.open_id) return;
@@ -3367,6 +3546,7 @@
       const v = +localStorage.getItem(seenKey());
       awaySince = v > 0 && v < Date.now() ? v : null;
     } catch (e) { awaySince = null; }
+    awayUntil = Date.now();
     touchSeen();
   }
 
@@ -3512,20 +3692,28 @@
      nothing rather than guessing when the Worker holds no data for the stretch. */
   const AWAY_MIN = 30 * 60e3;
   function ttAwayHeadHtml(list) {
-    if (!awaySince || Date.now() - awaySince < AWAY_MIN) return '';
+    const until = awayUntil || Date.now();
+    if (!awaySince || until - awaySince < AWAY_MIN) return '';
     const bits = [];
     const g = ttGainBuckets(awaySince);
-    if (g.total > 0) bits.push('<b>+' + fmt.format(g.total) + ' views</b> recorded across your posts');
+    // the store keeps the newest posts only, so the headline names its basis when that is
+    // fewer than the posts TikTok lists
+    const stored = Object.keys((hist && hist.videos) || {}).length;
+    if (g.total > 0) bits.push('<b>+' + fmt.format(g.total) + ' views</b> recorded across your ' +
+      (stored < videos.length ? stored + ' newest posts' : 'posts'));
+    /* Followers run from the snapshot at or before the moment she left to the live count in
+       the header — and only when that snapshot is within three hours of her leaving, so the
+       figure is about the absence and not about the morning before it. */
     const f = fseries();
-    const a = ATB(f, awaySince), b = f[f.length - 1];
-    if (a && b && a !== b) {
-      const df = (b[1] || 0) - (a[1] || 0);
+    const a = ATB(f, awaySince);
+    if (a && me && me.follower_count != null && awaySince - a[0] <= 3 * 3600e3) {
+      const df = (me.follower_count || 0) - (a[1] || 0);
       if (df) bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
     }
     const crossed = list.filter(x => x.at >= awaySince).length;
     if (crossed) bits.push('<b>' + crossed + '</b> round number' + (crossed === 1 ? '' : 's') + ' crossed');
     if (!bits.length) return '';
-    return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(awaySince).replace(' ago', '')) + '</b>): ' +
+    return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(Date.now() - (until - awaySince)).replace(' ago', '')) + '</b>): ' +
       bits.join(' · ') + '.</p>';
   }
 
@@ -3535,7 +3723,7 @@
      is not finished being a day yet. */
   function ttMomentsHtml() {
     const rows = [];
-    const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
+    const from = awaySince && (awayUntil || Date.now()) - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
     const label = from === awaySince ? 'Biggest hour while you were away' : 'Biggest hour of the last day';
     const g = ttGainBuckets(from);
     let bestAt = 0, best = null;
@@ -3552,10 +3740,13 @@
       rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
         at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
     }
-    // yesterday, ranked among the full local days the recordings cover. A day with a hole
-    // in the recording is left out, not ranked short.
+    // yesterday, ranked among the full local days the recordings cover. The window starts
+    // at a local midnight, so its first day is a whole day and not a partial one ranked
+    // short. A day with a hole in the recording is left out, not ranked short, and
+    // yesterday itself is only ranked when it is complete.
     const day = new Map();
-    const gd = ttGainBuckets(Date.now() - ALERT_DAYS * 864e5);
+    const s0 = new Date(); s0.setHours(0, 0, 0, 0); s0.setDate(s0.getDate() - ALERT_DAYS);
+    const gd = ttGainBuckets(s0.getTime());
     for (const [at, b] of gd.hours) {
       const k = new Date(at).toLocaleDateString('en-CA');
       day.set(k, (day.get(k) || 0) + b.gain);
@@ -3565,9 +3756,15 @@
     const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
     const done = [...day.entries()].filter(([k]) => k !== tk);
     if (done.length >= 3 && day.has(yk)) {
-      const rank = done.filter(([, v]) => v > day.get(yk)).length + 1;
+      // q counts from the bottom the same way rank counts from the top (strictly quieter
+      // days + 1), so a tie is never called second-quietest
+      const yv = day.get(yk), n = done.length;
+      const rank = done.filter(([, v]) => v > yv).length + 1, q = done.filter(([, v]) => v < yv).length + 1;
+      const of = ' of the last ' + n + ' recorded days';
       rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
-        (rank === 1 ? 'your best day' : ordinal(rank) + ' best of ' + done.length + ' recorded days'), at: '' });
+        (rank === 1 ? 'your best' + of
+          : rank > n / 2 ? (q === 1 ? 'your quietest' : ordinal(q) + ' quietest') + of
+          : ordinal(rank) + ' best' + of), at: '' });
     }
     if (!rows.length) return '';
     return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
@@ -3708,7 +3905,7 @@
         new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }));
       html += '<div class="dsection"><h4>Views per day — recorded</h4>' +
         '<p class="explain">Views your posts gained each full day, summed from the recordings. Today is excluded — it isn’t finished being a day. A missing day is a gap in the recording, not a zero.</p>' +
-        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
+        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, int: true, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
     } else {
       html += '<p class="dnote">The views-per-day chart needs a few full recorded days — it fills itself in as the Worker keeps sampling.</p>';
     }
@@ -3725,7 +3922,7 @@
           '<div class="range-row" id="recRange">' +
           [30, 90, 0].map(n => '<button class="ghost' + (recTrendsRange === n ? ' active' : '') + '" data-rec="' + n + '">' + (n === 0 ? 'All' : n + ' days') + '</button>').join('') +
           '</div>' +
-          lineChart(pts, 'var(--up)', 'Follower history', { at, tips,
+          lineChart(pts, 'var(--up)', 'Follower history', { at, tips, int: true,
             x0: new Date(seg[0][0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), x1: 'now' }) + '</div>';
       }
     }
@@ -4195,9 +4392,21 @@
     rd.readAsText(f);
     e.target.value = '';
   });
+  /* A phone tab usually RESUMES rather than reloads, so the away stamp is re-read when the
+     page comes back — but only after a real absence. A ten-second app switch to answer a
+     message must not wipe the away summary she has not finished reading. */
+  function resumeSeen() {
+    try {
+      const v = +localStorage.getItem(seenKey());
+      if (v && Date.now() - v >= AWAY_MIN) loadSeen();
+    } catch (e) {}
+  }
   document.addEventListener('visibilitychange', () => {
     hiddenPaused = document.hidden;
-    if (!document.hidden && !paused && session) poll();
+    if (!document.hidden && !paused && session) { resumeSeen(); poll(); }
+  });
+  window.addEventListener('pageshow', e => {
+    if (e.persisted && !document.hidden && !paused && session) { resumeSeen(); poll(); }
   });
 
   // theme, shared with the YouTube dashboard

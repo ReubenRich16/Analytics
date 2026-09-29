@@ -261,9 +261,10 @@ Idea Studio prompt, which was previously handing the AI a recency-sorted tag lis
 Percentiles count ties as half, so an account whose posts all sit at the same rate reads as
 typical rather than as the bottom of its own catalogue.
 
-**Views/day still exists** on the table column, its sort, and the per-post metric cell. It
-is a pace — the right answer to "what is moving right now" and the wrong answer to "which
-of these was better" — and nothing labels it as anything else any more.
+**Avg views/day still exists** on the table column, its sort, and the per-post metric cell.
+It is a lifetime average (total ÷ age); the +tick / +session columns and the Mover chip
+answer what is moving now. A post under a day old has no daily figure: its cell shows the
+real count and age ('93 in 3h') and it sorts last.
 
 **Compare** (the third page)
 
@@ -400,8 +401,11 @@ memory rather than re-asking D1.
 
 Every point on it is measured. Nothing is interpolated between samples and nothing is
 extended past the last one — a gap in the recording is drawn as a gap in the line. And a
-missing recording says so on the page — a post that predates the account being connected
-has no history to draw, which is different from the feature not working.
+missing recording says so on the page — a post older than 60 days (or outside the 60
+newest) has no history to draw, which is different from the feature not working. Each
+point is the count at the end of its hour (the Worker sends the age of the hour's last
+reading), and a recording that started late says where it starts rather than "from
+posting".
 
 **Where the minute samples live**
 

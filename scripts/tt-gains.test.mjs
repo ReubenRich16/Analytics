@@ -251,10 +251,12 @@ console.log('\nthe velocity strip and +session');
     let { perPost, velHistory, velSession, velStart } = state;
     const MAX_BARS = 60;
     let velBackfilled = 0;
+    let velBg = state.velBg || [], velLastAt = state.velLastAt || 0;
+    const intervalMs = state.intervalMs || 60000, backBin = () => Math.max(intervalMs, 60e3);
     const saveVel = () => {};
     ${body}
-    renderVelocity();
-    return { perPost, velHistory, velSession, velStart };`);
+    const step = renderVelocity();
+    return { perPost, velHistory, velSession, velStart, velBg, velLastAt, step };`);
   const els = {};
   const $ = id => (els[id] = els[id] || { style: {}, children: [], innerHTML: '', textContent: '', appendChild(c) { this.children.push(c); } });
   const document = { createElement: () => ({ style: {}, className: '', title: '' }) };
@@ -269,7 +271,7 @@ console.log('\nthe velocity strip and +session');
     st.velSession.views + ' / ' + st.perPost.p.tickV);
 
   const bf = new Function('hist', 'NOW', `
-    const MAX_BARS = 60; const Date = { now: () => NOW };
+    const MAX_BARS = 60; const Date = { now: () => NOW }; const backBin = () => 60e3;
     ${fn('function backfillBars()')}
     return backfillBars();`);
   const bars = bf({ videos: { p: { s: [[NOW - 5 * MIN, 100], [NOW - 4 * MIN, 110], [NOW - 3 * MIN, 100], [NOW - 2 * MIN, 110], [NOW - MIN, 111]] } } }, NOW);

@@ -155,6 +155,8 @@ function world(targetAgeMin) {
   const best = build('best').run(w.target, w.hist, w.videos);
   check('latest mode names itself', /most recent recorded posts/.test(latest));
   check('best mode names itself', /best recorded openings/.test(best));
+  check('and both count the rows really shown, not a flat ten',
+    /your <b>5 most recent recorded posts<\/b>/.test(latest) && /your <b>5 best recorded openings<\/b>/.test(best));
   check('the newest, weakest rival appears in latest mode', /newest rival/.test(latest));
   check('both modes list every rival when there are fewer than ten',
     (latest.match(/class="hbar-row"/g) || []).length === (best.match(/class="hbar-row"/g) || []).length);
@@ -201,7 +203,7 @@ function world(targetAgeMin) {
   // retirement, empty, and the no-op guards
   const w = world(9 * 1440);
   const retired = build('latest').run(w.target, w.hist, w.videos);
-  check('past a week the race retires', /minute race has retired/.test(retired));
+  check('past a week the race retires, saying it is a page limit', /the race has retired — this page only compares the first week of your posts/.test(retired));
   check('and still says where the post got to', /views<\/b> at/.test(retired));
   check('with no bars under it', !/hbar-row/.test(retired));
 
@@ -302,7 +304,7 @@ console.log('\nreading a curve for the overlay');
 console.log('\ndrawing several lines at once');
 {
   const ML = new Function('esc', 'fmt', 'chartPush', `
-    ${fn('function niceScale(lo, hi, target)')}
+    ${fn('function niceScale(lo, hi, target, int)')}
     const axisNum = n => String(Math.round(n));
     const legendHtml = items => '<div class="legend">' + items.map(i => '<span class="lg-item">' + esc(i.name) + '</span>').join('') + '</div>';
     ${fn('function multiLineHtml(series, tips, opts)')}
@@ -435,7 +437,7 @@ console.log('\nthe per-post drawer');
 
   // hashtags: the one panel the drawer adds
   const tags = TT.slice(TT.indexOf('function ttdHashtagsHtml(v)'), TT.indexOf('\n  }\n', TT.indexOf('function ttdHashtagsHtml(v)')));
-  check('a tag used once gets no figure attached to it', /e\.n >= 2/.test(tags),
+  check('a tag on fewer than two OTHER posts gets no figure attached to it', /e\.length >= 2/.test(tags) && /x\.id !== v\.id/.test(tags),
     'one post is not a record of anything');
   check('and no figure at all without a median to compare against', /med > 0/.test(tags));
   check('captions cannot inject markup through a tag', /esc\(t\)/.test(tags));
