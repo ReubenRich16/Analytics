@@ -389,7 +389,7 @@ console.log('\nwhile you were away');
   check('the first hundred views on a post is not treated as news', /if \(m < 100\) continue;/.test(feed));
   check('the feed is bounded in time and in length',
     /ALERT_DAYS = 14/.test(TT) && /\.slice\(0, 8\)/.test(feed));
-  check('and a caption cannot inject markup into it', /esc\(cap\.slice\(0, 46\)/.test(feed));
+  check('and a caption cannot inject markup into it', /esc\(shortCap\(cap, 46, 'a post'\)\)/.test(feed));
   /* One line per subject. A post that climbed three rungs inside the window reported all
      three and pushed everything else off the list — and "passed 100 views" is not news
      once "passed 500 views" is sitting above it. */

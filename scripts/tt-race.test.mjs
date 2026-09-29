@@ -441,5 +441,54 @@ console.log('\nthe per-post drawer');
   check('captions cannot inject markup through a tag', /esc\(t\)/.test(tags));
 }
 
+/* The report card and the metric grid (A15, A16, A28): no letter for a post that has no
+   reach figure yet, the real reason on screen, an estimate marked as one, engagement
+   judged against the ONE typical like rate and coloured by itself. */
+console.log('\nreport card — honest reasons, one typical like rate');
+{
+  const NOW = 1786000000000, H = 3600e3;
+  const grab = n => { const i = TT.indexOf('function ' + n + '('); return TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const pmed = TT.slice(TT.indexOf('  const pjMed = '), TT.indexOf('\n', TT.indexOf('  const pjMed = ')));
+  const tl = TT.slice(TT.indexOf('  const typicalLikeRate = '), TT.indexOf('\n  };\n', TT.indexOf('  const typicalLikeRate = ')) + 5);
+  const card = (v, videos, scores) => new Function('videos', 'scores', 'v', 'NOW', `
+    const Date = { now: () => NOW };
+    const fmt = new Intl.NumberFormat('en-US');
+    const PJ_MIN_AGE = 300, PJ_HORIZON = 2880;
+    const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
+    const scoreOf = v => scores[v.id] == null ? null : scores[v.id];
+    const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
+    ${pmed}\n${tl}\n${grab('ttReportCardHtml')}
+    return ttReportCardHtml(v);`)(videos, scores, v, NOW).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  const others = [];
+  const sc = {};
+  for (let i = 0; i < 28; i++) { others.push({ id: 'o' + i, create_time: (NOW - (10 + i) * 864e5) / 1000, view_count: 1000 + i * 100, like_count: 80 + i }); sc['o' + i] = 1000 + i * 100; }
+  const young = { id: 'n', create_time: (NOW - 3 * H) / 1000, view_count: 93, like_count: 7 };
+  const a = card(young, [young, ...others], sc);
+  check('a 3-hour-old post with 28 scored others gets no letter', /— Not graded yet/.test(a) && !/ (A\+|A-|A|B\+|B|C|D|F) Beats/.test(a), a);
+  check('and the reason is its age, not a lack of posts',
+    /reach is graded once this post is 5 hours old and its first 48 hours can be projected/.test(a) && !/four comparable posts/.test(a), a);
+  const b = card({ ...young, create_time: (NOW - 8 * H) / 1000 }, [young, ...others], sc);
+  check('past 5 hours the reason drops the age', /reach is graded once this post’s first 48 hours can be projected/.test(b), b);
+  const small = card(young, [young, ...others.slice(0, 3)], sc);
+  check('a genuinely small pool keeps the four-posts reason', /Reach needs at least four comparable posts/.test(small), small);
+  check('and grades on engagement with the band in the headline', /Beats \d+% of your posts on engagement — (about|above|below) typical \(\d+%\)/.test(small), small);
+  const ranked = { id: 'r', create_time: (NOW - 10 * H) / 1000, view_count: 2725, like_count: 260 };
+  const r = card(ranked, [ranked, ...others], { ...sc, r: 5393 });
+  check('the headline says the percentile is reach', /Beats \d+% of your 28 posts on reach/.test(r), r);
+  check('a launching post’s reach reads as an estimate by 48h, not as views', /~5,393 by 48h/.test(r) && !/5,393 views/.test(r), r);
+  check('the reach explainer admits older posts carry a longer tail', /Older posts have had longer to pick up late views/.test(r), r);
+  const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };
+  const zc = card(zero, [zero, ...others], sc);
+  check('a 0-view post gets no engagement bar and no F', !/Engagement \S+ \d+% of typical/.test(zc) && !/ F /.test(zc), zc);
+  const src = grab('ttReportCardHtml');
+  check('the engagement bar is coloured from its own index when reach is graded',
+    /idx >= 100 \? 'var\(--up\)' : idx >= 85 \? 'var\(--accent\)' : 'var\(--gold\)'/.test(src));
+  check('no "|| 1" fallback that turns a 0 median into a ratio', !/\|\| 1;/.test(src));
+  check('and "typical" is the shared helper', /typicalLikeRate\(v\.id\)/.test(src));
+  const grid = grab('ttMetricGridHtml');
+  check('the grid shows — for engagement on a 0-view post', /view_count \|\| 0\) > 0 \? engOf\(v\)\.toFixed\(1\) \+ '%' : '—'/.test(grid));
+}
+
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

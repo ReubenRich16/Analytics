@@ -65,8 +65,9 @@ console.log('\nthe TikTok card answers what TikTok can actually answer');
     /const newest = videos\.slice\(\)/.test(body), 'it is picking from a filtered list again');
   check('and an ungradeable newest says so rather than naming another post',
     /if \(mine == null\)/.test(body));
-  check('the two "too early" reasons are told apart',
-    /launch window is still running/.test(body) && /Four comparable posts are needed/.test(body));
+  check('the "too early" reasons are told apart',
+    /launch window is still running/.test(body) && /Four comparable posts are needed/.test(body) &&
+    /Grades start once a post is/.test(body) && /has no views counted yet/.test(body) && /vary too much at this age/.test(body));
 }
 
 console.log('\nboth pages cycle the same number of recent uploads');
@@ -132,60 +133,127 @@ for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'follo
   check(page + ' — a bucket whose count went backwards is refused',
     !fb[0].ok && fb[0].gain === -200, JSON.stringify(fb[0]));
   check(page + ' — and the chip refuses to speak from it rather than dividing',
-    /if \(!b\[0\] \|\| !b\[0\]\.ok\) return \{/.test(src) &&
-    /(came back lower than it was)/.test(src));
+    /if \(!b\[0\] \|\| !b\[0\]\.ok\) \{/.test(src) &&
+    (page === 'TikTok'
+      ? /No follower reading since/.test(src) && /Followers are down/.test(src) && /aren’t fully recorded yet/.test(src)
+      : /came back lower than it was/.test(src) && /aren’t fully recorded yet/.test(src)));
+  // followers and subscribers really do fall — for those a fall is a result, not a flap
+  const fall = M.dayBuckets(flap, 1, 3, true);
+  check(page + ' — with allowNeg a real fall is kept and marked ok', fall[0].ok && fall[0].gain === -200, JSON.stringify(fall[0]));
+  check(page + ' — a gap and a fall give different reasons',
+    fb[0].why === 'fall' && M.dayBuckets([[NOW - 90 * 3600e3, 0], [NOW - 1000, 500]], 1, 1)[0].why === 'gap');
 
   // the sentences
   const mk = rates => rates.map((r, i) => ({ ok: true, gain: r, spanH: 24, rate: r }));
-  const best = M.weekPlace(mk([300, 100, 90, 80, 70, 60, 50, 40]), unit);
-  check(page + ' — a clear best day says so', /best day/i.test(best.h), best.h);
-  check(page + ' — and places itself in the week', /places first/.test(best.p), best.p);
-  check(page + ' — the figure carries the unit', best.f === '+300 ' + unit, best.f);
-  const mid = M.weekPlace(mk([100, 100, 300, 90, 80, 70, 60, 50]), unit);
-  check(page + ' — a middling day gets an ordinal', /places \d+(st|nd|rd|th)/.test(mid.p), mid.p);
-  check(page + ' — and quotes yesterday', /yesterday/.test(mid.p), mid.p);
+  M.weekPlace1 = (b, u) => M.weekPlace(b, u, u.replace(/s$/, ''));
+  const best = M.weekPlace1(mk([300, 100, 90, 80, 70, 60, 50, 40]), unit);
+  check(page + ' — a clear best 24 hours says so', /^Best 24 hours of the week\.$/.test(best.h), best.h);
+  check(page + ' — and places itself among the stretches', /Of the last 8 such 24-hour stretches, this one ranks first/.test(best.p), best.p);
+  check(page + ' — the figure carries the unit and the window', best.f === '+300 ' + unit + ' in 24h', best.f);
+  check(page + ' — never "today" or "yesterday" for a rolling window', !/today|yesterday/i.test(best.h + best.p), best.p);
+  check(page + ' — the usual it is judged against is printed first', /^Your usual 24 hours lately: 70 /.test(best.p), best.p);
+  const mid = M.weekPlace1(mk([100, 100, 300, 90, 80, 70, 60, 50]), unit);
+  check(page + ' — a middling stretch gets an ordinal, and a tie says joint', /this one is joint 2nd/.test(mid.p), mid.p);
+  check(page + ' — and quotes the 24 hours before', /24 hours before/.test(mid.p), mid.p);
+  const mid2 = M.weekPlace1(mk([95, 100, 300, 90, 80, 70, 60, 50]), unit);
+  check(page + ' — an untied middling stretch ranks plainly', /this one ranks 3rd/.test(mid2.p), mid2.p);
+
+  /* A8 — ties, zero and noise. All from the rounded figures the reader sees. */
+  const flat = M.weekPlace1(mk([0, 0, 0, 0, 0, 0, 0, 0]), unit);
+  check(page + ' — an all-zero week is never "best"', !/best/i.test(flat.h) && /quiet 24 hours — nothing new/.test(flat.h), flat.h);
+  const alt = M.weekPlace1(mk([7, 8, 7, 8, 7, 8, 7, 8]), unit);
+  check(page + ' — a steady 7.5 a day sampled as 7 and 8 is "About usual"', alt.h === 'About usual.', alt.h);
+  check(page + ' — and puts no percentage on rounding', !/%/.test(alt.p), alt.p);
+  check(page + ' — within the noise of the 24 hours before it says so', /About the same as the 24 hours before \(8\)/.test(alt.p), alt.p);
+  const ones = M.weekPlace1([{ ok: true, rate: 0.998, spanH: 24, gain: 1 }, { ok: true, rate: 1.021, spanH: 23.5, gain: 1 },
+    { ok: true, rate: 1.01, spanH: 23.8, gain: 1 }, { ok: true, rate: 1.005, spanH: 23.9, gain: 1 }], unit);
+  check(page + ' — four identical +1s are not a "quietest"', !/quietest/i.test(ones.h) && /joint 1st/.test(ones.p), ones.h + ' / ' + ones.p);
+  check(page + ' — one of something is singular', ones.f === '+1 ' + unit.replace(/s$/, '') + ' in 24h', ones.f);
+  const few = M.weekPlace1(mk([300, 100, 90, 80]), unit);
+  check(page + ' — with fewer than five to compare it says "of the last N", not "of the week"', few.h === 'Best 24 hours of the last 4.', few.h);
+  const two = M.weekPlace1(mk([300, 100]), unit);
+  check(page + ' — one comparison is not enough to call a best', !/Best/.test(two.h), two.h);
+  const lose = M.weekPlace1([{ ok: true, rate: -1, spanH: 24, gain: -1 }, ...mk([1, 2, 1, 0, 1, 2, 1])], unit);
+  check(page + ' — a real loss prints with a minus and a singular unit', lose.f === '−1 ' + unit.replace(/s$/, '') + ' in 24h', lose.f);
+  check(page + ' — and is not called best or busy', /^Down over the last 24 hours\.$/.test(lose.h), lose.h);
+  const fellY = M.weekPlace1([{ ok: true, rate: 40, spanH: 24, gain: 40 }, { ok: false, why: 'fall' }], unit);
+  check(page + ' — a 24 hours before that went down is not called "not recorded"', /came back lower/.test(fellY.p) && !/recorded/.test(fellY.p.split('.')[1] || ''), fellY.p);
 
   /* Yesterday at 2 and today at 3 is "+50% versus yesterday" — true, and useless. Below a
      floor the chip prints both numbers instead of a ratio. */
-  const tiny = M.weekPlace([{ ok: true, rate: 3, spanH: 24, gain: 3 }, { ok: true, rate: 2, spanH: 24, gain: 2 }], unit);
+  const tiny = M.weekPlace1([{ ok: true, rate: 3, spanH: 24, gain: 3 }, { ok: true, rate: 2, spanH: 24, gain: 2 }], unit);
   check(page + ' — a tiny yesterday is not turned into a percentage', !/%/.test(tiny.p), tiny.p);
-  const gone = M.weekPlace([{ ok: true, rate: 40, spanH: 24, gain: 40 }, { ok: false }], unit);
-  check(page + ' — a missing yesterday says so rather than dividing by nothing',
-    /nothing to hold it against/.test(gone.p), gone.p);
-  const odd = M.weekPlace([{ ok: true, rate: 40, spanH: 19, gain: 32 }, { ok: true, rate: 40, spanH: 24, gain: 40 }], unit);
-  check(page + ' — a scaled window admits it was scaled', /scaled to a day/.test(odd.p), odd.p);
+  const gone = M.weekPlace1([{ ok: true, rate: 40, spanH: 24, gain: 40 }, { ok: false }], unit);
+  check(page + ' — a missing 24 hours before says so rather than dividing by nothing',
+    /weren’t fully recorded, so there is nothing to hold it against/.test(gone.p), gone.p);
+  const odd = M.weekPlace1([{ ok: true, rate: 40, spanH: 19, gain: 32 }, { ok: true, rate: 40, spanH: 24, gain: 40 }], unit);
+  check(page + ' — a scaled window admits it was scaled', /Measured over 19 hours and scaled to 24/.test(odd.p), odd.p);
   check(page + ' — every answer is still a paintable {h,f,p}',
     [best, mid, tiny, gone, odd].every(a => a && a.h && a.f && a.p));
 }
 
 /* The four chips added in August 2026: Subs (YT), Mover, Hit rate and Milestone.
    Same contract as everything above, plus the arithmetic that makes each honest. */
-console.log('\nMover — the post that did the work today');
+console.log('\nMover — the post that did the work in the last 24 hours');
 {
   const NOW = 1786000000000, H = 3600e3;
   const atb = (arr, t) => { let v = null; for (const x of arr) { if (x[0] <= t) v = x; else break; } return v; };
   const fmtUS = new Intl.NumberFormat('en-US');
   const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const helpers = src => src.slice(src.indexOf('  const clip = (s, n) =>'), src.indexOf('\n  };\n', src.indexOf('  const shortCap = ')) + 5) +
+    src.slice(src.indexOf('  const fmtAgo = ts =>'), src.indexOf('\n  };\n', src.indexOf('  const fmtAgo = ts =>')) + 5);
+  const DateShim = 'const Date = { now: () => NOW, parse: s => globalThis.Date.parse(s) };\n';
   // two samples: one just inside the 24h lookback, one `staleH` hours ago
   const series = (gain, opts = {}) => {
     const last = NOW - (opts.staleH != null ? opts.staleH : 0.5) * H;
     return [[last - (opts.spanH || 24) * H, 1000], [last, 1000 + gain]];
   };
-
+  const old = new globalThis.Date(NOW - 90 * 864e5).toISOString();
   const ytMover = new Function('hist', 'meta', 'videoTitle', 'fmt', 'ATB', 'NOW',
-    'const Date = { now: () => NOW };\n' + grab(YT, 'answerMover') + '\nreturn answerMover;');
-  const run = hist => ytMover(hist, { a: 1, b: 1, c: 1, d: 1 }, id => 'vid ' + id, fmtUS, atb, NOW)();
+    DateShim + helpers(YT) + grab(YT, 'answerMover') + '\nreturn answerMover;');
+  const meta4 = { a: { publishedAt: old }, b: { publishedAt: old }, c: { publishedAt: old }, d: { publishedAt: old } };
+  const run = (hist, meta) => ytMover(hist, meta || meta4, id => 'vid ' + id, fmtUS, atb, NOW)();
   const res = run({ videos: { a: series(300), b: series(100), c: series(-50), d: series(500, { staleH: 8 }) } });
-  check('the biggest mover wins; the flapping counter and the stale series do not vote', res.f === '+300 today', res.f);
+  check('the biggest mover wins; the flapping counter and the stale series do not vote', res.f === '+300 in 24h', res.f);
   check('its share is of the recorded total, so 300 of 400 is 75%', /75%/.test(res.p), res.p);
-  check('nothing recorded still answers with a sentence', !!run(null).h && !!run(null).p);
+  check('it names the pool it counted', /across your 2 recorded videos/.test(res.p), res.p);
+  check('and says "over the last 24 hours", not "today"', /over the last 24 hours/.test(res.p) && !/today/.test(res.f + res.p), res.p);
+  check('nothing recorded still answers with a sentence', !!run(null).h && !!run(null).p && run(null).h === 'A quiet 24 hours.');
   check('a lopsided day is called out', /doing the lifting/.test(res.h), res.h);
+  // a video published 20 hours ago has no sample 24 hours back — it starts from zero at birth
+  const born = new globalThis.Date(NOW - 20 * H).toISOString();
+  const yb = run({ videos: { a: series(300), n: [[NOW - 19 * H, 800], [NOW - 0.5 * H, 5000]] } }, { a: { publishedAt: old }, n: { publishedAt: born } });
+  check('YouTube — a video under a day old can be the Mover, from zero at birth', yb.f === '+5,000 in 24h', yb.f);
+  check('YouTube — and says it is since it went up, not a 24-hour rate', /has gained 5,000 views since it went up 20h ago/.test(yb.p), yb.p);
 
   const ttMover = new Function('hist', 'videos', 'capOf', 'fmt', 'ATB', 'NOW',
-    'const Date = { now: () => NOW };\n' + grab(TT, 'answerMover') + '\nreturn answerMover;');
+    DateShim + helpers(TT) + grab(TT, 'answerMover') + '\nreturn answerMover;');
+  const oldS = (NOW - 90 * 864e5) / 1000;
   const tt = ttMover({ videos: { a: { s: series(80) }, b: { s: series(20) }, gone: { s: series(999) } } },
-    [{ id: 'a', title: 'post a' }, { id: 'b', title: 'post b' }], v => v.title, fmtUS, atb, NOW)();
-  check('TikTok — same rules, and a post outside the 60-post window abstains', tt.f === '+80 today', tt.f);
+    [{ id: 'a', title: 'post a', create_time: oldS }, { id: 'b', title: 'post b', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
+  check('TikTok — same rules, and a post outside the 60-post window abstains', tt.f === '+80 in 24h', tt.f);
+  check('TikTok — the pool is named: the newest posts being recorded', /80% of the ~100 gained by the 2 newest posts being recorded/.test(tt.p), tt.p);
+  const nb = ttMover({ videos: { a: { s: series(300) }, n: { s: [[NOW - 19 * H, 900], [NOW - 0.5 * H, 5000]] } } },
+    [{ id: 'a', title: 'Old steady one', create_time: oldS }, { id: 'n', title: 'Brand new', create_time: (NOW - 20 * H) / 1000 }],
+    v => v.title, fmtUS, atb, NOW)();
+  check('TikTok — a 20-hour-old post with 5,000 views is not left out', nb.f === '+5,000 in 24h' && /“Brand new” has gained 5,000 views since it went up 20h ago/.test(nb.p), nb.p);
+  check('TikTok — and its views count in the total, so the old post is not credited with 100%', /94% of the ~5,300/.test(nb.p), nb.p);
+  const longCap = ttMover({ videos: { a: { s: series(80) } } },
+    [{ id: 'a', title: 'Brushing the mic, no talking at all tonight #asmr #tingles #nottalking', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
+  check('TikTok — a long caption is cut on a word, with an ellipsis, never mid-hashtag', /“Brushing the mic, no talking at all tonight…”/.test(longCap.p), longCap.p);
+}
+
+console.log('\ncaptions — whole words, an ellipsis, never a made-up hashtag');
+for (const [src, page] of [[TT, 'TikTok'], [YT, 'YouTube']]) {
+  const H = new Function(src.slice(src.indexOf('  const clip = (s, n) =>'), src.indexOf('\n  };\n', src.indexOf('  const shortCap = ')) + 5) + '\nreturn { clip, shortCap };')();
+  check(page + ' — a short caption is untouched', H.shortCap('Wooden block tapping', 34, 'a post') === 'Wooden block tapping');
+  const c = H.shortCap('Wooden block tapping, very slow and quiet for sleep #asmr', 34, 'a post');
+  check(page + ' — trailing hashtags go first when words remain', c === 'Wooden block tapping, very slow…', c);
+  const d = H.clip('Brushing the mic, no talking #asmr #tingles #nottalking', 46);
+  check(page + ' — clip never cuts a hashtag in half', d === 'Brushing the mic, no talking #asmr #tingles…', d);
+  check(page + ' — an all-hashtag caption keeps its first whole tag', H.shortCap('#asmr #tingles #nottalking #sleep #relax #calm', 20, 'a post') === '#asmr…');
+  check(page + ' — no caption falls back', H.shortCap('', 34, 'a post') === 'a post' && H.shortCap('(no caption)', 34, 'a post') === 'a post');
+  check(page + ' — no fixed slices are left at the three feed sites', !/\.slice\(0, (46|34)\)\)/.test(src.replace(/NOT_A_MATCH/, '')));
 }
 
 console.log('\nHit rate — run or cold patch');
@@ -198,33 +266,191 @@ console.log('\nHit rate — run or cold patch');
   const res = ytHit(() => mkRows([200, 90, 300, 400, 80, 100, 120, 90, 80, 110, 60]), fmtUS)();
   check('counts the last five against the median of everything before them', res.f === '3 of 5', res.f);
   check('and names that median in the sentence', /95 views/.test(res.p), res.p);
+  check('it says what the figure is — a total so far, or a projection — not a "comparable stretch"',
+    /each video’s total so far, or its projected 48-hour total while still launching/.test(res.p) &&
+    !/comparable stretch/.test(grab(YT, 'answerHitRate') + grab(TT, 'answerHitRate')), res.p);
+  check('and says older ones have had longer', /Older videos have had longer to add views/.test(res.p));
   check('a thin catalogue declines to call a run', /Too early/.test(ytHit(() => mkRows([200, 90, 300]), fmtUS)().h));
-  check('TikTok carries the same chip against its posts', /function answerHitRate/.test(TT) && /typical post/.test(TT));
+  check('TikTok carries the same chip against its posts', /function answerHitRate/.test(TT) && /beat the typical earlier post/.test(TT));
 }
 
-console.log('\nMilestone — the Coach projection, made chip-safe');
-{
+console.log('\nMilestone — a typical day, a calendar date, an honest percentage');
+for (const [src, page, lbl, one, name] of [[YT, 'YouTube', 'subscribers', 'subscriber', 'liveSubs'], [TT, 'TikTok', 'followers', 'follower', 'liveFollowers']]) {
   const fmtUS = new Intl.NumberFormat('en-US');
-  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
-  const ms = new Function('hist', 'chanId', 'projectMilestone', 'fmt', 'lastTotals',
-    grab(YT, 'answerMilestone') + '\nreturn answerMilestone;');
-  const res = ms({ channels: { c: [[1, 1], [2, 2], [3, 3], [4, 4]] } }, 'c',
-    () => ({ cur: 9800, target: 10000, daysOut: 6, text: 'At <b>+34 subs/day</b> you should reach <b>10,000</b> around <b>Friday</b> (6 days).' }),
-    fmtUS, { subs: 9800 })();
-  // projectMilestone writes <b> tags for the Coach card's innerHTML; the chip paints
-  // through esc(), so serving them unstripped would print literal angle brackets
-  check('the coach card\'s HTML is stripped for the chip', !/[<>]/.test(res.p), res.p);
-  check('progress reads as a share of the target', res.f === '98% there', res.f);
-  check('no history still answers', !!ms(null, 'c', () => null, fmtUS, null)().p);
-  check('both pages\' projections now carry daysOut, so the chip can tell a dated one from a flat one',
-    /cur, target, perDay, daysOut, label/.test(YT) && /cur, target, daysOut, text/.test(TT));
+  const grab = n => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const cst = n => { const i = src.indexOf('  const ' + n + ' ='); return src.slice(i, src.indexOf(';\n', src.indexOf('\n  }', i) > 0 && src.indexOf('\n  };\n', i) < src.indexOf('\n  const ', i + 5) ? src.indexOf('\n  };\n', i) + 3 : i) + 2); };
+  const pmed = src.slice(src.indexOf('  const pjMed = '), src.indexOf('\n', src.indexOf('  const pjMed = ')));
+  const pct = src.slice(src.indexOf('  const milestonePct = '), src.indexOf('\n', src.indexOf('  const milestonePct = ')));
+  const live = src.slice(src.indexOf('  const ' + name + ' = '), src.indexOf('\n  };\n', src.indexOf('  const ' + name + ' = ')) + 5);
+  const build = NOW => new Function('fmt', 'hist', 'chanId', 'me', 'lastTotals', `
+    const RealDate = globalThis.Date;
+    class Date extends RealDate { constructor(...a) { super(...(a.length ? a : [${NOW}])); } static now() { return ${NOW}; } }
+    const ATB = (arr, t) => { let v = null; for (const x of arr) { if (x[0] <= t) v = x; else break; } return v; };
+    ${pmed}\n${pct}\n${live}
+    ${grab('nextMilestone')}${grab('dayBuckets')}${src.includes('function dropStaleDips(') ? grab('dropStaleDips') : ''}
+    ${src.slice(src.indexOf('  function projectMilestone('), src.indexOf('\n  }\n', src.indexOf('  function projectMilestone(')) + 5)}
+    ${grab('answerMilestone')}
+    return { projectMilestone, answerMilestone, milestonePct };`);
+  // Tue 29 Sep 2026, 20:00 Melbourne (AEST, UTC+10) = 10:00Z
+  const NOW = globalThis.Date.UTC(2026, 8, 29, 10, 0);
+  const M = build(NOW)(fmtUS, null, 'c', null, null);
+  // 7 or 8 a day for two weeks, with one +420 viral day twelve days ago
+  const pts = []; let v = 4450;
+  for (let d = 15; d >= 0; d--) { pts.push([NOW - d * 864e5, v]); v += (d === 12 ? 420 : d % 2 ? 7 : 8); }
+  pts[pts.length - 1][1] = 4870;
+  const p = M.projectMilestone(pts, lbl, one);
+  check(page + ' — one viral day does not set the pace (typical 7.5, not ~38)', /your typical \+7\.5 /.test(p.text.replace(/<[^>]*>/g, '')), p.text);
+  check(page + ' — the basis is named', /the middle of the last 14 days/.test(p.text), p.text);
+  check(page + ' — and the date follows the typical pace (about 17 days)', p.daysOut > 16 && p.daysOut < 18.5 && /\(1[78] days\)/.test(p.text), p.text);
+  check(page + ' — the unit is the full word', new RegExp(lbl + ' a day').test(p.text), p.text);
+  // near the milestone late in the evening: the ETA is after midnight, so it is tomorrow
+  const late = pts.map(x => x.slice()); late[late.length - 1][1] = 4995;
+  const pl = M.projectMilestone(late, lbl, one);
+  check(page + ' — an ETA after local midnight is "tomorrow", not "today"', /tomorrow/.test(pl.text) && !/today/.test(pl.text), pl.text);
+  const soon = pts.map(x => x.slice()); soon[soon.length - 1][1] = 4999;
+  const ps = M.projectMilestone(soon, lbl, one);
+  check(page + ' — one short at 8pm lands "later today"', /later today/.test(ps.text), ps.text);
+  check(page + ' — 99.5% there is 99%, not 100%', M.milestonePct({ cur: 4980, target: 5000 }) === 99 && M.milestonePct({ cur: 4999, target: 5000 }) === 99);
+  check(page + ' — and 100% only when it is really there', M.milestonePct({ cur: 5000, target: 5000 }) === 100);
+  // spiky growth: nothing on most days, a burst now and then
+  const spk = []; let w = 900;
+  for (let d = 15; d >= 0; d--) { spk.push([NOW - d * 864e5, w]); if (d % 5 === 0) w += 30; }
+  const pk = M.projectMilestone(spk, lbl, one);
+  check(page + ' — bursty growth gets no invented steady date', /comes in bursts/.test(pk.text) && pk.daysOut == null, pk.text);
+  // chip: far away is "Next stop", close is "in reach"
+  const hist = page === 'YouTube' ? { channels: { c: pts.map(x => [x[0], x[1], 0]) } } : { followers: pts.map(x => [x[0], x[1], 0]) };
+  const chip = build(NOW)(fmtUS, hist, 'c', { follower_count: 4870 }, { subs: 4870 }).answerMilestone();
+  check(page + ' — 17 days out is still "in reach" (30 days or less)', chip.h === '5,000 is in reach.', chip.h);
+  const slow = pts.map((x, i) => [x[0], 4000 + i, 0]);
+  const far = build(NOW)(fmtUS, page === 'YouTube' ? { channels: { c: slow } } : { followers: slow }, 'c', null, null).answerMilestone();
+  check(page + ' — a milestone months away is "Next stop", not "in reach"', far.h === 'Next stop: 5,000.', far.h + ' / ' + far.p);
+  check(page + ' — the chip text carries no tags', !/[<>]/.test(chip.p), chip.p);
+  check(page + ' — progress is floored', chip.f === '97% there', chip.f);
+  const near = page === 'YouTube' ? { channels: { c: late.map(x => [x[0], x[1], 0]) } } : { followers: late.map(x => [x[0], x[1], 0]) };
+  const chip2 = build(NOW)(fmtUS, near, 'c', { follower_count: 4995 }, { subs: 4995 }).answerMilestone();
+  check(page + ' — a milestone a day away is "in reach"', chip2.h === '5,000 is in reach.', chip2.h);
+  // the live count is newer than the last sample and has crossed: the chip moves on
+  const stale = pts.map(x => [x[0] - 3 * 3600e3, x[1], 0]);
+  const crossed = build(NOW)(fmtUS, page === 'YouTube' ? { channels: { c: stale } } : { followers: stale }, 'c', { follower_count: 5003 }, { subs: 5003 }).answerMilestone();
+  check(page + ' — the live count is used, so a crossed milestone is not still "in reach"', /7,500/.test(crossed.h), crossed.h);
+  check(page + ' — no history still answers', !!build(NOW)(fmtUS, null, 'c', null, null).answerMilestone().p);
 }
 
 console.log('\nSubs — Today\'s sibling on the other axis');
 {
-  check('YouTube — it reads column 1 of the channel history, not the views column', /dayBuckets\(chn, 1, 8\)/.test(YT));
-  check('and the views chip still reads column 2', /dayBuckets\(chn, 2, 8\)/.test(YT));
-  check('a refused bucket explains the rounding of public subscriber counts', /rounded public subscriber counts/.test(YT));
+  check('YouTube — it reads column 1 of the channel history, with falls allowed', /dayBuckets\(chn, 1, 8, true\)/.test(YT));
+  check('and the views chip still reads column 2, where a fall is refused', /dayBuckets\(chn, 2, 8\)/.test(YT));
+  check('the false rounding excuse is gone', !/rounded public subscriber counts/.test(YT) && /the public count dipped for a while/.test(YT));
+  const i = YT.indexOf('function dropStaleDips(');
+  const drop = new Function(YT.slice(i, YT.indexOf('\n  }\n', i)) + '\n  }\nreturn dropStaleDips;')();
+  const s = drop([[1, 222], [2, 209], [3, 223], [4, 222]], 1);
+  check('a stale dip that comes back is skipped, not a fake -13 then +14', s.map(x => x[1]).join() === '222,223,222', s.map(x => x[1]).join());
+  const real = drop([[1, 235], [2, 234], [3, 234]], 1);
+  check('a real unsubscribe is kept', real.map(x => x[1]).join() === '235,234,234');
+  const gone = drop([[1, 300], [2, 250], [3, 251]], 1);
+  check('a big fall that never comes back is kept', gone.map(x => x[1]).join() === '300,250,251');
+}
+
+console.log('\nNewest — the real reason a post cannot be graded');
+{
+  const fmtUS = new Intl.NumberFormat('en-US');
+  const NOW = 1786000000000, H = 3600e3;
+  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const helpers = src => src.slice(src.indexOf('  const clip = (s, n) =>'), src.indexOf('\n  };\n', src.indexOf('  const shortCap = ')) + 5) +
+    src.slice(src.indexOf('  const fmtAgo = ts =>'), src.indexOf('\n  };\n', src.indexOf('  const fmtAgo = ts =>')) + 5) +
+    src.slice(src.indexOf('  const pjDur = '), src.indexOf('\n', src.indexOf('  const pjDur = '))) + '\n';
+  const tt = new Function('videos', 'scores', 'states', 'fmt', 'NOW', `
+    const Date = { now: () => NOW };
+    const PJ_MIN_AGE = 300, PJ_HORIZON = 2880;
+    const capOf = v => (v.title || v.video_description || '').trim() || '(no caption)';
+    const scoreOf = v => scores[v.id] == null ? null : scores[v.id];
+    const projStateOf = v => states[v.id] || null;
+    const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
+    ${helpers(TT)}${grab(TT, 'answerNewest')}
+    return answerNewest();`);
+  const old = i => ({ id: 'o' + i, title: 'old ' + i, create_time: (NOW - (10 + i) * 864e5) / 1000, view_count: 1000 });
+  const olds = [0, 1, 2, 3, 4].map(old);
+  const sc = { o0: 900, o1: 1000, o2: 1100, o3: 1200, o4: 1300 };
+  const young = { id: 'n', title: '', video_description: 'Slow tapping on a glass jar', create_time: (NOW - 3 * H) / 1000, view_count: 93 };
+  const a = tt([young, ...olds], sc, { n: 'early' }, fmtUS, NOW);
+  check('a 3-hour-old post: too early, and the reason is its age', /Grades start once a post is 5 hours old \(about 2 hours to go\)/.test(a.p), a.p);
+  check('it quotes the description when the title is empty, not a placeholder', /“Slow tapping on a glass jar” went up 3h ago/.test(a.p), a.p);
+  const z = tt([{ ...young, create_time: (NOW - 50 * H) / 1000, view_count: 0 }, ...olds], sc, {}, fmtUS, NOW);
+  check('no views is its own reason', /has no views counted yet/.test(z.p), z.p);
+  const l = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], sc, { n: 'loose' }, fmtUS, NOW);
+  check('a loose projection says the posts vary too much', /vary too much at this age/.test(l.p), l.p);
+  const nm = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], sc, { n: 'nomodel' }, fmtUS, NOW);
+  check('not enough launches keeps its own sentence', /enough of your finished launches/.test(nm.p), nm.p);
+  const thin = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds.slice(0, 3)], { ...sc, n: 1000 }, {}, fmtUS, NOW);
+  check('the threshold counts OTHER posts, like the report card', /only 3 of your other posts do/.test(thin.p), thin.p);
+  const ok = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], { ...sc, n: 1150 }, {}, fmtUS, NOW);
+  check('with four others it ranks', ok.f === 'Beats 60%', ok.f);
+
+  const yt = new Function('latestVid', 'meta', 'perVideo', 'rows', 'fmt', 'NOW', `
+    const Date = function (s) { return new globalThis.Date(s); }; Date.now = () => NOW;
+    const PJ_MIN_AGE = 300;
+    const catalogueMetrics = () => rows;
+    const videoTitle = id => meta[id].title;
+    const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
+    ${helpers(YT)}${grab(YT, 'answerNewest')}
+    return answerNewest();`);
+  const pub = new globalThis.Date(NOW - 3 * H).toISOString();
+  const rows = [{ id: 'n', score: null, pj: 'early' }, { id: 'a', score: 1 }, { id: 'b', score: 2 }, { id: 'c', score: 3 }, { id: 'd', score: 4 }];
+  const y = yt('n', { n: { title: 'My upload', publishedAt: pub } }, { n: { views: 93 } }, rows, fmtUS, NOW);
+  check('YouTube — a 3-hour-old upload is not "1 day old"', /went up 3h ago/.test(y.p) && !/1 day/.test(y.p), y.p);
+  check('YouTube — and the reason is its age', /Grades start once a video is 5 hours old/.test(y.p), y.p);
+  const yl = yt('n', { n: { title: 'My upload', publishedAt: new globalThis.Date(NOW - 9 * H).toISOString() } }, { n: { views: 93 } },
+    [{ ...rows[0], pj: 'loose' }, ...rows.slice(1)], fmtUS, NOW);
+  check('YouTube — a loose projection gives that reason', /vary too much at this age/.test(yl.p), yl.p);
+}
+
+console.log('\nEngagement — one typical like rate');
+{
+  const fmtUS = new Intl.NumberFormat('en-US');
+  const grab = (src, n) => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const pmed = TT.slice(TT.indexOf('  const pjMed = '), TT.indexOf('\n', TT.indexOf('  const pjMed = ')));
+  const tl = TT.slice(TT.indexOf('  const typicalLikeRate = '), TT.indexOf('\n  };\n', TT.indexOf('  const typicalLikeRate = ')) + 5);
+  const run = videos => new Function('videos', 'fmt', `
+    const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
+    ${pmed}\n${tl}\n${grab(TT, 'answerEngagement')}
+    return answerEngagement();`)(videos, fmtUS);
+  const vids = [];
+  for (let i = 0; i < 30; i++) vids.push({ id: 'p' + i, create_time: 1000 + i, view_count: 1000, like_count: 70 + i * 2 });
+  const withNew = [...vids, { id: 'new', create_time: 5000, view_count: 93, like_count: 7 }];
+  const a = run(withNew);
+  check('the headline is neutral, not a fixed-threshold verdict', a.h === 'Your typical like rate.', a.h);
+  check('the figure says it is the typical post', /% typical$/.test(a.f), a.f);
+  check('a true median: 30 posts at 7.0…12.8% → 9.9%', a.f === '9.9% typical', a.f);
+  check('the newest is the real newest, and 93 views is too few to judge', /too few views to judge yet \(93\)/.test(a.p), a.p);
+  const b = run([...vids, { id: 'new', create_time: 5000, view_count: 1000, like_count: 87 }]);
+  check('a judged newest quotes its rate and % of typical', /Your newest: 8\.7%, 88% of typical — within your normal spread/.test(b.p), b.p);
+  const z = run([...vids, { id: 'new', create_time: 5000, view_count: 0, like_count: 0 }]);
+  check('a 0-view newest is not swapped for the one before it', /too few views to judge yet \(0\)/.test(z.p), z.p);
+  check('fewer than three posts says so plainly', run(vids.slice(0, 2)).h === 'Not enough posts yet.');
+  check('the Account tile says it is the pooled figure', /mcell\('Overall like rate'/.test(TT) && /all likes \\u00f7 all views/.test(TT));
+  check('the recorded-trends card no longer carries a live like-rate tile', !/'across the listed posts'/.test(TT));
+}
+
+console.log('\nNext — hours, then whole days');
+for (const [src, page] of [[TT, 'TikTok'], [YT, 'YouTube']]) {
+  const grab = n => { const i = src.indexOf('function ' + n + '('); return src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const pmed = src.slice(src.indexOf('  const pjMed = '), src.indexOf('\n', src.indexOf('  const pjMed = ')));
+  const NOW = 1786000000000, H = 3600e3;
+  const run = agesH => {
+    const pubs = agesH.map(h => NOW - h * H);
+    return new Function('videos', 'videoIds', 'meta', 'NOW', `
+      const Date = function (s) { return new globalThis.Date(s); }; Date.now = () => NOW;
+      ${pmed}\n${grab('answerNext')}
+      return answerNext();`)(pubs.map(t => ({ create_time: t / 1000 })), pubs.map((_, i) => 'v' + i),
+        Object.fromEntries(pubs.map((t, i) => ['v' + i, { publishedAt: new globalThis.Date(t).toISOString() }])), NOW);
+  };
+  const a = run([3, 75, 147, 219, 291]);
+  check(page + ' — three hours after posting says "3 hours", not "0 days"', a.f === '3 hours', a.f);
+  check(page + ' — and is on schedule against a 3-day gap', a.h === 'You’re on schedule.' && /about (every )?3 days/.test(a.p), a.p);
+  check(page + ' — 36 hours is "1 day", not "2 days"', run([36, 108, 180, 252]).f === '1 day');
+  check(page + ' — the window is named', page === 'TikTok' ? /between your last 5 posts/.test(a.p) : /\(last 5 uploads\)/.test(a.p), a.p);
+  check(page + ' — a gap under a day is given in hours', /about (every )?12 hours/.test(run([2, 14, 26, 38, 50]).p), run([2, 14, 26, 38, 50]).p);
+  check(page + ' — "Just posted" means under two days', run([40, 100]).h === 'Just posted.' && run([60, 100]).h === 'Keep going.');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

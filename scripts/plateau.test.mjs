@@ -330,7 +330,7 @@ function loo(all, h) {
 /* 8 — durations read as English */
 {
   check('minutes stay minutes', M.pjDur(35) === '35 minutes', M.pjDur(35));
-  check('an hour is "hour"', M.pjDur(50) === 'hour', M.pjDur(50));
+  check('an hour is "an hour"', M.pjDur(50) === 'an hour', M.pjDur(50));
   check('two hours is "2 hours"', M.pjDur(100) === '2 hours', M.pjDur(100));
   check('eleven hours rounds cleanly', M.pjDur(11 * 60) === '11 hours', M.pjDur(11 * 60));
 }
@@ -446,6 +446,68 @@ function loo(all, h) {
   check('the best in the pool still tops it', M.pjRank([1, 2, 3, 9], 9).pct === 87.5);
   check('and refuses a null value rather than ranking it as zero', M.pjRank(pool, null) === null);
   check('and an empty pool', M.pjRank([], 5) === null);
+}
+
+
+/* 12 — the copy says what the numbers mean (A18) */
+{
+  const refs = [scurve(2000, 8), scurve(1400, 8.4), scurve(3100, 7.7)].map(M.pjRef);
+  const strip = h => h.replace(/<[^>]*>/g, '');
+  // up to 80% of the way: a countdown to the 90% point, worded as exactly that
+  const early = M.pjProject(refs, 6 * 60, 500);
+  check('under 80% the bar counts down to the 90% point', early.pct <= .8 &&
+    /a typical launch is 90% in by .+ from now/.test(strip(M.pjBarHtml(early, 500))), strip(M.pjBarHtml(early, 500)));
+  check('and never says "most of the rest"', !/most of the rest/i.test(M.pjBarHtml(early, 500) + M.pjSentenceHtml(early)));
+  // past 80%: less than half of what is left lands by the 90% mark, so no countdown
+  const late = { ...early, pct: .89, rest: 60 };
+  check('past 80% the bar says the rest trickles in instead',
+    /last few percent trickle in over the rest of its first 48 hours/.test(M.pjBarHtml(late, 500)) &&
+    !/90% in by/.test(M.pjBarHtml(late, 500)), strip(M.pjBarHtml(late, 500)));
+  check('and so does the sentence', /last few percent trickle in/.test(M.pjSentenceHtml(late)));
+  check('the week bar names the week, not 48 hours',
+    /rest of its first week/.test(M.pjBarHtml({ ...late, span: 7 * 1440 }, 500)));
+
+  // pjWeek gives a reason instead of null once there are enough week-long posts
+  check('too few week-long posts is still the plain count', M.pjWeekWaitHtml(2).includes('1 more'));
+  check('with enough posts but a loose spread it says they vary, not "-1 more"',
+    /vary too much at this age/.test(M.pjWeekWaitHtml(4, 'loose')) && !/-1|0 more/.test(M.pjWeekWaitHtml(4, 'loose')));
+  check('and with too few recorded at this age it says that',
+    /not enough of your full-week posts were recorded at this age/.test(M.pjWeekWaitHtml(3, 'few-at-age')));
+  const wide = [scurve(2000, 2), scurve(1400, 20), scurve(900, 6), scurve(1600, 12)].map(c => {
+    const out = c.map(p => [p[0], p[1]]); for (let m = 49 * 60; m <= 8 * 1440; m += 120) out.push([m, Math.round(c[c.length - 1][1] * (1 + (m - 48 * 60) / 1440 * .02))]);
+    return M.pjRef(out); });
+  const pw = M.pjWeek(M.pjWeekRefs(wide), 6 * 60, 300);
+  check('pjWeek names its refusal rather than returning null', pw === null || (pw.state && ['ok', 'loose', 'few-at-age'].includes(pw.state)), JSON.stringify(pw && pw.state));
+  const good = M.pjProject(refs, 6 * 60, 500);
+  check('a real week figure still travels as week', !good.week || good.week.state === 'ok');
+
+  // pjWhen: a finished reference is on track but is not "still recording"
+  const done = { curve: scurve(1000, 8), age: 60 * 60 };
+  const w1 = M.pjProject([], 6 * 60, 400, [done]);
+  check('one finished launch is on track but not recording', w1.onTrack === 1 && w1.recording === 0, JSON.stringify(w1));
+  check('so the wait card does not say "still recording"',
+    !/still recording/.test(M.pjWaitHtml(w1)) && /One finished launch so far/.test(M.pjWaitHtml(w1)), strip(M.pjWaitHtml(w1)));
+  const rec = { curve: scurve(1000, 8).filter(p => p[0] <= 20 * 60), age: 20 * 60 };
+  const w2 = M.pjProject([], 6 * 60, 400, [rec]);
+  check('one still going says so', w2.recording === 1 && /still recording/.test(M.pjWaitHtml(w2)));
+
+  // early is two different waits
+  const young = M.pjProject(refs, 3 * 60, 90);
+  check('too young names when it switches on', /switches on at 5 hours old, in about 2 hours/.test(strip(M.pjBodyHtml(young, 90, null, refs, 3 * 60))),
+    strip(M.pjBodyHtml(young, 90, null, refs, 3 * 60)));
+  const zero = M.pjProject(refs, 8 * 60, 0);
+  check('no views is its own reason', zero.state === 'early' && zero.noViews === true &&
+    /No views counted yet/.test(M.pjBodyHtml(zero, 0, null, refs, 8 * 60)));
+  const loose = M.pjProject([scurve(2000, 2), scurve(1400, 20), scurve(900, 6)].map(M.pjRef), 6 * 60, 300, []);
+  check('loose says 45% or more, not "more than half"', loose.state !== 'loose' ||
+    (/45% or more/.test(M.pjBodyHtml(loose, 300, null, [], 6 * 60)) && !/more than half/.test(M.pjBodyHtml(loose, 300, null, [], 6 * 60))));
+  const own = scurve(2400, 8.1);
+  const old = M.pjProject(refs, 12 * 1440, 2600, []);
+  check('the done text is about a post past its first week, not a two-month-old one',
+    /past its first week needs estimating/.test(M.pjBodyHtml(old, 2600, own, refs, 12 * 1440)) &&
+    !/two-month-old/.test(src + ttSrc));
+  check('the explainer says "the count so far", not "today’s count"',
+    !/Today’s count divided/.test(src + ttSrc) && /The count so far divided by that share/.test(src) && /The count so far divided by that share/.test(ttSrc));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
