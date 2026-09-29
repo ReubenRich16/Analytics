@@ -17,7 +17,7 @@
     <div class="status" id="statusText">signed out</div>
     <select id="themeSel" title="Theme">
       <optgroup label="Cute ☁️">
-        <option value="cloud">☁️ Cinnamon Cloud</option>
+        <option value="cloud">☁️ Cinnamoroll</option>
       </optgroup>
       <optgroup label="Soft &amp; sleek">
         <option value="rose">🌷 Rosé</option>
@@ -338,6 +338,7 @@
   </div>
 </div>
 
+<script src="./stickers.js" defer></script>
 <script src="./motion.js" defer></script>
 <script>
 (function () {
@@ -927,6 +928,7 @@
     spawnBalls();
     loadHistory(); // calls loadTrends() once history is fetched — avoids a duplicate 5-query trends load
     syncPull();    // cross-device sync via the Worker's private KV (no Drive scope); no-ops without a Worker
+    document.dispatchEvent(new Event('cc:stickerstore'));   // signed in: stickers.js can load this channel's stickers
   }
 
   // floating thumbnail balls background
@@ -1023,7 +1025,7 @@
 
   const CONFETTI_COLOURS = ['#ff3b30', '#ffcf5a', '#3ddc84', '#5aa9ff', '#ff5c8a', '#b58cff', '#ffffff'];
   // A theme may hand the confetti its own colours as a comma list in --confetti. Only
-  // Cinnamon Cloud does (pastels); every other theme has none and keeps these exactly.
+  // Cinnamoroll does (pastels); every other theme has none and keeps these exactly.
   function confettiColours() {
     try {
       const v = getComputedStyle(document.body).getPropertyValue('--confetti');
@@ -4698,6 +4700,28 @@
     // 15s debounce keeps KV writes well within the free tier even during active use
     syncTimer = setTimeout(() => { syncWrite().catch(() => {}); }, 15000);
   }
+
+  /* The Cinnamoroll theme's sticker drawer (stickers.js) keeps its list on the Worker at
+     /stickers, owner-locked with exactly the same Bearer token and check as /sync. */
+  window.ccStickerStore = {
+    get who() { return syncAvailable() ? 'your channel' : ''; },
+    async load() {
+      if (!syncAvailable()) return null;
+      const r = await fetch(workerUrl + '/stickers', { headers: { Authorization: 'Bearer ' + accessToken } });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+      const j = await r.json();
+      return Array.isArray(j) ? j : null;
+    },
+    async save(list) {
+      if (!syncAvailable()) throw new Error('not signed in');
+      const r = await fetch(workerUrl + '/stickers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+        body: JSON.stringify({ list })
+      });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+    }
+  };
 
   /* ---------- events ---------- */
   $('signInBtn').addEventListener('click', () => initAuth());

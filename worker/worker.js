@@ -1011,6 +1011,64 @@ async function syncHandler(request, env) {
   return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
 }
 
+/* ---------- stickers (the Cinnamoroll theme's sticker drawer) ----------
+   One small JSON list per account: [{ id, kind:'giphy'|'upload', src, name, added }].
+   A GIPHY sticker's src is only its media id (the page builds the media.giphy.com URL), and
+   an upload's is a data: URL the page has already shrunk to 320px. Validated field by field
+   so nothing but those two shapes can be stored — no URLs to anywhere else, no markup. */
+const STICKER_MAX = 24;
+const STICKER_BYTES = 3.5 * 1024 * 1024;   // the whole stored list, as JSON
+const STICKER_GIPHY = /^[A-Za-z0-9]{8,40}$/;
+const STICKER_UPLOAD = /^data:image\/(?:webp|png|jpeg|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
+const STICKER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// → { list } or { status, error }
+function checkStickers(list) {
+  if (!Array.isArray(list)) return { status: 400, error: 'list must be an array' };
+  if (list.length > STICKER_MAX) return { status: 400, error: 'at most ' + STICKER_MAX + ' stickers' };
+  const out = [], ids = new Set();
+  for (const it of list) {
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return { status: 400, error: 'each sticker must be an object' };
+    const { id, kind, src, name, added } = it;
+    if (typeof id !== 'string' || !STICKER_ID.test(id) || ids.has(id)) return { status: 400, error: 'bad sticker id' };
+    if (kind !== 'giphy' && kind !== 'upload') return { status: 400, error: 'kind must be giphy or upload' };
+    if (typeof src !== 'string') return { status: 400, error: 'bad sticker src' };
+    if (kind === 'giphy' && !STICKER_GIPHY.test(src)) return { status: 400, error: 'bad GIPHY id' };
+    if (kind === 'upload' && !STICKER_UPLOAD.test(src)) return { status: 400, error: 'uploads must be a base64 webp/png/jpeg/gif data URL' };
+    if (name !== undefined && (typeof name !== 'string' || name.length > 80)) return { status: 400, error: 'bad sticker name' };
+    if (added !== undefined && (typeof added !== 'number' || !isFinite(added))) return { status: 400, error: 'bad sticker date' };
+    ids.add(id);
+    out.push({ id, kind, src, name: name || '', added: added || 0 });
+  }
+  if (JSON.stringify(out).length > STICKER_BYTES) return { status: 413, error: 'stickers are too big — about 3 MB in total' };
+  return { list: out };
+}
+// GET → the stored list ('[]' when none); POST { list } → validated, then stored under `key`
+async function stickersRoute(request, env, key) {
+  if (request.method === 'POST') {
+    let raw = '';
+    try { raw = await request.text(); } catch (e) {}
+    if (raw.length > STICKER_BYTES + 4096) return json({ error: 'stickers are too big — about 3 MB in total' }, 413);
+    let b = null; try { b = JSON.parse(raw); } catch (e) {}
+    if (!b || typeof b !== 'object') return json({ error: 'no list' }, 400);
+    const c = checkStickers(b.list);
+    if (c.error) return json({ error: c.error }, c.status);
+    try { await env.MINUTE.put(key, JSON.stringify(c.list)); } catch (e) { return json({ error: 'store failed' }, 502); }
+    return json({ ok: true, n: c.list.length });
+  }
+  if (request.method !== 'GET') return json({ error: 'GET/POST only' }, 405);
+  let stored = '[]';
+  try { stored = (await env.MINUTE.get(key)) || '[]'; } catch (e) {}
+  return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+}
+// the YouTube side: the same owner lock as /sync (verifyOwner on the Bearer token), keyed by channel
+async function stickersHandler(request, env) {
+  const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+  const auth = request.headers.get('Authorization') || '';
+  const owner = await verifyOwner(auth.startsWith('Bearer ') ? auth.slice(7) : '', channels);
+  if (!owner) return json({ error: 'Not authorised — sign in with one of the tracked channels.' }, 401);
+  return stickersRoute(request, env, 'stickers:' + owner);
+}
+
 /* ================= TikTok =================
  * OAuth (Login Kit) + Display API. The client secret lives here as a Worker secret and
  * never reaches the browser: the page only ever holds an opaque session id we mint.
@@ -1259,6 +1317,10 @@ async function ttHandler(request, env, url) {
   // everything below needs a session
   const openId = await ttSession(env, request);
   if (!openId) return json({ error: 'Not signed in to TikTok.' }, 401);
+
+  // the sticker drawer's list — it needs the session, not a TikTok token, so it sits before
+  // the token fetch (a slow or failed refresh never costs you your stickers)
+  if (p === '/tiktok/stickers') return stickersRoute(request, env, 'tt:stickers:' + openId);
 
   // Genuinely disconnect the account, as opposed to the page forgetting its session id.
   // Clearing localStorage left the stored refresh token and the tt:accounts entry in
@@ -1562,6 +1624,11 @@ async function route(request, env) {
     if (url.pathname === '/sync') {
       if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
       return syncHandler(request, env);
+    }
+    // the Cinnamoroll sticker drawer (owner-locked, same auth as /sync)
+    if (url.pathname === '/stickers') {
+      if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
+      return stickersHandler(request, env);
     }
     // confirmed YouTube↔TikTok video pairings (owner-locked, same auth as /sync)
     if (url.pathname === '/pairs') {

@@ -1,4 +1,4 @@
-/* motion.js and the Cinnamon Cloud theme.
+/* motion.js and the Cinnamoroll theme.
    node scripts/motion.test.mjs
 
    motion.js counts numbers up from 0 and draws charts in. The one promise it makes is that
@@ -103,8 +103,9 @@ for (const [name, src] of Object.entries(PAGES)) {
   const inline = src.indexOf('\n<script>\n');
   check(name + ' loads motion.js, deferred', tag > 0);
   check(name + ' puts it just before the page’s inline script', tag > 0 && inline > tag && inline - tag < 60);
-  check(name + ' offers ☁️ Cinnamon Cloud in a Cute group',
-    /<optgroup label="Cute ☁️">\s*<option value="cloud">☁️ Cinnamon Cloud<\/option>\s*<\/optgroup>/.test(src));
+  check(name + ' loads stickers.js, deferred, right beside it', src.includes('<script src="./stickers.js" defer></script>\n<script src="./motion.js" defer></script>'));
+  check(name + ' offers ☁️ Cinnamoroll in a Cute group (value still "cloud", so saved choices keep working)',
+    /<optgroup label="Cute ☁️">\s*<option value="cloud">☁️ Cinnamoroll<\/option>\s*<\/optgroup>/.test(src));
   check(name + ' keeps every original theme', ['rose', 'sakura', 'pearl', 'mauve', 'twilight', 'berry', 'rosenight', 'dusk',
     'midnight', 'noir', 'ocean', 'blush', 'lavender', 'honey'].every(t => src.includes('<option value="' + t + '">')));
   check(name + ' loads Fredoka in its existing fonts request', /fonts\.googleapis\.com\/css2\?[^"]*family=Fredoka:wght@[^"]*&display=swap/.test(src));
@@ -159,8 +160,8 @@ for (const s of ['.cc-draw', '.cc-draw *', '.cc-roomin', '.cc-glider', '.cc-chip
 check('reduced motion still pins every line fully drawn', /svg\.chart path\.line \{ stroke-dashoffset:0 !important; animation:none !important; \}/.test(RM));
 check('printing never catches a chart mid-draw', /@media print \{ \.cc-draw, \.cc-draw \* \{ animation:none !important; \} \}/.test(CSS));
 
-/* ---------- 6. the Cinnamon Cloud palette ---------- */
-console.log('\nCinnamon Cloud — tokens and contrast');
+/* ---------- 6. the Cinnamoroll palette ---------- */
+console.log('\nCinnamoroll — tokens and contrast');
 const block = (CSS.match(/body\[data-theme="cloud"\] \{([^}]*)\}/) || [])[1] || '';
 const tok = Object.fromEntries([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(m => [m[1], m[2].trim()]));
 for (const k of ['ink', 'panel', 'panel-2', 'line', 'text', 'muted', 'live', 'up', 'down', 'accent', 'purple', 'gold'])
@@ -183,7 +184,17 @@ check('the clouds are one drifting layer under the page that never catches a tap
   /body\[data-theme="cloud"\]::before \{[^}]*position:fixed;[^}]*z-index:0; pointer-events:none;[^}]*animation:ccDrift/.test(CSS) &&
   /\.wrap \{[^}]*z-index:1;/.test(CSS));
 check('decorative glyphs carry empty alt text', (CSS.match(/content:"[^"]*" \/ "";/g) || []).length >= 3);
-check('no character art or names — an original homage', !/cinnamoroll|sanrio/i.test(CSS + MOTION + Object.values(PAGES).join('')));
+// The character is named now (the owner asked for Cinnamoroll by name), but still never
+// drawn: the stylesheet and motion.js carry no picture of it, and the only places the name
+// appears in the pages are the theme's label and the sticker comments/credit.
+check('no character art in the stylesheet or motion.js (no embedded images beyond the clouds and stars)',
+  (CSS.match(/url\("data:image\/svg\+xml/g) || []).length === 2 && !/data:image\/(?:png|webp|gif|jpeg)/.test(CSS + MOTION));
+check('motion.js stays about motion (no character names in it)', !/cinnamoroll|sanrio/i.test(MOTION));
+check('the palette follows the character: blush-pink live, baby-blue accent, cinnamon-brown text',
+  lum(tok.live) < lum(tok.blush) && parseInt(tok.accent.slice(5, 7), 16) > parseInt(tok.accent.slice(1, 3), 16) &&
+  parseInt(tok.text.slice(1, 3), 16) > parseInt(tok.text.slice(5, 7), 16));
+check('motion.js tells other decoration when a total rises and a chart has drawn',
+  /signal\('cc:increase', tile\)/.test(MOTION) && /signal\('cc:drawn', el, \{ epoch: ep \}\)/.test(MOTION));
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

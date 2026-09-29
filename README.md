@@ -118,9 +118,20 @@ data/             recorded history, committed by the robots
   "▲ +N" (the page's own figure, never one worked out separately). Charts below the fold
   wait until you scroll to them. `prefers-reduced-motion` turns all of it off, and if the
   file ever fails to load the pages simply show everything finished
-- **☁️ Cinnamon Cloud** theme — soft and cute: a pale-sky page with slowly drifting clouds,
-  fluffy white cards, cinnamon-brown text, pink blush, and rounded **Fredoka** numbers. An
-  original design (no character art), with every text colour checked for contrast
+- **☁️ Cinnamoroll** theme — Sanrio's fluffy white puppy's colours: a sky-blue page with faint
+  stars and slowly drifting clouds, fluffy white cards, text in his cinnamon-brown outline
+  colour, his baby-blue eyes as the accent, pink-cheek blush for anything live, and rounded
+  **Fredoka** numbers. Every text colour is checked for contrast
+- **Stickers** (`stickers.js`, Cinnamoroll theme only) — a sticker peeks over the answer card
+  and bobs, changes (with a little pop) when you switch room, hops next to a live total when
+  it goes up, pops at the end of a freshly drawn chart, floats up with the milestone
+  confetti, and does a happy jump if you tap it. The ☁ button (bottom-right) opens your
+  sticker drawer: upload pictures from your phone (shrunk to 320px), paste a GIPHY link,
+  reorder, remove, or restore the starter pack. Up to 24 stickers / about 3 MB. They are
+  saved to your account through your own Worker (`/stickers` for YouTube, `/tiktok/stickers`
+  for TikTok, owner-locked like `/sync`) and cached on the device. The starter pack is
+  official Sanrio stickers hotlinked from GIPHY (credited "Stickers via GIPHY · © Sanrio");
+  no character artwork is stored in this repo. A personal, non-commercial dashboard
 
 **Type and motion**
 
@@ -358,13 +369,13 @@ of TikTok. Free, no card.
 | `/run` | run both trackers now (handy for testing). Rate limited to once a minute — it is unauthenticated and each call runs the trackers (API calls, D1 writes, and sometimes a KV write), so a crawler hitting it in a loop would spend real allowances for nothing. A 429 is not a fault: the cron runs every minute anyway |
 | `/d1diff` | compares the D1 and KV copies field by field (expect disagreement now: KV is deliberately coarser since the write gate — this was the phase-2 verification tool) |
 | `/models` | which Gemini models your key can actually call |
-| `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
+| `/ai`, `/sync`, `/stickers` | AI ideas, cross-device sync and your Cinnamoroll stickers, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/launches`, `/tiktok/launches` | the first **week** of finished launches (48 hours is what makes one *finished*), age-indexed — the projection's reference curves |
 | `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour — see below |
 | `/tiktok/disconnect` | sign a TikTok account out and stop the cron polling it |
-| `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
+| `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/stickers`, `/tiktok/ai` | TikTok data (and your stickers) |
 
 **The long tail, and how to see it**
 
@@ -544,7 +555,7 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ## Repo layout
 
 ```
-yt-dashboard/   index.html · tiktok.html · compare.html · style.css · privacy.html · terms.html · publish.sh
+yt-dashboard/   index.html · tiktok.html · compare.html · style.css · motion.js · stickers.js · privacy.html · terms.html · publish.sh
 worker/         worker.js · wrangler.toml · schema.sql · *.test.mjs
 scripts/        snapshot.mjs · rank.mjs · test-all.mjs · *.test.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json

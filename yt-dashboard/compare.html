@@ -105,7 +105,7 @@
     <div class="status"><span id="statusText">loading…</span></div>
     <select id="themeSel" title="Theme">
       <optgroup label="Cute ☁️">
-        <option value="cloud">☁️ Cinnamon Cloud</option>
+        <option value="cloud">☁️ Cinnamoroll</option>
       </optgroup>
       <optgroup label="Soft &amp; sleek">
         <option value="rose">🌷 Rosé</option><option value="sakura">🌸 Sakura</option><option value="pearl">🤍 Pearl</option>
@@ -192,6 +192,7 @@
 
 </div>
 
+<script src="./stickers.js" defer></script>
 <script src="./motion.js" defer></script>
 <script>
 (function () {
@@ -235,6 +236,35 @@
     const t = JSON.parse(localStorage.getItem('cc_tok') || 'null');
     if (t && t.t && t.e && t.e - 90000 > Date.now()) { accessToken = t.t; tokenExp = t.e; }
   } catch (e) {}
+
+  /* The Cinnamoroll theme's sticker drawer (stickers.js). This page has no account of its
+     own, so it borrows whichever the other two pages left signed in on this device: the
+     TikTok session first (/tiktok/stickers), else the YouTube token (/stickers) — the same
+     headers those pages send. Signed in to neither, the list stays on this device. */
+  function stickerRoute() {
+    if (!workerUrl) return null;
+    const base = workerUrl.replace(/\/$/, '');
+    if (ttSession) return { url: base + '/tiktok/stickers', auth: 'Bearer ' + ttSession, who: 'your TikTok account' };
+    if (accessToken) return { url: base + '/stickers', auth: 'Bearer ' + accessToken, who: 'your channel' };
+    return null;
+  }
+  window.ccStickerStore = {
+    get who() { const r = stickerRoute(); return r ? r.who : ''; },
+    async load() {
+      const s = stickerRoute();
+      if (!s) return null;
+      const r = await fetch(s.url, { headers: { Authorization: s.auth } });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+      const j = await r.json();
+      return Array.isArray(j) ? j : null;
+    },
+    async save(list) {
+      const s = stickerRoute();
+      if (!s) throw new Error('not signed in');
+      const r = await fetch(s.url, { method: 'POST', headers: { Authorization: s.auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ list }) });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+    }
+  };
 
   // true only after a /pairs round-trip actually succeeds — having a Worker URL and a
   // token is not the same thing as being synced, and the pill used to claim it was

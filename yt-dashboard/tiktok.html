@@ -65,7 +65,7 @@
     <div class="status"><span id="statusText">not signed in</span></div>
     <select id="themeSel" title="Theme">
       <optgroup label="Cute ☁️">
-        <option value="cloud">☁️ Cinnamon Cloud</option>
+        <option value="cloud">☁️ Cinnamoroll</option>
       </optgroup>
       <optgroup label="Soft &amp; sleek">
         <option value="rose">🌷 Rosé</option>
@@ -356,6 +356,7 @@
   </div>
 </div>
 
+<script src="./stickers.js" defer></script>
 <script src="./motion.js" defer></script>
 <script>
 (function () {
@@ -1002,7 +1003,7 @@
 
   const CONFETTI_COLOURS = ['#ff3b30', '#ffcf5a', '#3ddc84', '#5aa9ff', '#ff5c8a', '#b58cff', '#ffffff'];
   // A theme may hand the confetti its own colours as a comma list in --confetti. Only
-  // Cinnamon Cloud does (pastels); every other theme has none and keeps these exactly.
+  // Cinnamoroll does (pastels); every other theme has none and keeps these exactly.
   function confettiColours() {
     try {
       const v = getComputedStyle(document.body).getPropertyValue('--confetti');
@@ -3760,6 +3761,29 @@
     if (ttSyncTimer) clearTimeout(ttSyncTimer);
     ttSyncTimer = setTimeout(() => { ttSyncTimer = null; ttSyncPush(); }, 60000);
   }
+
+  /* The Cinnamoroll theme's sticker drawer (stickers.js) keeps its list in this account's
+     private store on the Worker, with the same session header as /tiktok/sync. Plain fetch
+     rather than api() on purpose: a sticker request that fails must never sign you out. */
+  window.ccStickerStore = {
+    get who() { return session && workerUrl ? 'your TikTok account' : ''; },
+    async load() {
+      if (!session || !workerUrl) return null;
+      const r = await fetch(workerUrl + '/tiktok/stickers', { headers: { Authorization: 'Bearer ' + session } });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+      const j = await r.json();
+      return Array.isArray(j) ? j : null;
+    },
+    async save(list) {
+      if (!session || !workerUrl) throw new Error('not signed in');
+      const r = await fetch(workerUrl + '/tiktok/stickers', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + session, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ list })
+      });
+      if (!r.ok) throw new Error('stickers ' + r.status);
+    }
+  };
 
   /* ---------- export and import everything this browser has saved ----------
      The YouTube page's pair, with TikTok's two identifier leaks closed.

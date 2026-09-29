@@ -19,6 +19,8 @@
  *   • When a live total goes up on a poll, a brief green glow and a "▲ +N" chip — N is the
  *     page's own delta text, copied, never a number worked out here. Anything a page marks
  *     .cc-win (a genuine record) gets a sparkle the first time it is shown.
+ *   • Two notifications for other decoration to follow (stickers.js): 'cc:increase' when a
+ *     ▲ chip shows and 'cc:drawn' when a chart has finished drawing in.
  *
  * prefers-reduced-motion: reduce → it does nothing at all, and text is never touched.
  *
@@ -232,7 +234,7 @@
         let i = 0;
         for (const c of el.children) if (c.classList.contains('mcell')) add(c, null, { '--cc-d': (Math.min(12, i++) * 38) + 'ms' });
       }
-      return { el, ops, base: Math.round(base || 0), wait: deferOK && !inView(el) };
+      return { el, kind, ops, base: Math.round(base || 0), wait: deferOK && !inView(el) };
     }
     function apply(d) {
       for (const [n, cls, vars] of d.ops) {
@@ -244,6 +246,22 @@
       d.el.classList.add('cc-draw');
       if (d.wait) { d.el.classList.add('cc-wait'); waiting.add(d.el); io.observe(d.el); }
       else unwait(d.el);
+      if (d.kind === 'chart') { drawnEpoch.set(d.el, epoch); if (!d.wait) drawnSoon(d.el, d.base); }
+    }
+    /* Other decoration (stickers.js) can follow along without reading any page internals:
+       'cc:increase' fires on a stat tile as its ▲ chip shows, and 'cc:drawn' on a chart
+       once its draw-in has had time to finish, carrying the epoch it was drawn under. Both
+       bubble to document. They are notifications only — nothing here waits on a listener. */
+    function signal(type, el, extra) {
+      try { el.dispatchEvent(new CustomEvent(type, { bubbles: true, detail: Object.assign({ el }, extra || {}) })); } catch (e) {}
+    }
+    const drawnEpoch = new WeakMap();
+    function drawnSoon(el, base) {
+      const ep = drawnEpoch.get(el);
+      setTimeout(guard(() => {
+        if (el.isConnected && el.classList.contains('cc-draw') && !el.classList.contains('cc-wait') && drawnEpoch.get(el) === ep)
+          signal('cc:drawn', el, { epoch: ep });
+      }), (base || 0) + 1250);
     }
     function still(el) {
       if (el.classList.contains('cc-draw')) el.classList.remove('cc-draw');
@@ -258,7 +276,7 @@
       for (const en of entries) {
         if (!en.isIntersecting) continue;
         const el = en.target;
-        if (waiting.has(el)) unwait(el);
+        if (waiting.has(el)) { unwait(el); if (drawnEpoch.has(el)) drawnSoon(el, 0); }
         if (waitingNums.has(el)) {
           const base = waitingNums.get(el);
           waitingNums.delete(el);
@@ -352,6 +370,7 @@
         ring.className = 'cc-glow'; ring.setAttribute('aria-hidden', 'true');
         tile.appendChild(ring); tile.appendChild(chip);
         setTimeout(guard(() => { chip.remove(); ring.remove(); }), 1700);
+        signal('cc:increase', tile);
       };
     }
     function sparkle(el) {
