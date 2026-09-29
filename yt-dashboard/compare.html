@@ -197,7 +197,7 @@
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
-  const fmt = new Intl.NumberFormat();
+  const fmt = new Intl.NumberFormat('en-AU');
   const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
   const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 

@@ -64,9 +64,12 @@ const BAD = [
   '12–15', '1,000–2,000', '5 days', '1 day', '3 weeks', '2 hours', '2026-09-29', '12/09',
   '≈ 12 views/min', '12 views/min', '12 views/day', '~1.2k', '1.5×', '—', '–', '', '1,23', '01',
   '1.2.3', '3d 4h', '+12 −3', '1e5', 'NaN', 'Infinity', '12 ', ' 12', '12  views', '±0', '$5',
-  '5m', '3h', '10d', '4 wk', 'Posted 3 Sep', '12 posts, 4 hits', '6pm', '1,000,00', 'live · 12:04:33'
+  '5m', '3h', '10d', '4 wk', 'Posted 3 Sep', '12 posts, 4 hits', '6pm', '1,000,00', 'live · 12:04:33',
+  '2025', '1900', '2100'
 ];
 for (const s of BAD) check('refuses ' + JSON.stringify(s), M.parseCount(s) === null);
+check('a count that merely looks year-sized with a unit or separators still counts',
+  M.parseCount('2,025') !== null && M.parseCount('2025 views') !== null && M.parseCount('2101') !== null && M.parseCount('+2025') !== null);
 check('refuses non-strings', M.parseCount(null) === null && M.parseCount(12) === null && M.parseCount(undefined) === null);
 
 /* ---------- 3. the animator's safety rules, read from the source ---------- */
@@ -76,6 +79,16 @@ check('a failure while booting never reaches the page', /try \{ boot\(\); \} cat
 check('a count stops the moment the page writes (node identity + our last write)',
   /job\.el\.firstChild === job\.tn && job\.el\.childNodes\.length === 1 && job\.tn\.data === job\.last/.test(MOTION) &&
   /if \(!intact\(job\)\) \{ endCount\(job\); continue; \}/.test(MOTION));
+check('the write-back only needs OUR node attached and unchanged (a sibling badge does not block it)',
+  /if \(job\.tn\.parentNode === job\.el && job\.tn\.data === job\.last && job\.tn\.data !== job\.original\) job\.tn\.data = job\.original;/.test(MOTION));
+check('only a real control opens a press reset, and it is single-use',
+  /const ctl = tg\.closest\(CTL_SEL\);\s*if \(!ctl\) return;/.test(MOTION) && /reset\(card, 8000, true\)/.test(MOTION) &&
+  /r\.once && [^\n]*r\.until = Math\.min\(r\.until, t \+ 400\)/.test(MOTION));
+check('live stat tiles count only on first sight or a forced reset',
+  /if \(!o\.force && el\.matches\('\.stat-num'\) && seen\.has\(key\)\) return;/.test(MOTION));
+check('the page’s own odometer clean-up is not read as a fresh number', /classList\.contains\('odo'\)\) odoDone = true/.test(MOTION));
+check('nothing waits on a shrunken viewport (no negative bottom rootMargin)', /rootMargin: '0px 0px 40px 0px'/.test(MOTION) && !/rootMargin: '[^']*-/.test(MOTION));
+check('an armed, never-seen unit stays armed through a repaint', /if \(waiting\.has\(el\) && el\.classList\.contains\('cc-draw'\)\)/.test(MOTION));
 check('the last frame writes the original string back', /if \(k >= 1\) \{ write\(job, job\.original\); endCount\(job\); continue; \}/.test(MOTION));
 check('a hidden tab finishes counts rather than freezing mid-way', /visibilitychange[\s\S]{0,80}finishAll\(\)/.test(MOTION));
 check('the +N chip copies the page’s own delta text and checks its shape',

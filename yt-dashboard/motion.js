@@ -58,6 +58,8 @@
     const value = Number(m[2].replace(/,/g, '') + (dec ? '.' + dec : ''));
     if (!isFinite(value) || value > 1e15) return null;
     const p = { sign: m[1], value, decimals: dec.length, grouped: m[2].indexOf(',') >= 0, suffix: m[4] + m[5] };
+    // a bare, ungrouped 4-digit figure in this range is a year ("2025"), not a count
+    if (!p.sign && !p.grouped && !p.decimals && !p.suffix && value >= 1900 && value <= 2100) return null;
     // the guarantee everything else rests on: this format reproduces the original exactly
     if (formatCount(p, value) !== s) return null;
     return p;
@@ -112,11 +114,14 @@
     const seen = new Map();
     let epoch = 1;
     const resets = [];
-    function reset(scope, ms) {
+    function reset(scope, ms, once) {
       epoch++;
-      resets.push({ scope: scope || null, epoch, until: now() + ms });
+      resets.push({ scope: scope || null, epoch, until: now() + ms, once: !!once });
       if (resets.length > 48) resets.shift();
     }
+    // resets a flush actually drew or counted under; a single-use (press) reset closes
+    // shortly after, so a poll later in its window finds those keys already seen
+    const usedResets = new Set();
     function activeReset(el, t) {
       for (let i = resets.length - 1; i >= 0; i--) {
         const r = resets[i];
@@ -129,7 +134,8 @@
       const rec = seen.get(key);
       if (rec === undefined) return true;
       const r = activeReset(el, t);
-      return !!(r && rec < r.epoch);
+      if (r && rec < r.epoch) { usedResets.add(r); return true; }
+      return false;
     }
     const sigOf = el => {
       const a = el.getAttribute && el.getAttribute('aria-label');
@@ -153,7 +159,9 @@
     // Under automation (a screenshot harness) nothing waits to be scrolled to, so a
     // full-page capture shows finished charts rather than ones frozen at their first frame.
     const deferOK = typeof IntersectionObserver === 'function' && !(navigator && navigator.webdriver);
-    const inView = el => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < vh(); };
+    // 40 px of slack below the fold: a pane still sliding in (or a unit resting in the last
+    // few pixels of the screen) counts as seen, so nothing is left paused on frame 0
+    const inView = el => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < vh() + 40; };
 
     /* ---------------- draw-ins ----------------
        measure() only READS (lengths, positions, classification); apply() only WRITES.
@@ -162,7 +170,7 @@
        own styles exactly — an inline opacity:.35 on a faded series stays .35. */
     const waiting = new Set();
     const waitingNums = new Map();
-    const io = deferOK ? new IntersectionObserver(guard(onSeen), { rootMargin: '0px 0px -4% 0px' }) : null;
+    const io = deferOK ? new IntersectionObserver(guard(onSeen), { rootMargin: '0px 0px 40px 0px' }) : null;
 
     function barDir(d) {
       const m = /^M\s*(-?[\d.]+)[ ,]\s*(-?[\d.]+)\s*V\s*(-?[\d.]+)/.exec(d || '');
@@ -283,24 +291,26 @@
       if (!tn) return;
       const p = parseCount(tn.data);
       if (!p || !(p.value > 0)) return;
+      const cap = el.matches('.stat-num, .pnum') ? 150 : 320;
       const job = { el, tn, original: tn.data, p, last: tn.data, t0: null,
-                    base: Math.min(320, base || 0), dur: p.value < 10 && !p.decimals ? 650 : 950 };
+                    base: Math.min(cap, base || 0), dur: p.value < 10 && !p.decimals ? 650 : 950 };
       counting.set(el, job);
       ours.add(tn);
       el.classList.add('cc-counting');
-      write(job, countFrame(p, 0));
+      // frame 0 is written on the first tick after the delay; until then the true text shows
       if (!countRaf) countRaf = requestAnimationFrame(guard(tickCounts));
     }
     function write(job, s) { if (job.tn.data !== s) job.tn.data = s; job.last = s; }
     function intact(job) {
       return job.el.firstChild === job.tn && job.el.childNodes.length === 1 && job.tn.data === job.last;
     }
-    // Ends a count. The original goes back ONLY onto our own, untouched node — if the page
-    // has written since, `intact` is false and the page's text is left exactly as it is.
+    // Ends a count. The original goes back ONLY onto our own node, still attached and still
+    // holding our last frame — if the page replaced or rewrote it, its text is left exactly
+    // as it is. A sibling added next to our node (a badge) does not block the write-back.
     function endCount(job) {
       counting.delete(job.el);
       try {
-        if (intact(job) && job.tn.data !== job.original) job.tn.data = job.original;
+        if (job.tn.parentNode === job.el && job.tn.data === job.last && job.tn.data !== job.original) job.tn.data = job.original;
       } catch (e) {}
       job.el.classList.remove('cc-counting');
     }
@@ -315,7 +325,7 @@
           if (job.t0 === null) job.t0 = t + job.base;
           const k = (t - job.t0) / job.dur;
           if (k >= 1) { write(job, job.original); endCount(job); continue; }
-          write(job, countFrame(job.p, k < 0 ? 0 : k));
+          if (k >= 0) write(job, countFrame(job.p, k));
         } catch (e) { endCount(job); }
       }
       if (counting.size) countRaf = requestAnimationFrame(guard(tickCounts));
@@ -520,13 +530,16 @@
           tg = tg.parentElement;
         }
         if (!tg || tg.nodeType !== 1 || !tg.isConnected) continue;
+        let odoDone = false;
         if (r.type === 'childList') {
           for (const n of r.addedNodes) if (n.nodeType === 1 && n.isConnected) scan(n, false, 0);
           const u = tg.closest(UNIT_SEL);
           if (u) put(units, u, false, 0);
+          // the page just finished its own odometer roll and wrote the plain text back
+          for (const n of r.removedNodes) if (n.nodeType === 1 && n.classList && n.classList.contains('odo')) odoDone = true;
         }
         const nm = tg.closest(NUM_SEL);
-        if (nm) put(nums, nm, false, 0);
+        if (nm && !odoDone) put(nums, nm, false, 0);
         if (tg.classList.contains('delta')) deltas.add(tg);
       }
 
@@ -542,6 +555,8 @@
         const kind = kindOf(el);
         if (!kind) return;
         if (!shown(el)) { stills.push(el); return; }   // a hidden room: replayed when it opens
+        // armed but never yet scrolled to: stay armed (re-measured for new children)
+        if (waiting.has(el) && el.classList.contains('cc-draw')) { draws.push(measure(el, kind, o.base)); return; }
         const key = keyOf(el, kind, KIND_SEL[kind], cache);
         if (o.force || fresh(el, key, t)) { seen.set(key, epoch); draws.push(measure(el, kind, o.base)); }
         else stills.push(el);
@@ -555,6 +570,8 @@
         const p = parseCount(job ? job.original : tn.data);
         if (!p || !(p.value > 0) || !shown(el)) return;
         const key = keyOf(el, 'num', NUM_SEL, cache);
+        // live counters count on first sight or a forced reset only: a poll is the page's to animate
+        if (!o.force && el.matches('.stat-num') && seen.has(key)) return;
         if (!(o.force || fresh(el, key, t))) return;
         seen.set(key, epoch);
         counts.push([el, o.base, deferOK && !inView(el)]);
@@ -584,19 +601,27 @@
         else startCount(el, base);
       });
       later.forEach(fn => { try { fn(); } catch (e) {} });
+      usedResets.forEach(r => { if (r.once && (draws.length || counts.length)) r.until = Math.min(r.until, t + 400); });
+      usedResets.clear();
     }
 
     /* ---------------- you did something: open a reset over what you touched ---------------- */
+    const CTL_SEL = 'button, a[href], select, input, textarea, summary, label, [role="button"], [role="tab"], [data-rec], [data-answer]';
     const poke = guard(e => {
       const tg = e.target;
       if (!tg || !tg.closest) return;
       if (e.type === 'keydown' && (e.key === 'Tab' || e.key === 'Shift' || e.key === 'Escape' || e.metaKey || e.ctrlKey || e.altKey)) return;
+      // only a real control opens a reset: a tap on a chart (tooltip, scrub) or on a tile
+      // changes nothing, and a reset there would let the next poll replay the card
+      const ctl = tg.closest(CTL_SEL);
+      if (!ctl) return;
+      if (e.type === 'keydown' && /^(?:Arrow|Page|Home$|End$| $|Spacebar$)/.test(e.key) && tg !== ctl) return;
       // long enough for a press that fetches (a date range, another upload) to come back;
       // a key only replays once per reset, so a poll inside the window finds it seen
       const drawer = tg.closest('.drawer');
-      if (drawer) { reset(drawer, 8000); return; }
+      if (drawer) { reset(drawer, 8000, true); return; }
       const card = tg.closest('.card, .grid');
-      if (card) reset(card, 8000);
+      if (card) reset(card, 8000, true);
     });
     doc.addEventListener('click', poke, true);
     doc.addEventListener('keydown', poke, true);

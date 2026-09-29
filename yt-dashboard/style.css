@@ -75,12 +75,13 @@
      character art. Contrast, checked (WCAG):
        --text  8.6:1 on --panel · 7.7:1 on --ink        --muted 6.2:1 panel · 5.5:1 ink
        --up    5.5:1 on --panel                         --down  5.4:1 on --panel
-       --ink text on an --accent pill (selected tab, chip) 3.5:1
+       --accent 5.4:1 on --panel · 4.3:1 on the header sky; --ink text on an --accent pill 4.75:1
+       --gold 5.3:1 on --panel · --live 5.2:1 on --panel (small chart labels stay legible)
      --confetti is read by the party confetti; themes without it keep the classic colours. */
   body[data-theme="cloud"] {
     --ink:#e6f3fd; --panel:#ffffff; --panel-2:#eff7fe; --line:#cfe3f4;
-    --text:#6b4226; --muted:#7a5a48; --live:#e0558e; --up:#16784d; --down:#c0355e;
-    --accent:#3a84cb; --purple:#8165cc; --gold:#ad6f18;
+    --text:#6b4226; --muted:#7a5a48; --live:#c43472; --up:#16784d; --down:#c0355e;
+    --accent:#2a6db0; --purple:#8165cc; --gold:#94600f;
     --cream:#fff8ec; --blush:#ffd3e3;
     --confetti:#ffb3cf, #9fd3ff, #fff1c1, #ffffff, #d9c9ff, #bff0da, #7fb8ec, #ff8fb8;
     --f-num:'Fredoka','Sora',system-ui,sans-serif;
@@ -621,7 +622,7 @@
     font:inherit; font-size:11px; color:var(--text); }
   #awayContent .chip.chipv img { width:29px; height:16px; border-radius:3px; object-fit:cover; }
   #awayContent .chip.chipv:hover { border-color:var(--muted); }
-  #awayContent .alert.seen { opacity:.55; }
+  #awayContent .alert.seen { opacity:.7; }
   #awayContent .alert .dot { width:6px; height:6px; border-radius:50%; background:var(--accent);
     flex:none; align-self:center; }
   #awayContent .alert.moment .txt { color:var(--text); }
@@ -762,12 +763,12 @@
 
   /* fluffy panels: rounder, with a soft sky-blue shadow instead of a hard edge */
   body[data-theme="cloud"] .card { border-radius:22px; border-color:#d6e8f7;
-    box-shadow:0 12px 30px -16px rgba(58,132,203,.32), 0 2px 6px rgba(58,132,203,.06); }
+    box-shadow:0 12px 30px -16px rgba(42,109,176,.32), 0 2px 6px rgba(42,109,176,.06); }
   body[data-theme="cloud"] .answer-card { background:linear-gradient(160deg, var(--panel) 30%, var(--cream) 100%); }
   body[data-theme="cloud"] .stat, body[data-theme="cloud"] .tile { border-radius:20px; border-color:#d6e8f7;
     background:radial-gradient(110px 64px at 100% 0%, rgba(255,179,207,.28), transparent 70%), var(--panel);
-    box-shadow:0 10px 24px -14px rgba(58,132,203,.36); }
-  body[data-theme="cloud"] .stat:hover { box-shadow:0 12px 26px -12px rgba(58,132,203,.42); }
+    box-shadow:0 10px 24px -14px rgba(42,109,176,.36); }
+  body[data-theme="cloud"] .stat:hover { box-shadow:0 12px 26px -12px rgba(42,109,176,.42); }
   body[data-theme="cloud"] .mcell { border-radius:14px; }
   body[data-theme="cloud"] svg.chart { border-radius:16px; }
   body[data-theme="cloud"] .reportcard, body[data-theme="cloud"] .pjwait, body[data-theme="cloud"] .idea-list li,
@@ -778,10 +779,10 @@
      sparkle never shows through behind their label */
   body[data-theme="cloud"] button.ghost:not(.on):not(.active), body[data-theme="cloud"] .onepage { background:var(--panel); }
   body[data-theme="cloud"] button.primary { border-radius:999px; box-shadow:0 8px 18px -8px rgba(224,85,142,.6); }
-  body[data-theme="cloud"] .tabs { box-shadow:0 8px 20px -14px rgba(58,132,203,.45); }
+  body[data-theme="cloud"] .tabs { box-shadow:0 8px 20px -14px rgba(42,109,176,.45); }
   body[data-theme="cloud"] .tabs .cc-glider,
-  body[data-theme="cloud"] .tabs:not(.cc-glide) button[aria-selected="true"] { box-shadow:0 4px 12px -4px rgba(58,132,203,.6); }
-  body[data-theme="cloud"] .drawer { border-radius:22px 0 0 22px; box-shadow:-14px 0 44px rgba(58,132,203,.22); }
+  body[data-theme="cloud"] .tabs:not(.cc-glide) button[aria-selected="true"] { box-shadow:0 4px 12px -4px rgba(42,109,176,.6); }
+  body[data-theme="cloud"] .drawer { border-radius:22px 0 0 22px; box-shadow:-14px 0 44px rgba(42,109,176,.22); }
   body[data-theme="cloud"] #party .scrim { background:rgba(44,78,122,.55); }
   body[data-theme="cloud"] #party .pclose { color:var(--text); }
   body[data-theme="cloud"] ::selection { background:var(--blush); color:var(--text); }
