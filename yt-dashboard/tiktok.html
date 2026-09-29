@@ -3764,15 +3764,22 @@
 
   /* The Cinnamoroll theme's sticker drawer (stickers.js) keeps its list in this account's
      private store on the Worker, with the same session header as /tiktok/sync. Plain fetch
-     rather than api() on purpose: a sticker request that fails must never sign you out. */
+     rather than api() on purpose: a sticker request that fails must never sign you out.
+     load() asks for { list, saved } (?meta=1) and save() insists on the Worker's { ok:true }:
+     an older Worker without this route answers 200 with something else, and that must never
+     read as "saved to your account". Errors carry .status (404/405 = the route is missing)
+     or .code 'old-worker' so the drawer can say what is really wrong. */
+  function stickerErr(status, code) { const e = new Error('stickers ' + (code || status)); e.status = status; e.code = code || ''; return e; }
   window.ccStickerStore = {
+    key: 'tt',
     get who() { return session && workerUrl ? 'your TikTok account' : ''; },
     async load() {
       if (!session || !workerUrl) return null;
-      const r = await fetch(workerUrl + '/tiktok/stickers', { headers: { Authorization: 'Bearer ' + session } });
-      if (!r.ok) throw new Error('stickers ' + r.status);
-      const j = await r.json();
-      return Array.isArray(j) ? j : null;
+      const r = await fetch(workerUrl + '/tiktok/stickers?meta=1', { headers: { Authorization: 'Bearer ' + session } });
+      if (!r.ok) throw stickerErr(r.status);
+      const j = await r.json().catch(() => null);
+      if (j && Array.isArray(j.list)) return j;
+      throw stickerErr(r.status, 'old-worker');
     },
     async save(list) {
       if (!session || !workerUrl) throw new Error('not signed in');
@@ -3781,7 +3788,9 @@
         headers: { Authorization: 'Bearer ' + session, 'Content-Type': 'application/json' },
         body: JSON.stringify({ list })
       });
-      if (!r.ok) throw new Error('stickers ' + r.status);
+      if (!r.ok) throw stickerErr(r.status);
+      const j = await r.json().catch(() => null);
+      if (!(j && j.ok === true)) throw stickerErr(r.status, 'old-worker');
     }
   };
 

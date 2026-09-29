@@ -72,6 +72,13 @@ console.log('\nstickers — the shape check');
   }
   const big = [{ id: 'a', kind: 'upload', src: 'data:image/png;base64,' + 'A'.repeat(W.STICKER_BYTES) }];
   check('a list over 3.5 MB is 413, not 400', W.checkStickers(big).status === 413);
+  const one = [{ id: 'a', kind: 'upload', src: 'data:image/png;base64,' + 'A'.repeat(Math.ceil(2.1 * 1024 * 1024)) }];
+  const r1 = W.checkStickers(one);
+  check('one upload over ~1.5 MB decoded is 413, even when the list is under 3.5 MB', r1.status === 413 && /1\.5 MB/.test(r1.error), JSON.stringify(r1).slice(0, 100));
+  const ok1 = W.checkStickers([{ id: 'a', kind: 'upload', src: 'data:image/png;base64,' + 'A'.repeat(4 * Math.floor(1.5 * 1024 * 1024 / 3)) }]);
+  check('an upload of exactly 1.5 MB is still accepted', !!ok1.list);
+  const nm = W.checkStickers([{ id: 'a', kind: 'giphy', src: 'JQAxGWgPNy5uCzFkHU', name: ' <b>Hi\u0000\u0007 there</b>\n' }]);
+  check('names lose control characters and angle brackets, like the page\'s cleanName', nm.list && nm.list[0].name === 'bHi there/b', nm.list && JSON.stringify(nm.list[0].name));
   const extra = W.checkStickers([{ id: 'a', kind: 'giphy', src: 'JQAxGWgPNy5uCzFkHU', html: '<img onerror=x>' }]);
   check('unknown fields are dropped, not stored', extra.list && !('html' in extra.list[0]));
 }
@@ -106,6 +113,21 @@ console.log('\n/tiktok/stickers — session-locked, round trip');
   check('and GET hands the same list back', JSON.stringify(back) === JSON.stringify(good()), JSON.stringify(back).slice(0, 120));
   r = await TT('/tiktok/stickers', ttEnv(KV), { headers: { Authorization: 'Bearer S2' } });
   check('another account does not see it', JSON.stringify(await r.json()) === '[]');
+  r = await TT('/tiktok/stickers?meta=1', ttEnv(KV), { headers: { Authorization: 'Bearer S1' } });
+  const m1 = await r.json();
+  check('?meta=1 says the account has saved a list', m1.saved === true && m1.list.length === 2, JSON.stringify(m1).slice(0, 80));
+  r = await TT('/tiktok/stickers?meta=1', ttEnv(KV), { headers: { Authorization: 'Bearer S2' } });
+  const m2 = await r.json();
+  check('…and that a fresh account never has (so only it gets the starter pack)', m2.saved === false && m2.list.length === 0, JSON.stringify(m2));
+  r = await TT('/tiktok/stickers', ttEnv(KV), { method: 'POST', headers: { Authorization: 'Bearer S2' }, body: JSON.stringify({ list: [] }) });
+  r = await TT('/tiktok/stickers?meta=1', ttEnv(KV), { headers: { Authorization: 'Bearer S2' } });
+  const m3 = await r.json();
+  check('a list emptied on purpose reads as saved and empty', m3.saved === true && m3.list.length === 0, JSON.stringify(m3));
+  {
+    const failKV = { ...KV, async get(k) { if (k.startsWith('tt:stickers:')) throw new Error('kv down'); return KV.get(k); } };
+    r = await TT('/tiktok/stickers?meta=1', ttEnv(failKV), { headers: { Authorization: 'Bearer S1' } });
+    check('a failed KV read is 502, never an empty list', r.status === 502);
+  }
 
   const before = KV.store.get('tt:stickers:open-me');
   r = await TT('/tiktok/stickers', ttEnv(KV), { method: 'POST', headers: { Authorization: 'Bearer S1' }, body: JSON.stringify({ list: [{ id: 'x', kind: 'url', src: 'https://evil.example' }] }) });

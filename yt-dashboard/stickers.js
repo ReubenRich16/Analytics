@@ -22,11 +22,13 @@
  *   • The ☁ button (bottom-right) opens your sticker drawer: upload from your phone, paste a
  *     GIPHY link, reorder, remove, restore the starter pack.
  *
- * Saved to your account. The page sets window.ccStickerStore = { load, save, who } (see
- * tiktok.html / index.html / compare.html): load() → the account's list, or null when not
- * signed in; save(list) → stores it; who → a label when signed in, '' when not. The list is
- * also cached in localStorage ('cc_stickers') so it paints instantly and works offline; when
- * the account answers, the account wins.
+ * Saved to your account. The page sets window.ccStickerStore = { load, save, who, key } (see
+ * tiktok.html / index.html / compare.html): load() → { list, saved } from the account, or null
+ * when not signed in; save(list) → stores it (and throws unless the Worker said ok); who → a
+ * label when signed in, '' when not; key → 'tt' or 'yt'. A copy is cached in localStorage per
+ * account ('cc_stickers:tt', 'cc_stickers:yt'; 'cc_stickers' when signed out) so it paints
+ * instantly and works offline. The account wins when it answers, and nothing is saved to it
+ * until it has answered at least once this visit (see makeSync).
  *
  * Safety: decoration only. It never changes a number or a word on the page, never blocks a
  * tap on data (everything is pointer-events:none except the peeking sticker itself), keeps
@@ -165,9 +167,179 @@
     return out;
   }
 
+  /* Two lists → one, for when you changed stickers before your account answered. The
+     account's order comes first, then anything only this device has (matched by id and by
+     GIPHY id), as far as the limits allow. Stickers removed here this visit (`gone`) are not
+     brought back from the account. */
+  function mergeLists(remote, local, gone) {
+    const drop = gone instanceof Set ? gone : new Set(gone || []);
+    const out = [];
+    for (const it of cleanList(remote)) if (!drop.has(it.id)) out.push(it);
+    for (const it of cleanList(local)) {
+      if (out.some(x => x.id === it.id || (x.kind === 'giphy' && it.kind === 'giphy' && x.src === it.src))) continue;
+      if (canAdd(out, it).ok) out.push(it);
+    }
+    return cleanList(out);
+  }
+  /* What this device keeps in localStorage. It shares the page's ~5 MB with the dashboard's
+     own caches (history, snapshots, keywords), so it holds every GIPHY sticker (a few bytes
+     each) but only as many uploads as fit in about 512 KB. Your account keeps them all. */
+  const CACHE_CAP = 512 * 1024;
+  function cacheList(list, cap) {
+    cap = cap || CACHE_CAP;
+    const out = [];
+    let n = 2, trimmed = false;
+    for (const it of cleanList(list)) {
+      const b = JSON.stringify(it).length + 1;
+      if (it.kind === 'upload' && n + b > cap) { trimmed = true; continue; }
+      out.push(it); n += b;
+    }
+    return { list: out, trimmed };
+  }
+  /* What the account store's load() answered → { list, saved } or null (not signed in).
+     A plain array is a list whose "ever saved" is unknown (saved: null). Anything else means
+     the Worker has no sticker route yet (an older Worker answers 200 with something else). */
+  function readReply(r) {
+    if (r == null) return null;
+    if (Array.isArray(r)) return { list: cleanList(r), saved: null };
+    if (typeof r === 'object' && Array.isArray(r.list)) return { list: cleanList(r.list), saved: r.saved === true ? true : r.saved === false ? false : null };
+    const e = new Error('old-worker'); e.code = 'old-worker'; throw e;
+  }
+  // an error from the account store: the route is missing (an older Worker) or it could not be reached
+  const routeMissing = e => !!e && (e.code === 'old-worker' || e.status === 404 || e.status === 405);
+
+  /* ---------------------------------------------------------------------------------
+     Where the list is kept — the sync engine. No DOM here, so Node can drive it with a fake
+     account store and fake timers (scripts/stickers.test.mjs).
+
+     The account is the source of truth. Until it has answered this visit (pulledOk), your
+     changes are kept on this device and nothing is sent — so a flaky network or a page that
+     is still signing in can never save this device's list over the account's. When it
+     answers: no changes here → the account's list; changes here → the two merged. Each
+     account has its own copy on this device ('cc_stickers:tt' / 'cc_stickers:yt'), and
+     'cc_stickers' is the signed-out list, so one account never seeds another.
+     --------------------------------------------------------------------------------- */
+  const LS = 'cc_stickers';
+  const OLD_WORKER = 'Saved on this device only — your Worker doesn’t have sticker saving yet (update it to keep them in your account)';
+  function makeSync(o) {
+    // o: { store() → the page's ccStickerStore or null, ls (localStorage-like), setTimeout,
+    //      clearTimeout, now(), active() → still mounted, onList() → repaint, onStatus(text, bad) }
+    const T = o.setTimeout, C = o.clearTimeout, now = o.now || (() => Date.now());
+    const guard = fn => function () { try { return fn.apply(this, arguments); } catch (e) {} };
+    let list = null, localSrc = null, edited = false, saveT = 0, retryT = 0, tries = 0;
+    let pulledKey = null, oldWorker = false, cacheTrimmed = false, pulling = false;
+    const gone = new Set();          // stickers removed this visit: a merge must not bring them back
+    const store = () => { const s = o.store(); return s && typeof s.load === 'function' && typeof s.save === 'function' ? s : null; };
+    const who = () => { try { const s = store(); return s ? String(s.who || '') : ''; } catch (e) { return ''; } };
+    // which account this device is talking to right now ('' when signed out)
+    const acct = () => { try { const s = store(); return s && who() ? String(s.key || 'acct').replace(/[^a-z0-9_-]/gi, '').slice(0, 16) || 'acct' : ''; } catch (e) { return ''; } };
+    const lsKey = k => (k ? LS + ':' + k : LS);
+    const pulledOk = () => !!pulledKey && pulledKey === acct();
+    const setSync = (t, bad) => { try { o.onStatus(t, !!bad); } catch (e) {} };
+    const repaint = () => { try { o.onList(); } catch (e) {} };
+    function readLocal(k) {
+      try { const raw = o.ls.getItem(lsKey(k)); if (raw == null) return null; return cleanList(JSON.parse(raw)); }
+      catch (e) { return null; }
+    }
+    function writeLocal() {
+      const c = cacheList(list);
+      cacheTrimmed = c.trimmed;
+      try { o.ls.setItem(lsKey(acct()), JSON.stringify(c.list)); return true; } catch (e) { return false; }
+    }
+    const savedTo = () => 'Saved to your account' + (who() ? ' (' + who() + ')' : '');
+    function deviceOnly() {
+      setSync(cacheTrimmed ? 'Saved on this device only — sign in to keep your bigger pictures after you close the page'
+                           : 'Saved on this device only');
+    }
+    function loadLocal() {
+      const k = acct();
+      let l = k ? readLocal(k) : null;
+      localSrc = l ? 'account' : null;
+      if (!l) { l = readLocal(''); if (l) localSrc = 'device'; }
+      list = l || starterPack(now());
+      if (who()) setSync('Loading from your account…'); else deviceOnly();
+    }
+    function retrySoon() {
+      C(retryT);
+      if (tries > 6) return;
+      retryT = T(guard(() => { if (o.active()) { if (pulledOk()) saveNow(); else pull(); } }), Math.min(120000, 5000 * Math.pow(2, tries - 1)));
+    }
+    function failed(e) {
+      if (routeMissing(e)) { oldWorker = true; C(retryT); setSync(OLD_WORKER); return; }
+      tries++;
+      setSync('Couldn’t reach your account — your stickers are kept on this device and will be saved when it answers', true);
+      retrySoon();
+    }
+    async function pull() {
+      const s = store();
+      if (!s || !who()) { deviceOnly(); return; }
+      if (oldWorker) { setSync(OLD_WORKER); return; }
+      if (pulling) return;
+      const k = acct();
+      // a different account from the one this list came from, and nothing changed here: start from its own copy
+      if (pulledKey !== k && !edited && localSrc !== 'account') loadLocal();
+      pulling = true;
+      let rep;
+      try { rep = readReply(await s.load()); }
+      catch (e) { pulling = false; failed(e); return; }
+      pulling = false;
+      if (!rep) { deviceOnly(); return; }
+      if (acct() !== k) return;       // signed out or switched account while it was loading
+      tries = 0; C(retryT);
+      pulledKey = k;
+      const remote = rep.list;
+      let push = false;
+      if (remote.length) {
+        if (edited) { list = mergeLists(remote, list, gone); push = true; }
+        else list = remote;
+      } else if (rep.saved === true) {
+        // you emptied this account's drawer on purpose: keep it empty unless you changed something here
+        if (edited) push = true; else list = [];
+      } else {
+        // an account that has never saved: it takes what you have here (added before signing
+        // in, or this account's own copy), or the starter pack on a new device
+        if (!edited && !localSrc) list = starterPack(now());
+        push = true;
+      }
+      writeLocal(); repaint();
+      if (push) await saveNow(); else setSync(savedTo());
+    }
+    // the list was changed here (upload, remove, reorder…)
+    function changed(next) {
+      if (next) list = next;
+      edited = true;
+      for (const it of list) gone.delete(it.id);     // put back (undo, restore): not gone any more
+      if (!writeLocal()) setSync('This device’s storage is full — your stickers may not be kept here', true);
+      C(saveT);
+      if (store() && who() && !pulledOk() && !oldWorker) {
+        setSync('Kept on this device — it will be saved to your account once it answers');
+        pull();
+      } else saveT = T(guard(saveNow), 1200);
+      repaint();
+    }
+    async function saveNow() {
+      C(saveT);
+      const s = store();
+      if (!s || !who()) { deviceOnly(); return; }
+      if (oldWorker) { setSync(OLD_WORKER); return; }
+      if (!pulledOk()) { await pull(); return; }      // never save before the account has answered
+      const k = acct();
+      setSync('Saving…');
+      try { await s.save(list.slice()); if (acct() === k) setSync(savedTo()); }
+      catch (e) { failed(e); }
+    }
+    return {
+      get list() { return list; },
+      set list(v) { list = v; },
+      get pulledOk() { return pulledOk(); },
+      gone, loadLocal, pull, changed, saveNow,
+      stop() { C(retryT); }
+    };
+  }
+
   const api = { ID_RE, UPLOAD_RE, MAX_N, MAX_TOTAL, MAX_UPLOAD, MAX_SIDE, CREDIT, STARTER,
     giphyId, giphyUrls, fitSize, dataUrlBytes, checkUpload, validItem, cleanList, canAdd,
-    starterPack, restoreStarter, move, listBytes };
+    starterPack, restoreStarter, move, listBytes, mergeLists, cacheList, CACHE_CAP, readReply, routeMissing, makeSync, LS, OLD_WORKER };
   if (typeof module === 'object' && module && module.exports) module.exports = api;
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
@@ -180,7 +352,6 @@
     const mq = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
     const calm = () => !!(mq && mq.matches);
     const on = () => body.getAttribute('data-theme') === 'cloud';
-    const LS = 'cc_stickers';
     const el = (tag, cls, attrs) => {
       const n = doc.createElement(tag);
       if (cls) n.className = cls;
@@ -188,67 +359,19 @@
       return n;
     };
 
-    /* ---------------- the list, and where it is kept ---------------- */
-    let list = null, hadLocal = false, edited = false, saveT = 0;
-    function readLocal() {
-      try { const raw = localStorage.getItem(LS); if (raw == null) return null; return cleanList(JSON.parse(raw)); }
-      catch (e) { return null; }
-    }
-    function writeLocal() {
-      try { localStorage.setItem(LS, JSON.stringify(list)); return true; } catch (e) { return false; }
-    }
-    const store = () => { const s = win.ccStickerStore; return s && typeof s.load === 'function' && typeof s.save === 'function' ? s : null; };
-    const who = () => { try { const s = store(); return s ? String(s.who || '') : ''; } catch (e) { return ''; } };
+    /* ---------------- the list: the sync engine above, wired to this page ---------------- */
     let syncText = '', syncBad = false;
-    function setSync(t, bad) { syncText = t; syncBad = !!bad; paintSync(); }
-
-    function loadLocal() {
-      const l = readLocal();
-      hadLocal = l !== null;
-      list = l || starterPack(Date.now());
-      setSync(who() ? 'Loading from your account…' : 'Saved on this device only');
-    }
-    // the account wins when it answers. An account with no list yet takes this device's
-    // list (so stickers added before signing in are kept), or the starter pack on a new device.
-    let pulling = false;
-    async function pull() {
-      const s = store();
-      if (!s || pulling) { if (!s) setSync('Saved on this device only'); return; }
-      pulling = true;
-      let r;
-      try { r = await s.load(); }
-      catch (e) { pulling = false; setSync('Couldn’t reach your account — saved on this device for now', true); return; }
-      pulling = false;
-      if (!Array.isArray(r)) { setSync('Saved on this device only'); return; }
-      const remote = cleanList(r);
-      if (remote.length && !edited) {
-        list = remote; writeLocal(); refresh();
-        setSync('Saved to your account' + (who() ? ' (' + who() + ')' : ''));
-      } else {
-        if (!remote.length && !hadLocal && !edited) { list = starterPack(Date.now()); writeLocal(); refresh(); }
-        saveNow();
-      }
-    }
-    function changed() {
-      edited = true; hadLocal = true;
-      if (!writeLocal()) setSync('This device’s storage is full — your stickers may not be kept here', true);
-      clearTimeout(saveT);
-      saveT = setTimeout(guard(saveNow), 1200);
-      refresh();
-    }
-    async function saveNow() {
-      clearTimeout(saveT);
-      const s = store();
-      if (!s || !who()) { setSync('Saved on this device only'); return; }
-      setSync('Saving…');
-      try { await s.save(list.slice()); setSync('Saved to your account' + ' (' + who() + ')'); }
-      catch (e) { setSync('Couldn’t reach your account — saved on this device for now', true); }
-    }
+    const sync = makeSync({ store: () => win.ccStickerStore, ls: (() => { try { return localStorage; } catch (e) { return null; } })() || { getItem: () => null, setItem() { throw new Error('no storage'); } },
+      setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), now: () => Date.now(),
+      active: () => mounted, onList: () => refresh(), onStatus: (t, bad) => { syncText = t; syncBad = bad; paintSync(); } });
+    const gone = sync.gone;
+    const changed = next => sync.changed(next);
+    const pull = () => sync.pull();
 
     /* ---------------- sticker pictures ---------------- */
     const dead = new Set();          // stickers that could not load this visit
     const keyOf = it => it.kind + ':' + (it.kind === 'giphy' ? it.src : it.id);
-    const alive = () => (list || []).filter(it => !dead.has(keyOf(it)));
+    const alive = () => (sync.list || []).filter(it => !dead.has(keyOf(it)));
     // an <img> for a sticker; GIPHY tries WebP then GIF, and if both fail the sticker is
     // marked dead and `onDead` runs — the caller simply leaves it out
     // `eager` for a sticker that is on screen the moment it is made (a lazy image in a
@@ -306,6 +429,8 @@
 
     /* ---------------- (a) the peeking sticker ---------------- */
     let peek = null, peekItem = null, peekHost = null, idleT = 0;
+    // re-fit whenever the page or the card changes size (fonts landing, a setup card moving)
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(guard(() => { if (mounted) fitSoon(); })) : null;
     function hostEl() {
       const shown = n => n && n.getClientRects().length > 0 && getComputedStyle(n).display !== 'none';
       const a = doc.getElementById('answerCard');
@@ -322,7 +447,8 @@
       const cur = peekItem && alive().find(x => x.id === peekItem.id);
       const it = !fresh && cur ? cur : pick(peekItem && peekItem.id);
       if (!it) { removePeek(); return; }
-      if (peekHost && peekHost !== host) peekHost.classList.remove('cc-peek-host');
+      if (peekHost && peekHost !== host) { peekHost.classList.remove('cc-peek-host'); if (ro) ro.unobserve(peekHost); }
+      if (ro && peekHost !== host) ro.observe(host);
       peekHost = host;
       host.classList.add('cc-peek-host');
       if (!peek) {
@@ -343,31 +469,40 @@
     }
     /* The sticker rises above its card only as far as the space there allows: if a control
        (a select, a button, a tab) sits just above the card, the sticker comes in smaller and
-       lower, so it never lies over anything you might tap. It always overlaps the card's own
-       top padding by the same 16px, never its text. */
+       lower, so it never lies over anything you might tap. Below the card's top edge it dips
+       into the card's own top padding — 16px at most, and less if a control inside the card
+       (a tab row, a button) starts nearer the top than that. Measured again whenever the
+       layout settles (ResizeObserver, fonts, load, resize), not only on the first frame. */
     let fitRaf = 0;
     function fitSoon() {
       if (fitRaf) return;
       fitRaf = requestAnimationFrame(guard(() => { fitRaf = 0; fitPeek(); }));
     }
+    const CONTROLS = 'button, a[href], select, input, textarea, summary, label, [role="tab"], [role="button"]';
     function fitPeek() {
       if (!peek || !peekHost || !peek.isConnected) return;
       const hr = peekHost.getBoundingClientRect();
       const L = hr.right - 18 - 64 - 8, R = hr.right - 18 + 8;   // the widest the sticker can be, plus a margin
-      let clear = 48;
-      for (const n of doc.querySelectorAll('button, a[href], select, input, textarea, summary, label, [role="tab"], [role="button"]')) {
-        if (peekHost.contains(n) || n.closest('.cc-stk-sheet, .drawer, #party')) continue;
+      let clear = 48, dip = 16;
+      for (const n of doc.querySelectorAll(CONTROLS)) {
+        if (peek.contains(n) || n.closest('.cc-stk-sheet, .drawer, #party')) continue;
         const r = n.getBoundingClientRect();
-        if (!r.width || !r.height || r.bottom > hr.top + 1 || r.bottom < hr.top - 80 || r.right < L || r.left > R) continue;
+        if (!r.width || !r.height || r.right < L || r.left > R) continue;
+        if (peekHost.contains(n)) {
+          if (r.top >= hr.top - 1 && r.top < hr.top + 24) dip = Math.min(dip, Math.floor(r.top - hr.top - 4));
+          continue;
+        }
+        if (r.bottom > hr.top + 1 || r.bottom < hr.top - 80) continue;
         clear = Math.min(clear, Math.floor(hr.top - r.bottom - 4));
       }
-      const rise = Math.max(10, Math.min(48, clear));
-      peek.style.setProperty('--cc-rise', rise + 'px');
-      peek.style.setProperty('--cc-size', Math.max(34, Math.min(64, rise + 16)) + 'px');
+      dip = Math.max(0, dip);
+      const size = Math.max(34, Math.min(64, Math.max(10, clear) + dip));
+      peek.style.setProperty('--cc-rise', (size - dip) + 'px');
+      peek.style.setProperty('--cc-size', size + 'px');
     }
     function removePeek() {
       if (peek) peek.remove();
-      if (peekHost) peekHost.classList.remove('cc-peek-host');
+      if (peekHost) { peekHost.classList.remove('cc-peek-host'); if (ro) ro.unobserve(peekHost); }
       peekHost = null;
       clearTimeout(idleT);
     }
@@ -456,7 +591,14 @@
       flying.forEach(w => { if (w.parentNode === layer) { flying.delete(w); w.remove(); } });
       const n = Math.max(0, Math.min(3 + Math.floor(Math.random() * 3), room()));
       const a = alive();
-      let giphy = false;
+      // the GIPHY credit appears only once a GIPHY sticker has actually loaded — offline, or
+      // with GIPHY blocked, nothing is shown and so nothing is credited
+      const credit = () => {
+        if (!partyLayer || partyLayer.querySelector('.cc-party-credit')) return;
+        const c = el('span', 'cc-stk-credit cc-party-credit');
+        c.textContent = CREDIT;
+        partyLayer.appendChild(c);
+      };
       const W = win.innerWidth || 390, H = win.innerHeight || 800;
       for (let i = 0; i < n && a.length; i++) {
         const it = a[(pickAt++) % a.length];
@@ -469,12 +611,8 @@
         if (!w) break;
         w.style.setProperty('--rd', (i * 260) + 'ms');
         w.style.setProperty('--rs', (i % 2 ? -1 : 1) * (14 + Math.random() * 16) + 'px');
-        if (it.kind === 'giphy') giphy = true;
-      }
-      if (giphy) {
-        const c = el('span', 'cc-stk-credit cc-party-credit');
-        c.textContent = CREDIT;
-        partyLayer.appendChild(c);
+        const im = it.kind === 'giphy' && w.querySelector('img');
+        if (im) { if (im.complete && im.naturalWidth) credit(); else im.addEventListener('load', guard(credit)); }
       }
     }
 
@@ -496,8 +634,8 @@
           '<div class="cc-stk-head"><h2 id="ccStkTitle">☁ Your stickers</h2>' +
             '<button type="button" class="cc-stk-x" aria-label="Close stickers">×</button></div>' +
           '<p class="cc-stk-note">They peek over your cards, hop when a number goes up and float up at milestones. Tap one to see it bounce.</p>' +
-          '<ul class="cc-stk-grid" aria-label="Your stickers"></ul>' +
-          '<p class="cc-stk-msg" role="status" aria-live="polite"></p>' +
+          // adding and the save status first, so on a phone they are in reach and in view;
+          // the grid (which can be long) comes after
           '<div class="cc-stk-add">' +
             '<button type="button" class="primary cc-stk-up">📷 Upload from phone</button>' +
             '<input type="file" class="cc-stk-file" accept="image/*" multiple hidden>' +
@@ -506,24 +644,29 @@
               '<div class="cc-stk-row"><input id="ccStkLink" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://giphy.com/stickers/…">' +
               '<button type="submit" class="ghost">Add</button></div>' +
             '</form>' +
-            '<button type="button" class="ghost cc-stk-starter">Restore starter pack</button>' +
           '</div>' +
-          '<p class="cc-stk-limits">Up to 24 stickers and about 3 MB altogether. Photos are shrunk to 320 px so they load fast (big animated GIFs become still pictures). Pictures with see-through backgrounds look best.</p>' +
+          '<p class="cc-stk-msg" role="status" aria-live="polite"></p>' +
           '<p class="cc-stk-sync"></p>' +
-          '<p class="cc-stk-credit">' + CREDIT + '</p>' +
+          '<ul class="cc-stk-grid" aria-label="Your stickers"></ul>' +
+          '<button type="button" class="ghost cc-stk-starter">Restore starter pack</button>' +
+          '<p class="cc-stk-limits">Up to 24 stickers and about 3 MB altogether. Photos are shrunk to 320 px so they load fast (big animated GIFs become still pictures). Pictures with see-through backgrounds look best. Your account keeps them all; this device keeps a copy of the GIPHY ones and about 512 KB of your own pictures for offline.</p>' +
+          '<div class="cc-stk-foot"><p class="cc-stk-credit">' + CREDIT + '</p>' +
+            '<button type="button" class="primary cc-stk-done">Done</button></div>' +
         '</div>';
       body.appendChild(sheet);
       $s('.cc-stk-scrim').addEventListener('click', guard(closeSheet));
       $s('.cc-stk-x').addEventListener('click', guard(closeSheet));
+      $s('.cc-stk-done').addEventListener('click', guard(closeSheet));
+      $s('.cc-stk-msg').addEventListener('click', guard(e => { if (e.target.closest && e.target.closest('.cc-stk-undo')) undo(); }));
       $s('.cc-stk-up').addEventListener('click', guard(() => $s('.cc-stk-file').click()));
       $s('.cc-stk-file').addEventListener('change', guard(e => { const f = Array.from(e.target.files || []); e.target.value = ''; addFiles(f); }));
       $s('.cc-stk-giphy').addEventListener('submit', guard(e => { e.preventDefault(); addLink(); }));
       $s('.cc-stk-starter').addEventListener('click', guard(() => {
-        const before = list.length;
-        list = restoreStarter(list, Date.now());
-        const n = list.length - before;
+        const before = sync.list.length;
+        sync.list = restoreStarter(sync.list, Date.now());
+        const n = sync.list.length - before;
         say(n ? 'Added ' + n + ' starter sticker' + (n === 1 ? '' : 's') + ' back.' :
-          (list.length >= MAX_N ? 'Your drawer is full (24) — remove one first.' : 'The starter pack is all here already.'));
+          (sync.list.length >= MAX_N ? 'Your drawer is full (24) — remove one first.' : 'The starter pack is all here already.'));
         if (n) changed();
       }));
       sheet.addEventListener('keydown', guard(onSheetKey));
@@ -542,10 +685,10 @@
         const li = e.target.closest && e.target.closest('.cc-stk-item');
         if (!dragId || !li) return;
         e.preventDefault();
-        const i = list.findIndex(x => x.id === dragId), j = list.findIndex(x => x.id === li.dataset.id);
+        const i = sync.list.findIndex(x => x.id === dragId), j = sync.list.findIndex(x => x.id === li.dataset.id);
         dragId = null;
         if (i < 0 || j < 0 || i === j) return;
-        list = move(list, i, j - i);
+        sync.list = move(sync.list, i, j - i);
         changed();
       }));
       grid.addEventListener('dragend', () => { dragId = null; });
@@ -581,13 +724,36 @@
       if (fab) fab.setAttribute('aria-expanded', 'false');
       if (lastFocus && lastFocus.focus && lastFocus.isConnected) lastFocus.focus(); else if (fab) fab.focus();
     }
-    function say(t, bad) {
+    // `withUndo`: a small Undo button after the message, for as long as the message shows
+    function say(t, bad, withUndo) {
       const m = $s('.cc-stk-msg');
       if (!m) return;
       m.textContent = t || '';
       m.classList.toggle('bad', !!bad);
+      if (!withUndo) lastGone = null;
+      if (t && withUndo) {
+        const u = el('button', 'cc-stk-undo', { type: 'button' });
+        u.textContent = 'Undo';
+        m.appendChild(u);
+      }
       clearTimeout(msgT);
-      if (t) msgT = setTimeout(guard(() => { if (m.textContent === t) m.textContent = ''; }), 7000);
+      if (t) msgT = setTimeout(guard(() => { if (m.textContent.indexOf(t) === 0) { m.textContent = ''; lastGone = null; } }), withUndo ? 8000 : 7000);
+    }
+    let lastGone = null;             // { item, index } of the sticker just removed
+    function undo() {
+      const g = lastGone;
+      lastGone = null;
+      if (!g) return;
+      const ok = canAdd(sync.list, g.item);
+      if (!ok.ok) { say(ok.why, true); return; }
+      const out = sync.list.slice();
+      out.splice(Math.min(g.index, out.length), 0, g.item);
+      sync.list = out;
+      gone.delete(g.item.id);
+      say('Put ' + (g.item.name || 'it') + ' back.');
+      changed();
+      const p = sheet && sheet.querySelector('.cc-stk-item[data-id="' + g.item.id + '"] .cc-stk-prev');
+      if (p) p.focus();
     }
     function paintSync() {
       const s = $s('.cc-stk-sync');
@@ -599,11 +765,11 @@
       const grid = $s('.cc-stk-grid');
       if (!grid || sheet.hidden) return;
       grid.textContent = '';
-      list.forEach((it, i) => {
+      sync.list.forEach((it, i) => {
         const nm = it.name || (it.kind === 'giphy' ? 'GIPHY sticker' : 'your picture');
         const li = el('li', 'cc-stk-item', { draggable: 'true' });
         li.dataset.id = it.id;
-        const pv = el('button', 'cc-stk-prev', { type: 'button', 'aria-label': 'Preview ' + nm + ' (sticker ' + (i + 1) + ' of ' + list.length + ')' });
+        const pv = el('button', 'cc-stk-prev', { type: 'button', 'aria-label': 'Preview ' + nm + ' (sticker ' + (i + 1) + ' of ' + sync.list.length + ')' });
         const cloud = el('span', 'cc-stk-miss', { 'aria-hidden': 'true' });
         cloud.textContent = '☁';
         const img = stickerImg(it, 64, () => { img.remove(); pv.classList.add('missing'); });
@@ -615,25 +781,25 @@
         const l = el('button', '', { type: 'button', 'aria-label': 'Move ' + nm + ' earlier', 'data-act': 'left' });
         l.textContent = '◀'; l.disabled = i === 0;
         const r = el('button', '', { type: 'button', 'aria-label': 'Move ' + nm + ' later', 'data-act': 'right' });
-        r.textContent = '▶'; r.disabled = i === list.length - 1;
+        r.textContent = '▶'; r.disabled = i === sync.list.length - 1;
         mv.appendChild(l); mv.appendChild(r);
         li.appendChild(pv); li.appendChild(rm); li.appendChild(mv);
         grid.appendChild(li);
       });
-      if (!list.length) {
+      if (!sync.list.length) {
         const li = el('li', 'cc-stk-empty');
         li.textContent = 'No stickers yet — upload one, paste a GIPHY link, or restore the starter pack.';
         grid.appendChild(li);
       }
-      const bytes = listBytes(list);
+      const bytes = listBytes(sync.list);
       const lim = $s('.cc-stk-limits');
-      if (lim) lim.dataset.used = list.length + ' of 24 · ' + (bytes < 1048576 ? Math.max(1, Math.round(bytes / 1024)) + ' KB' : (bytes / 1048576).toFixed(1) + ' MB') + ' of 3 MB';
+      if (lim) lim.dataset.used = sync.list.length + ' of 24 · ' + (bytes < 1048576 ? Math.max(1, Math.round(bytes / 1024)) + ' KB' : (bytes / 1048576).toFixed(1) + ' MB') + ' of 3 MB';
     }
     function onGridClick(e) {
       const b = e.target.closest && e.target.closest('button');
       const li = b && b.closest('.cc-stk-item');
       if (!li) return;
-      const i = list.findIndex(x => x.id === li.dataset.id);
+      const i = sync.list.findIndex(x => x.id === li.dataset.id);
       if (i < 0) return;
       const act = b.getAttribute('data-act');
       if (b.classList.contains('cc-stk-prev')) {
@@ -645,16 +811,18 @@
         if (n && !n.disabled) n.focus(); else { const p = sheet.querySelector('.cc-stk-item[data-id="' + id + '"] .cc-stk-prev'); if (p) p.focus(); }
       };
       if (act === 'rm') {
-        const gone = list[i];
-        list = list.filter(x => x.id !== gone.id);
-        say('Removed ' + (gone.name || 'that sticker') + '.');
+        const was = sync.list[i];
+        sync.list = sync.list.filter(x => x.id !== was.id);
+        gone.add(was.id);
+        say('Removed ' + (was.name || 'that sticker') + '.', false, true);
+        lastGone = { item: was, index: i };
         changed();
-        const next = list[Math.min(i, list.length - 1)];
+        const next = sync.list[Math.min(i, sync.list.length - 1)];
         if (next) focusAfter(next.id, 'rm'); else { const u = $s('.cc-stk-up'); if (u) u.focus(); }
-        if (peekItem && peekItem.id === gone.id) placePeek(true, true);
+        if (peekItem && peekItem.id === was.id) placePeek(true, true);
       } else if (act === 'left' || act === 'right') {
-        const id = list[i].id;
-        list = move(list, i, act === 'left' ? -1 : 1);
+        const id = sync.list[i].id;
+        sync.list = move(sync.list, i, act === 'left' ? -1 : 1);
         changed();
         focusAfter(id, act);
       }
@@ -664,9 +832,9 @@
       const id = giphyId(inp.value);
       if (!id) { say('That doesn’t look like a GIPHY link. Open the sticker on giphy.com, copy its link, and paste it here.', true); return; }
       const it = { id: 'g' + id.slice(0, 20) + Date.now().toString(36), kind: 'giphy', src: id, name: 'GIPHY sticker', added: Date.now() };
-      const ok = canAdd(list, it);
+      const ok = canAdd(sync.list, it);
       if (!ok.ok) { say(ok.why, true); return; }
-      list = list.concat([it]);
+      sync.list = sync.list.concat([it]);
       inp.value = '';
       say('Added! It’s at the end of your drawer.');
       changed();
@@ -720,9 +888,9 @@
       for (const f of files) {
         try {
           const it = await fileToSticker(f);
-          const ok = canAdd(list, it);
+          const ok = canAdd(sync.list, it);
           if (!ok.ok) { why = ok.why; break; }
-          list = list.concat([it]);
+          sync.list = sync.list.concat([it]);
           added++;
         } catch (e) { why = (e && e.message) || 'Couldn’t add that picture.'; }
       }
@@ -739,18 +907,24 @@
       renderGrid();
       placePeek(false);
     }
+    // Nothing — no reading, no network, no page-wide observer — until the Cinnamoroll theme
+    // is chosen: a person who never picks it never has stickers saved for them.
     function mount() {
       if (mounted) return;
       mounted = true;
-      if (!list) loadLocal();
+      if (!sync.list) sync.loadLocal();
       buildFab();
+      watch();
       placePeek(true);
+      pull();
     }
     function unmount() {
       if (!mounted) return;
       mounted = false;
+      unwatch();
       closeSheet();
       removePeek();
+      sync.stop();
       if (fab) { fab.remove(); fab = null; }
       if (sheet) { sheet.remove(); sheet = null; }
       if (layer) { layer.remove(); layer = null; }
@@ -759,7 +933,9 @@
       flying.clear();
     }
 
-    /* What it watches. The theme, the room tabs, the answer card appearing, and the party. */
+    /* What it watches. Always: only body's data-theme. While mounted: the room tabs, the
+       answer card appearing, the party, and the peeking sticker's card changing size (so its
+       fit is re-measured whenever the layout settles, not only on the first frame). */
     let hostRaf = 0;
     let reFresh = false, reAnim = false;
     const rehost = (animate, fresh) => {
@@ -771,36 +947,45 @@
         if (mounted) placePeek(a, f);
       }));
     };
-    const mo = new MutationObserver(guard(recs => {
-      let theme = false, roomed = false, host = false, party = null;
-      for (const r of recs) {
-        const t = r.target;
-        if (r.attributeName === 'data-theme' && t === body) theme = true;
-        else if (r.attributeName === 'aria-selected') { if (t.getAttribute('aria-selected') === 'true' && t.matches('[role="tab"][data-room]')) roomed = true; }
-        else if (r.attributeName === 'class') {
-          if (t.id === 'party') party = t.classList.contains('on');
-          else if (t === body && /\bsigned-in\b/.test((t.className || '') + ' ' + (r.oldValue || ''))) host = true;
-        } else if (r.attributeName === 'style') { if (t.id === 'answerCard' || t === peekHost) host = true; }
-      }
-      if (theme) { if (on()) mount(); else unmount(); }
-      if (!mounted) return;
-      if (roomed) rehost(true, true);
-      else if (host) rehost(false);
-      if (party !== null) guard(onParty)(party);
-    }));
-    mo.observe(body, { attributes: true, subtree: true, attributeOldValue: true,
-                       attributeFilter: ['data-theme', 'aria-selected', 'class', 'style'] });
+    const themeMo = new MutationObserver(guard(() => { if (on()) mount(); else unmount(); }));
+    themeMo.observe(body, { attributes: true, attributeFilter: ['data-theme'] });
+    let pageMo = null;
+    function watch() {
+      if (!pageMo) pageMo = new MutationObserver(guard(recs => {
+        let roomed = false, host = false, party = null;
+        for (const r of recs) {
+          const t = r.target;
+          if (r.attributeName === 'aria-selected') { if (t.getAttribute('aria-selected') === 'true' && t.matches('[role="tab"][data-room]')) roomed = true; }
+          else if (r.attributeName === 'class') {
+            if (t.id === 'party') party = t.classList.contains('on');
+            else if (t === body && /\bsigned-in\b/.test((t.className || '') + ' ' + (r.oldValue || ''))) host = true;
+          } else if (r.attributeName === 'style') { if (t.id === 'answerCard' || t === peekHost) host = true; }
+        }
+        if (!mounted) return;
+        if (roomed) rehost(true, true);
+        else if (host) rehost(false);
+        if (party !== null) guard(onParty)(party);
+      }));
+      pageMo.observe(body, { attributes: true, subtree: true, attributeOldValue: true,
+                             attributeFilter: ['aria-selected', 'class', 'style'] });
+      if (ro) { ro.observe(body); }
+    }
+    function unwatch() {
+      if (pageMo) pageMo.disconnect();
+      if (ro) ro.disconnect();
+    }
     win.addEventListener('resize', guard(() => { if (mounted) fitSoon(); }));
+    win.addEventListener('load', guard(() => { if (mounted) fitSoon(); }));
+    try { if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(guard(() => { if (mounted) fitSoon(); })); } catch (e) {}
     doc.addEventListener('cc:increase', guard(onIncrease));
     doc.addEventListener('cc:drawn', guard(onDrawn));
-    doc.addEventListener('cc:stickerstore', guard(() => { if (list) pull(); }));
+    // the page just signed in (or out): the account to talk to has changed
+    doc.addEventListener('cc:stickerstore', guard(() => { if (mounted) pull(); }));
     if (mq) {
       const chg = guard(() => { if (mounted) { if (calm()) clearTimeout(idleT); else idleSoon(); } });
       if (mq.addEventListener) mq.addEventListener('change', chg); else if (mq.addListener) mq.addListener(chg);
     }
 
-    loadLocal();
     if (on()) mount();
-    pull();
   }
 })();

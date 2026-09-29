@@ -178,7 +178,7 @@ console.log('\nin a page — GIPHY unreachable, nothing depends on it');
       return true;
     });
   }
-  const doc = {
+  let doc = {
     documentElement: new Node('html'), hidden: false, activeElement: null,
     createElement: t => new Node(t),
     getElementById: id => doc.documentElement.querySelectorAll('#' + id)[0] || null,
@@ -198,7 +198,7 @@ console.log('\nin a page — GIPHY unreachable, nothing depends on it');
   const store = { data: [], saves: 0 };   // a signed-in account with no stickers yet
   const G = {
     window: { innerWidth: 390, innerHeight: 844, addEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }),
-      ccStickerStore: { get who() { return 'test'; }, load: async () => store.data, save: async l => { store.saves++; store.data = JSON.parse(JSON.stringify(l)); } } },
+      ccStickerStore: { key: 'tt', get who() { return 'test'; }, load: async () => store.data, save: async l => { store.saves++; store.data = JSON.parse(JSON.stringify(l)); } } },
     document: doc,
     localStorage: { m: {}, getItem(k) { return k in this.m ? this.m[k] : null; }, setItem(k, v) { this.m[k] = String(v); } },
     MutationObserver: class { observe() {} },
@@ -236,8 +236,145 @@ console.log('\nin a page — GIPHY unreachable, nothing depends on it');
     !doc.getElementById('answerCard').querySelector('.cc-peek'), rounds + ' rounds');
   check('and the page’s own text is untouched', num.textContent === '35,436 views');
   check('the list was seeded with the starter pack and saved to the account', store.saves >= 1 && Array.isArray(store.data) && store.data.length === 7);
-  check('and cached on the device for an instant next paint', JSON.parse(G.localStorage.getItem('cc_stickers')).length === 7);
+  check('and cached on the device for an instant next paint', JSON.parse(G.localStorage.getItem('cc_stickers:tt')).length === 7 && G.localStorage.getItem('cc_stickers') === null);
   body.setAttribute('data-theme', 'rose');
+
+  // Another theme: stickers.js must not read, write or call the account at all
+  const calls = { load: 0, save: 0 };
+  const doc2 = {
+    documentElement: new Node('html'), hidden: false, activeElement: null,
+    createElement: t => new Node(t),
+    getElementById: id => doc2.documentElement.querySelectorAll('#' + id)[0] || null,
+    querySelectorAll: sel => doc2.documentElement.querySelectorAll(sel),
+    querySelector: sel => doc2.documentElement.querySelector(sel),
+    addEventListener() {}
+  };
+  doc = doc2;
+  const body2 = new Node('body'); doc2.documentElement.appendChild(body2); doc2.body = body2;
+  body2.setAttribute('data-theme', 'rose');
+  const observed = [];
+  const G2 = { ...G, document: doc2,
+    window: { ...G.window, document: doc2, ccStickerStore: { key: 'tt', who: 'test', load: async () => { calls.load++; return { list: [], saved: false }; }, save: async () => { calls.save++; } } },
+    localStorage: { m: {}, getItem(k) { calls.get = (calls.get || 0) + 1; return null; }, setItem(k, v) { this.m[k] = v; } },
+    MutationObserver: class { constructor() {} observe(t, o) { observed.push(o); } disconnect() {} } };
+  new Function(...Object.keys(G2), 'module', SRC)(...Object.values(G2), undefined);
+  await new Promise(r => setImmediate(r));
+  check('in another theme it never calls the account (no load, no save)', calls.load === 0 && calls.save === 0, JSON.stringify(calls));
+  check('…never reads or writes this device’s storage', !calls.get && Object.keys(G2.localStorage.m).length === 0);
+  check('…and watches only the theme attribute, not the whole page', observed.length === 1 && !observed[0].subtree &&
+    JSON.stringify(observed[0].attributeFilter) === '["data-theme"]', JSON.stringify(observed));
+  check('…and adds nothing to the page', body2.children.length === 0);
+}
+
+/* ---------- 4b. the sync engine: the account wins, and is never overwritten by accident ---------- */
+console.log('\nsyncing with the account');
+{
+  const mk = (st, opts = {}) => {
+    const ls = { m: Object.assign({}, opts.ls || {}), getItem(k) { return k in this.m ? this.m[k] : null; }, setItem(k, v) { this.m[k] = String(v); } };
+    const timers = [];
+    const status = [];
+    const sy = S.makeSync({ store: () => st, ls, setTimeout: (f, ms) => { timers.push({ f, ms }); return timers.length; }, clearTimeout() {},
+      now: () => 1, active: () => true, onList() {}, onStatus: (t, bad) => status.push([t, bad]) });
+    return { sy, ls, timers, status, fire: async () => { const t = timers.splice(0); for (const x of t) await x.f(); await new Promise(r => setImmediate(r)); } };
+  };
+  const mine = [
+    { id: 'u1', kind: 'upload', src: 'data:image/png;base64,AAAA', name: 'mine', added: 1 },
+    { id: 'g1', kind: 'giphy', src: 'Abcdefgh0001', name: 'g', added: 1 }
+  ];
+  const acct = (list, extra = {}) => {
+    const a = { key: 'tt', who: 'your TikTok account', data: list ? JSON.parse(JSON.stringify(list)) : null, saved: [], fails: 0,
+      async load() { if (a.fails > 0) { a.fails--; throw Object.assign(new Error('net'), { status: 0 }); } return { list: a.data || [], saved: a.data != null }; },
+      async save(l) { a.saved.push(JSON.parse(JSON.stringify(l))); a.data = JSON.parse(JSON.stringify(l)); } };
+    return Object.assign(a, extra);
+  };
+  const isStarter = l => l.length === 7 && l.every(x => /^st-/.test(x.id));
+
+  // (1) a new device, the account's first load fails, you change something, then it answers
+  {
+    const a = acct(mine); a.fails = 1;
+    const { sy, timers, fire, status } = mk(a);
+    sy.loadLocal();
+    check('a new device paints the starter pack while it waits', isStarter(sy.list));
+    await sy.pull();
+    check('a failed load is reported, and is an error', status.at(-1)[1] === true && /Couldn’t reach your account/.test(status.at(-1)[0]));
+    const edit = sy.list.slice(1);            // remove one starter sticker
+    sy.changed(edit);
+    await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+    await fire();
+    check('nothing was ever saved as the starter pack over the account’s list', a.saved.every(l => !isStarter(l) && l.some(x => x.id === 'u1')), JSON.stringify(a.saved.map(l => l.map(x => x.id))));
+    check('once it answered, the account’s stickers come first and your changes are merged in',
+      sy.pulledOk && sy.list[0].id === 'u1' && sy.list[1].id === 'g1' && sy.list.length === 8, sy.list.map(x => x.id).join());
+    check('and the merged list was saved', a.saved.length >= 1 && JSON.stringify(a.saved.at(-1)) === JSON.stringify(sy.list));
+    check('the sticker you removed here stays removed', !sy.list.some(x => x.id === 'st-JmOCq0T5qEJyZ3oQj8'));
+  }
+  // (2) index.html: edits while the store is not yet signed in, then it signs in
+  {
+    const a = acct(mine); let signedIn = false;
+    const st = { key: 'yt', get who() { return signedIn ? 'your channel' : ''; }, load: (...x) => a.load(...x), save: (...x) => a.save(...x) };
+    const { sy, fire, ls } = mk(st);
+    sy.loadLocal();
+    sy.changed(sy.list.slice(0, 3));
+    await fire();
+    check('signed out, changes stay on this device (nothing sent)', a.saved.length === 0 && JSON.parse(ls.getItem('cc_stickers')).length === 3);
+    signedIn = true;
+    await sy.pull();
+    check('after sign-in the account’s list is kept, merged with what you did here', sy.list[0].id === 'u1' && sy.list.length === 5, sy.list.map(x => x.id).join());
+    check('and what is saved still holds the account’s own uploads', a.saved.length === 1 && a.saved[0].some(x => x.id === 'u1'));
+    check('each account has its own copy on this device', JSON.parse(ls.getItem('cc_stickers:yt')).length === 5 && JSON.parse(ls.getItem('cc_stickers')).length === 3);
+  }
+  // (3) an account that saved an empty drawer on purpose is not re-seeded
+  {
+    const a = acct([]);
+    const { sy } = mk(a);
+    sy.loadLocal();
+    await sy.pull();
+    check('a drawer emptied on purpose stays empty on a new device', sy.list.length === 0 && a.saved.length === 0);
+    const b = acct(null);
+    const m2 = mk(b);
+    m2.sy.loadLocal(); await m2.sy.pull();
+    check('an account that never saved gets the starter pack', isStarter(m2.sy.list) && b.saved.length === 1 && isStarter(b.saved[0]));
+  }
+  // (4) another account's copy on this device never seeds this one
+  {
+    const a = acct(null, { key: 'yt' });
+    const { sy } = mk(a, { ls: { 'cc_stickers:tt': JSON.stringify(mine) } });
+    sy.loadLocal(); await sy.pull();
+    check('the TikTok account’s cached stickers do not seed the YouTube account', isStarter(sy.list) && !a.saved[0].some(x => x.id === 'u1'));
+  }
+  // (5) an older Worker: 200 with something that is not a sticker list
+  {
+    const st = { key: 'yt', who: 'your channel', async load() { return S.readReply({ youtube: {}, generated: 1 }); }, async save() {} };
+    const { sy, status } = mk(st);
+    sy.loadLocal(); await sy.pull();
+    sy.changed(sy.list.slice(1)); await new Promise(r => setImmediate(r));
+    check('an older Worker never reads as "Saved to your account"', !status.some(([t]) => /^Saved to your account/.test(t)), JSON.stringify(status));
+    check('it says plainly the Worker needs updating, not styled as an error', /Worker doesn’t have sticker saving yet/.test(status.at(-1)[0]) && status.at(-1)[1] === false);
+    const st2 = { key: 'yt', who: 'your channel', async load() { return { list: [], saved: false }; },
+      async save() { throw Object.assign(new Error('old-worker'), { code: 'old-worker' }); } };
+    const m2 = mk(st2);
+    m2.sy.loadLocal(); await m2.sy.pull();
+    check('a save the Worker did not confirm is not "Saved to your account"', !m2.status.some(([t]) => /^Saved to your account/.test(t)) &&
+      /Worker doesn’t have/.test(m2.status.at(-1)[0]), JSON.stringify(m2.status));
+    const st3 = { key: 'tt', who: 'x', async load() { throw Object.assign(new Error('404'), { status: 404 }); }, async save() { throw new Error('never'); } };
+    const m3 = mk(st3);
+    m3.sy.loadLocal(); await m3.sy.pull();
+    check('a missing route (404) is a neutral device-only note, and stops asking', /device only/.test(m3.status.at(-1)[0]) && !m3.status.at(-1)[1] && m3.timers.length === 0);
+    let threw = 0;
+    try { S.readReply('x'); } catch (e) { threw = e.code === 'old-worker'; }
+    check('readReply: an array or { list } is a list, anything else is an older Worker', threw &&
+      S.readReply(null) === null && S.readReply([]).saved === null && S.readReply({ list: [], saved: true }).saved === true);
+    check('the pages reject anything but { ok:true } from a save', Object.values(PAGES).every(src => /if \(!\(j && j\.ok === true\)\) throw stickerErr\(r\.status, 'old-worker'\);/.test(src)));
+  }
+  // (6) the device cache stays small
+  {
+    const upl = (i, n) => ({ id: 'u' + i, kind: 'upload', src: 'data:image/png;base64,' + 'A'.repeat(n), name: '', added: 0 });
+    const c = S.cacheList([upl(1, 300000), { id: 'g', kind: 'giphy', src: 'Abcdefgh0001', name: '', added: 0 }, upl(2, 300000), upl(3, 1000)]);
+    check('the device copy keeps every GIPHY sticker and only ~512 KB of uploads', c.trimmed && c.list.map(x => x.id).join() === 'u1,g,u3' &&
+      JSON.stringify(c.list).length <= S.CACHE_CAP);
+    check('the drawer explains it', /about 512 KB of your own pictures/.test(SRC));
+  }
+  check('mergeLists: account order first, then this device’s extras, no duplicate GIPHY ids, removed ones stay gone',
+    S.mergeLists([mine[1], mine[0]], [{ ...mine[1], id: 'other' }, { id: 'n', kind: 'giphy', src: 'Zzzzzzzz0001', name: '', added: 0 }], ['u1']).map(x => x.id).join() === 'g1,n');
 }
 
 /* ---------- 5. wiring, credit, accessibility, safety ---------- */
@@ -254,7 +391,8 @@ check('the Worker has both routes, owner-locked', /if \(p === '\/tiktok\/sticker
   /url\.pathname === '\/stickers'/.test(WORKER) && /verifyOwner\(auth\.startsWith\('Bearer '\)/.test(WORKER) && /'stickers:' \+ owner/.test(WORKER));
 check('the TikTok route sits after the session check', WORKER.indexOf("if (p === '/tiktok/stickers')") > WORKER.indexOf("if (!openId) return json({ error: 'Not signed in to TikTok.' }, 401);"));
 check('the credit is shown in the drawer and on the party', SRC.includes("const CREDIT = 'Stickers via GIPHY · © Sanrio';") &&
-  /<p class="cc-stk-credit">' \+ CREDIT \+ '<\/p>/.test(SRC) && /cc-party-credit/.test(SRC) && /if \(giphy\) \{/.test(SRC));
+  /<p class="cc-stk-credit">' \+ CREDIT \+ '<\/p>/.test(SRC) && /cc-party-credit/.test(SRC) &&
+  /im\.addEventListener\('load', guard\(credit\)\)/.test(SRC));
 check('only active in the cloud theme', /const on = \(\) => body\.getAttribute\('data-theme'\) === 'cloud';/.test(SRC) && /if \(on\(\)\) mount\(\); else unmount\(\);/.test(SRC));
 check('a failure never reaches the page', /try \{ boot\(\); \} catch \(e\)/.test(SRC));
 check('at most 6 stickers on screen', /const MAX_ON_SCREEN = 6;/.test(SRC) && /if \(room\(\) <= 0 \|\| !it\) return null;/.test(SRC));
@@ -282,6 +420,7 @@ const tok = Object.fromEntries([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].ma
 const lum = h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 check('the baby-blue accent reads on a panel (≥4.5:1)', ratio(tok.accent, tok.panel) >= 4.5, ratio(tok.accent, tok.panel).toFixed(2));
+check('the accent also reads straight on the sky-blue ground (≥4.5:1 on --ink)', ratio(tok.accent, tok.ink) >= 4.5, ratio(tok.accent, tok.ink).toFixed(2));
 check('the cheek-pink --live reads on a panel (≥4.5:1)', ratio(tok.live, tok.panel) >= 4.5, ratio(tok.live, tok.panel).toFixed(2));
 
 /* ---------- 7. no Sanrio artwork in the repo ---------- */

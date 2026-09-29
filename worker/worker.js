@@ -1021,6 +1021,11 @@ const STICKER_BYTES = 3.5 * 1024 * 1024;   // the whole stored list, as JSON
 const STICKER_GIPHY = /^[A-Za-z0-9]{8,40}$/;
 const STICKER_UPLOAD = /^data:image\/(?:webp|png|jpeg|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
 const STICKER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// one upload: the page shrinks pictures to 320px and refuses anything over 1.5 MB decoded,
+// which is at most ~2 MB of base64 — so anything longer did not come from the page
+const STICKER_ONE = Math.ceil(1.5 * 1024 * 1024 * 4 / 3) + 64;
+// names are plain words: no control characters or angle brackets (the page's cleanName)
+const STICKER_NAME_BAD = /[\u0000-\u001f<>]/g;
 // → { list } or { status, error }
 function checkStickers(list) {
   if (!Array.isArray(list)) return { status: 400, error: 'list must be an array' };
@@ -1033,16 +1038,20 @@ function checkStickers(list) {
     if (kind !== 'giphy' && kind !== 'upload') return { status: 400, error: 'kind must be giphy or upload' };
     if (typeof src !== 'string') return { status: 400, error: 'bad sticker src' };
     if (kind === 'giphy' && !STICKER_GIPHY.test(src)) return { status: 400, error: 'bad GIPHY id' };
+    if (kind === 'upload' && src.length > STICKER_ONE) return { status: 413, error: 'one picture is over 1.5 MB — shrink it first' };
     if (kind === 'upload' && !STICKER_UPLOAD.test(src)) return { status: 400, error: 'uploads must be a base64 webp/png/jpeg/gif data URL' };
     if (name !== undefined && (typeof name !== 'string' || name.length > 80)) return { status: 400, error: 'bad sticker name' };
     if (added !== undefined && (typeof added !== 'number' || !isFinite(added))) return { status: 400, error: 'bad sticker date' };
     ids.add(id);
-    out.push({ id, kind, src, name: name || '', added: added || 0 });
+    out.push({ id, kind, src, name: (name || '').replace(STICKER_NAME_BAD, '').trim(), added: added || 0 });
   }
   if (JSON.stringify(out).length > STICKER_BYTES) return { status: 413, error: 'stickers are too big — about 3 MB in total' };
   return { list: out };
 }
-// GET → the stored list ('[]' when none); POST { list } → validated, then stored under `key`
+// GET → the stored list ('[]' when none). GET ?meta=1 → { list, saved }, where saved says
+// whether this account has ever stored a list — so a list you emptied on purpose stays empty
+// instead of being re-seeded with the starter pack on a new device.
+// POST { list } → validated, then stored under `key`
 async function stickersRoute(request, env, key) {
   if (request.method === 'POST') {
     let raw = '';
@@ -1056,9 +1065,13 @@ async function stickersRoute(request, env, key) {
     return json({ ok: true, n: c.list.length });
   }
   if (request.method !== 'GET') return json({ error: 'GET/POST only' }, 405);
-  let stored = '[]';
-  try { stored = (await env.MINUTE.get(key)) || '[]'; } catch (e) {}
-  return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+  let stored = null;
+  // a failed read is an error, never an empty list: the page would take '[]' as "no stickers
+  // yet" and could save the starter pack over the real list
+  try { stored = await env.MINUTE.get(key); } catch (e) { return json({ error: 'store read failed' }, 502); }
+  const meta = new URL(request.url).searchParams.get('meta') === '1';
+  const out = meta ? '{"list":' + (stored || '[]') + ',"saved":' + (stored != null) + '}' : (stored || '[]');
+  return new Response(out, { headers: { 'Content-Type': 'application/json', ...CORS } });
 }
 // the YouTube side: the same owner lock as /sync (verifyOwner on the Bearer token), keyed by channel
 async function stickersHandler(request, env) {

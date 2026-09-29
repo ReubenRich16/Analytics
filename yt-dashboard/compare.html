@@ -240,29 +240,40 @@
   /* The Cinnamoroll theme's sticker drawer (stickers.js). This page has no account of its
      own, so it borrows whichever the other two pages left signed in on this device: the
      TikTok session first (/tiktok/stickers), else the YouTube token (/stickers) — the same
-     headers those pages send. Signed in to neither, the list stays on this device. */
+     headers those pages send. Signed in to neither, the list stays on this device. The
+     drawer names which account it is saving to (who), and each account keeps its own copy
+     on this device (key), so the two never overwrite each other.
+     load() asks for { list, saved } (?meta=1) and save() insists on the Worker's { ok:true }:
+     an older Worker without this route answers 200 with something else, and that must never
+     read as "saved to your account". Errors carry .status (404/405 = the route is missing)
+     or .code 'old-worker' so the drawer can say what is really wrong. */
+  function stickerErr(status, code) { const e = new Error('stickers ' + (code || status)); e.status = status; e.code = code || ''; return e; }
   function stickerRoute() {
     if (!workerUrl) return null;
     const base = workerUrl.replace(/\/$/, '');
-    if (ttSession) return { url: base + '/tiktok/stickers', auth: 'Bearer ' + ttSession, who: 'your TikTok account' };
-    if (accessToken) return { url: base + '/stickers', auth: 'Bearer ' + accessToken, who: 'your channel' };
+    if (ttSession) return { url: base + '/tiktok/stickers', auth: 'Bearer ' + ttSession, who: 'your TikTok account', key: 'tt' };
+    if (accessToken) return { url: base + '/stickers', auth: 'Bearer ' + accessToken, who: 'your channel', key: 'yt' };
     return null;
   }
   window.ccStickerStore = {
     get who() { const r = stickerRoute(); return r ? r.who : ''; },
+    get key() { const r = stickerRoute(); return r ? r.key : ''; },
     async load() {
       const s = stickerRoute();
       if (!s) return null;
-      const r = await fetch(s.url, { headers: { Authorization: s.auth } });
-      if (!r.ok) throw new Error('stickers ' + r.status);
-      const j = await r.json();
-      return Array.isArray(j) ? j : null;
+      const r = await fetch(s.url + '?meta=1', { headers: { Authorization: s.auth } });
+      if (!r.ok) throw stickerErr(r.status);
+      const j = await r.json().catch(() => null);
+      if (j && Array.isArray(j.list)) return j;
+      throw stickerErr(r.status, 'old-worker');
     },
     async save(list) {
       const s = stickerRoute();
       if (!s) throw new Error('not signed in');
       const r = await fetch(s.url, { method: 'POST', headers: { Authorization: s.auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ list }) });
-      if (!r.ok) throw new Error('stickers ' + r.status);
+      if (!r.ok) throw stickerErr(r.status);
+      const j = await r.json().catch(() => null);
+      if (!(j && j.ok === true)) throw stickerErr(r.status, 'old-worker');
     }
   };
 

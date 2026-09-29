@@ -129,7 +129,10 @@ data/             recorded history, committed by the robots
   sticker drawer: upload pictures from your phone (shrunk to 320px), paste a GIPHY link,
   reorder, remove, or restore the starter pack. Up to 24 stickers / about 3 MB. They are
   saved to your account through your own Worker (`/stickers` for YouTube, `/tiktok/stickers`
-  for TikTok, owner-locked like `/sync`) and cached on the device. The starter pack is
+  for TikTok, owner-locked like `/sync`); nothing is sent until your account has answered,
+  so a bad connection can never overwrite it. The device keeps a small copy (GIPHY stickers
+  plus about 512 KB of your pictures) per account. An older Worker without the route is
+  detected and the drawer says "on this device only". The starter pack is
   official Sanrio stickers hotlinked from GIPHY (credited "Stickers via GIPHY · © Sanrio");
   no character artwork is stored in this repo. A personal, non-commercial dashboard
 
