@@ -209,10 +209,12 @@ console.log('\nMover — the post that did the work in the last 24 hours');
     return [[last - (opts.spanH || 24) * H, 1000], [last, 1000 + gain]];
   };
   const old = new globalThis.Date(NOW - 90 * 864e5).toISOString();
-  const ytMover = new Function('hist', 'meta', 'videoTitle', 'fmt', 'ATB', 'NOW',
+  const ytMover = new Function('hist', 'meta', 'videoTitle', 'fmt', 'ATB', 'NOW', 'ownIds',
     DateShim + helpers(YT) + grab(YT, 'answerMover') + '\nreturn answerMover;');
   const meta4 = { a: { publishedAt: old }, b: { publishedAt: old }, c: { publishedAt: old }, d: { publishedAt: old } };
-  const run = (hist, meta) => ytMover(hist, meta || meta4, id => 'vid ' + id, fmtUS, atb, NOW)();
+  // own videos = the signed-in channel's upload list; here, whatever meta names
+  const run = (hist, meta, own) => ytMover(hist, meta || meta4, id => 'vid ' + id, fmtUS, atb, NOW,
+    () => new Set(own || Object.keys(meta || meta4)))();
   const res = run({ videos: { a: series(300), b: series(100), c: series(-50), d: series(500, { staleH: 8 }) } });
   check('the biggest mover wins; the flapping counter and the stale series do not vote', res.f === '+300 in 24h', res.f);
   check('its share is of the recorded total, so 300 of 400 is 75%', /75%/.test(res.p), res.p);
@@ -241,6 +243,50 @@ console.log('\nMover — the post that did the work in the last 24 hours');
   const longCap = ttMover({ videos: { a: { s: series(80) } } },
     [{ id: 'a', title: 'Brushing the mic, no talking at all tonight #asmr #tingles #nottalking', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
   check('TikTok — a long caption is cut on a word, with an ellipsis, never mid-hashtag', /“Brushing the mic, no talking at all tonight…”/.test(longCap.p), longCap.p);
+}
+
+console.log('\nYouTube Today — built from your videos, not the lumpy channel total');
+{
+  const NOW = 1786000000000, H = 3600e3;
+  const grab = n => { const i = YT.indexOf('function ' + n + '('); return YT.slice(i, YT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const cst = n => { const i = YT.indexOf('  const ' + n + ' = '); return YT.slice(i, YT.indexOf('\n', i)) + '\n'; };
+  const today = new Function('hist', 'chanId', 'meta', 'videoIds', 'lastTotals', 'fmt', 'NOW', `
+    const Date = { now: () => NOW, parse: s => globalThis.Date.parse(s) };
+    const ATB = (arr, t) => { let v = null; for (const x of arr) { if (x[0] <= t) v = x; else break; } return v; };
+    ${cst('ownIds')}${cst('ordinal')}
+    ${YT.slice(YT.indexOf('  const fmtAgo = ts =>'), YT.indexOf('\n  };\n', YT.indexOf('  const fmtAgo = ts =>')) + 5)}
+    ${grab('dayBuckets')}${grab('weekPlace')}${grab('ownViewSeries')}${grab('answerToday')}
+    return answerToday;`);
+  const fmtUS = new Intl.NumberFormat('en-US');
+  // nine days of hourly robot readings; the channel total sits still for the last two days
+  const chn = [], mine = [], alsoMine = [], theirs = [];
+  for (let h = 9 * 24; h >= 0; h--) {
+    const t = NOW - h * H - 20 * 60e3;
+    chn.push([t, 200, h > 48 ? 128000 + (9 * 24 - h) * 5 : 128165]);
+    mine.push([t, 5000 + (9 * 24 - h) * 10]);
+    // a count that flips to a stale reading every other hour: no extra views
+    alsoMine.push([t, 700 + Math.floor((9 * 24 - h) / 2) * 2 - (h % 2 ? 3 : 0)]);
+    theirs.push([t, 1e6 + (9 * 24 - h) * 1000]);
+  }
+  const hist = { channels: { me: chn }, videos: { mine, alsoMine, theirs } };
+  const r = today(hist, 'me', {}, ['mine', 'alsoMine'], null, fmtUS, NOW)();
+  check('YouTube — a flat channel total does not read "+0 views"', r.f === '+264 views in 24h', r.f);
+  check('YouTube — so the 24 hours are not called the quietest', !/Quietest|quiet 24/.test(r.h), r.h);
+  check('YouTube — another channel\'s videos are left out', !/24,/.test(r.f), r.f);
+  const none = today({ channels: { me: chn }, videos: { theirs } }, 'me', {}, ['mine'], null, fmtUS, NOW)();
+  check('YouTube — with none of your videos recorded, it abstains instead of printing +0', /Still counting/.test(none.h) && !/\+0/.test(none.f), none.f);
+}
+
+console.log('\nYouTube Audience — the average viewer is weighted by views');
+{
+  const i = YT.indexOf('function answerAudience(');
+  const aud = new Function('chanLifetime', 'videoIds', 'rollupMap', 'lastTotals', 'fmt', 'fmtHours',
+    YT.slice(i, YT.indexOf('\n  }\n', i)) + '\n  }\nreturn answerAudience;');
+  const r = aud(null, ['a', 'b'], { a: { avgPct: 80, views28: 20 }, b: { avgPct: 40, views28: 1980 } }, null, new Intl.NumberFormat('en-US'), x => x + 'h')();
+  check('YouTube — a 20-view video does not count as much as a 1,980-view one', r.f === '40% watched', r.f);
+  check('YouTube — and the sentence names its 28-day window', /Over the last 28 days, the average viewer gets through 40% of a video\./.test(r.p), r.p);
+  const lt = aud([0, 100, 0, 55], ['a'], {}, null, new Intl.NumberFormat('en-US'), x => x + 'h')();
+  check('YouTube — the lifetime figure is still used when YouTube supplies it', lt.f === '55% watched', lt.f);
 }
 
 console.log('\ncaptions — whole words, an ellipsis, never a made-up hashtag');
@@ -339,7 +385,7 @@ for (const [src, page, lbl, one, name] of [[YT, 'YouTube', 'subscribers', 'subsc
 console.log('\nSubs — Today\'s sibling on the other axis');
 {
   check('YouTube — it reads column 1 of the channel history, with falls allowed', /dayBuckets\(chn, 1, 8, true\)/.test(YT));
-  check('and the views chip still reads column 2, where a fall is refused', /dayBuckets\(chn, 2, 8\)/.test(YT));
+  check('and the views chip reads the own-video series, where a fall is refused', /dayBuckets\(ownViewSeries\(chn\), 2, 8\)/.test(YT));
   check('the false rounding excuse is gone', !/rounded public subscriber counts/.test(YT) && /the public count dipped for a while/.test(YT));
   const i = YT.indexOf('function dropStaleDips(');
   const drop = new Function(YT.slice(i, YT.indexOf('\n  }\n', i)) + '\n  }\nreturn dropStaleDips;')();

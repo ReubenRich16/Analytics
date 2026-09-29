@@ -389,23 +389,21 @@
   const looksLikeWorkerUrl = u => /^https:\/\/[^ "'<>]+$/.test(u || '');
   let hist = null, histRanks = null, accelSet = new Set();
   const histAtOrBefore = (arr, t) => { let v = null; for (const s of arr) { if (s[0] <= t) v = s; else break; } return v; };
+  // The highest count a video had reached at time t — its high-water mark. YouTube's
+  // per-video counts flip between a fresh and a stale reading, so a dip and the climb back
+  // are not views; the high-water mark ignores both. null when nothing was recorded by t.
+  const histHiAt = (arr, t) => { let v = null; for (const s of arr) { if (s[0] > t) break; v = Math.max(v == null ? -Infinity : v, s[1] || 0); } return v; };
+  /* hist.videos is one flat map across every channel the robot tracks, so the signed-in
+     channel's videos are picked out by its own upload list. meta is no proof of ownership:
+     the Worker's minute pulls create meta for other channels' videos too. */
+  const ownIds = () => new Set(videoIds);
   async function loadHistory() {
     const grab = async f => { try { const r = await fetch(DATA_RAW + f, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (e) { return null; } };
     hist = await grab('history.json');
     // alerts.json is no longer read: the away card computes the same crossings from the
     // recordings themselves, and the robot's GitHub issues still carry the notifications
     histRanks = await grab('ranks.json');
-    accelSet = new Set();
-    if (hist && hist.videos) {
-      const now2 = Date.now();
-      for (const [vid, arr] of Object.entries(hist.videos)) {
-        if (arr.length < 3) continue;
-        const nowS = arr[arr.length - 1];
-        const d1 = histAtOrBefore(arr, now2 - 864e5), d2 = histAtOrBefore(arr, now2 - 2 * 864e5);
-        if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
-        if (nowS[1] - d1[1] >= 50 && nowS[1] - d1[1] >= (d1[1] - d2[1]) * 1.5) accelSet.add(vid);
-      }
-    }
+    buildAccel();
     // history arrives after the first poll, so re-render the panels that depend on it —
     // otherwise the milestone projection is missing until the next refresh
     if (videoIds.length) { seedSnapsFromHistory(); renderTable(); renderCoaching(); loadTrends(); }
@@ -414,16 +412,37 @@
     renderAnswer(); // the "today vs your usual" line needs the recorded history
   }
 
+  /* ⚡ accelerating: the last 24 hours brought at least 50 views and at least 1.5× the 24
+     hours before — and the 24 hours before must have brought some views, as the robot's own
+     rule requires, because any gain is "1.5×" a day that a downward revision made negative.
+     Both days are read on high-water marks, so a stale reading cannot inflate either.
+     Own videos only. */
+  function buildAccel() {
+    accelSet = new Set();
+    if (!hist || !hist.videos) return;
+    const now2 = Date.now(), own = ownIds();
+    for (const [vid, arr] of Object.entries(hist.videos)) {
+      if (!own.has(vid) || !Array.isArray(arr) || arr.length < 3) continue;
+      const nowS = arr[arr.length - 1];
+      const d1 = histAtOrBefore(arr, now2 - 864e5), d2 = histAtOrBefore(arr, now2 - 2 * 864e5);
+      if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
+      const h0 = histHiAt(arr, nowS[0]), h1 = histHiAt(arr, d1[0]), h2 = histHiAt(arr, d2[0]);
+      const r1 = h0 - h1, r0 = h1 - h2;
+      if (r1 >= 50 && r0 > 0 && r1 >= r0 * 1.5) accelSet.add(vid);
+    }
+  }
+
   /* ---------- while you were away ----------
      The TikTok page's card, rebuilt on YouTube's richer recordings, replacing the old
      "Recent milestones" list in Trends (which was the robot's alerts.json re-printed —
      not clickable, not sized to your absence, and blind to anything the alert job
-     didn't happen to catch). Two upgrades the TikTok side cannot make:
+     didn't happen to catch). What it rests on:
 
-       · the headline is EXACT. The robot records the channel's own running totals, so
-         "+12,400 views · +38 subscribers" is a subtraction between two real readings,
-         not a sum of per-post samples.
-       · yesterday's rank is measured on the channel's real daily views.
+       · the headline's views are the rises recorded on your own videos while you were away
+         (each video's high-water mark, the same basis as the biggest hour). The channel's
+         public total updates in lumps and is not used for it. Subscribers are the channel's
+         recorded count, with a stale dip-and-recover reading left out.
+       · yesterday's rank is measured on the channel's daily views, counting only new highs.
 
      Same rules as the TikTok card otherwise: a per-device, per-account stamp of the
      last time the page was open sizes the headline, items newer than it wear a dot,
@@ -468,8 +487,9 @@
     const now = Date.now(), hours = new Map();
     from = Math.max(from, now - 14 * 864e5);
     let total = 0;
+    const own = ownIds();
     for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
-      if (!Array.isArray(arr) || !arr.length) continue;
+      if (!own.has(id) || !Array.isArray(arr) || !arr.length) continue;
       let hi = arr[0][1] || 0, i = 1;
       for (; i < arr.length && arr[i][0] <= from; i++) hi = Math.max(hi, arr[i][1] || 0);
       for (; i < arr.length; i++) {
@@ -492,33 +512,45 @@
   }
 
   /* The feed. Crossings between two recorded samples only — no "you are close to" and no
-     rounding up, both of which would be the page inventing an event. One line per subject
-     (the most recent crossing, which is also the highest), newest first, capped at 8. */
+     rounding up, both of which would be the page inventing an event. A number only counts
+     as crossed when it is above everything the series had already reached (its high-water
+     mark): YouTube's counts dip to a stale reading and come back, and passing 1,000 again
+     after a dip is not news. So the time shown is the FIRST crossing. One line per subject
+     (the most recent crossing, which is also the highest), newest first, capped at 8.
+     Own videos only — the robot records other channels' videos in the same file. */
   function ytAway() {
     const out = [], since = Date.now() - ALERT_DAYS * 864e5;
-    const ladder = (from, to) => {
+    const ladder = (hi, to) => {
       const hits = [];
-      let m = nextMilestone(from);
+      let m = nextMilestone(hi);
       while (m <= to && hits.length < 4) { hits.push(m); m = nextMilestone(m); }
       return hits;
     };
     const chn = chanSeries();
+    let hiS = chn.length ? chn[0][1] || 0 : 0, hiV = chn.length ? chn[0][2] || 0 : 0;
     for (let i = 1; i < chn.length; i++) {
-      if (chn[i][0] < since) continue;
-      for (const m of ladder(chn[i - 1][1] || 0, chn[i][1] || 0)) out.push({ k: 'subs', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' subscribers</b>' });
-      for (const m of ladder(chn[i - 1][2] || 0, chn[i][2] || 0)) {
-        if (m < 1000) continue;   // channel views cross small rungs constantly; only the real ones
-        out.push({ k: 'chviews', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' channel views</b>' });
+      const s = chn[i][1] || 0, v = chn[i][2] || 0;
+      if (chn[i][0] >= since) {
+        for (const m of ladder(hiS, s)) out.push({ k: 'subs', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' subscribers</b>' });
+        for (const m of ladder(hiV, v)) {
+          if (m < 1000) continue;   // channel views cross small rungs constantly; only the real ones
+          out.push({ k: 'chviews', at: chn[i][0], t: 'passed <b>' + fmt.format(m) + ' channel views</b>' });
+        }
       }
+      hiS = Math.max(hiS, s); hiV = Math.max(hiV, v);
     }
+    const own = ownIds();
     for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
+      if (!own.has(id) || !Array.isArray(arr) || !arr.length) continue;
       const title = (videoTitle(id) || '').trim(), thumb = (meta[id] && meta[id].thumb) || '';
+      let hi = arr[0][1] || 0;
       for (let i = 1; i < arr.length; i++) {
-        if (arr[i][0] < since) continue;
-        for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
+        const v = arr[i][1] || 0;
+        if (arr[i][0] >= since) for (const m of ladder(hi, v)) {
           if (m < 100) continue;   // the first hundred views is not news
           out.push({ k: 'v:' + id, id, thumb, at: arr[i][0], t: '<b>' + esc(shortCap(title, 46, 'a video')) + '</b> passed ' + fmt.format(m) + ' views' });
         }
+        hi = Math.max(hi, v);
       }
     }
     const best = new Map();
@@ -526,30 +558,42 @@
     return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
-  // the whole absence in one sentence, exact because the robot records the channel's own
-  // totals — and silent under half an hour, when "while you were away" is theatre
+  /* The whole absence in one sentence — and silent under half an hour, when "while you
+     were away" is theatre.
+       · Views: the rises recorded on your own videos while you were away, each above that
+         video's high-water mark — the same basis as the biggest hour, so the two agree. The
+         channel's public total updates in lumps (it can sit still for a day and then jump),
+         so it would say +0 for an absence full of views.
+       · Subscribers: the channel's recorded count, with a stale dip-and-recover reading
+         dropped (222 → 209 → 223 is the public count lagging, not 13 people leaving). A real
+         loss still shows, −1 included.
+       · Round numbers: how many of your videos crossed one, matching the list below. */
   function ytAwayHeadHtml(list) {
     if (!awaySince || Date.now() - awaySince < AWAY_MIN) return '';
     const bits = [];
-    const chn = chanSeries();
+    const capped = awaySince < Date.now() - 14 * 864e5;
+    const dv = ytGainBuckets(awaySince).total;
+    if (dv > 0) bits.push('<b>+' + fmt.format(dv) + ' views</b> on your videos' + (capped ? ' in the last 14 days' : ''));
+    const chn = dropStaleDips(chanSeries(), 1);
     const a = histAtOrBefore(chn, awaySince), b = chn[chn.length - 1];
     if (a && b && a !== b) {
-      const dv = (b[2] || 0) - (a[2] || 0);
-      if (dv > 0) bits.push('<b>+' + fmt.format(dv) + ' channel views</b>');
       const ds = (b[1] || 0) - (a[1] || 0);
       if (ds) bits.push('<b>' + (ds > 0 ? '+' : '−') + fmt.format(Math.abs(ds)) + ' subscriber' + (Math.abs(ds) === 1 ? '' : 's') + '</b>');
     }
-    const crossed = list.filter(x => x.at >= awaySince).length;
-    if (crossed) bits.push('<b>' + crossed + '</b> round number' + (crossed === 1 ? '' : 's') + ' crossed');
+    const crossed = list.filter(x => x.id && x.at >= awaySince).length;
+    if (crossed) bits.push('<b>' + crossed + '</b> video' + (crossed === 1 ? '' : 's') + ' crossed a round number');
     if (!bits.length) return '';
     return '<p class="explain awayhead">While you were away (<b>' + esc(fmtAgo(awaySince).replace(' ago', '')) + '</b>): ' +
-      bits.join(' · ') + ' — exact, from the channel’s own recorded totals.</p>';
+      bits.join(' · ') + '.</p>';
   }
 
   /* Two moments as plain lines: the biggest recorded hour (naming a carrier only when
-     one video genuinely carried ≥60% of it), and yesterday ranked among the full days
-     behind it — measured on the channel's real daily views. Today never ranks, because
-     it is not finished being a day; the rank abstains below three full days. */
+     one video genuinely carried ≥60% of it), and yesterday ranked among the local
+     calendar days behind it, from midnight 14 days ago. A day is the channel total's NEW
+     highs on that day: the public total flips back and forth (+734, −734, +734), and
+     counting every rise would book the same views two or three times. A day with readings
+     but no new high is a recorded day of +0 and still counts. Today never ranks, because
+     it is not finished being a day; the rank abstains below three recorded days. */
   function ytMomentsHtml() {
     const rows = [];
     const from = awaySince && Date.now() - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
@@ -568,20 +612,32 @@
         at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
     }
     const chn = chanSeries(), day = new Map();
-    for (let i = 1; i < chn.length; i++) {
-      if (chn[i][0] < Date.now() - ALERT_DAYS * 864e5) continue;
-      const d = (chn[i][2] || 0) - (chn[i - 1][2] || 0);
-      if (d <= 0) continue;   // a channel total that went backwards is a revision, not a day
+    const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - ALERT_DAYS);
+    let hi = null, firstDay = null;
+    for (let i = 0; i < chn.length; i++) {
+      const v = chn[i][2] || 0;
+      if (chn[i][0] < start.getTime()) { hi = hi == null ? v : Math.max(hi, v); continue; }
       const k = new Date(chn[i][0]).toLocaleDateString('en-CA');
-      day.set(k, (day.get(k) || 0) + d);
+      // with no reading before the window, the first day's start is unknown: it counts from
+      // its first reading, so it is part-recorded and does not rank
+      if (hi == null) { hi = v; firstDay = k; }
+      day.set(k, (day.get(k) || 0) + Math.max(0, v - hi));
+      hi = Math.max(hi, v);
     }
+    if (firstDay) day.delete(firstDay);
     const y = new Date(); y.setDate(y.getDate() - 1);
     const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
     const done = [...day.entries()].filter(([k]) => k !== tk);
     if (done.length >= 3 && day.has(yk)) {
-      const rank = done.filter(([, v]) => v > day.get(yk)).length + 1;
-      rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
-        (rank === 1 ? 'your best day' : ordinal(rank) + ' best of ' + done.length + ' recorded days'), at: '' });
+      const yv = day.get(yk), N = done.length;
+      const rank = done.filter(([, v]) => v > yv).length + 1;
+      const q = done.filter(([, v]) => v < yv).length + 1;
+      const tail = ' of the last ' + N + ' recorded days';
+      rows.push({ t: 'Yesterday: <b>+' + fmt.format(yv) + ' views</b> — ' +
+        (rank === 1 && q === 1 ? 'level with every other day' + tail
+          : rank === 1 ? 'your best' + tail
+          : rank > N / 2 ? (q === 1 ? 'your quietest' : ordinal(q) + ' quietest') + tail
+          : ordinal(rank) + ' best' + tail), at: '' });
     }
     if (!rows.length) return '';
     return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
@@ -594,7 +650,7 @@
     if (!hist) { card.style.display = 'none'; return; }   // no recordings, no card — Trends explains the unlock
     card.style.display = 'block';
     const list = ytAway();
-    const accel = [...accelSet].filter(id => meta[id]);
+    const own = ownIds(), accel = [...accelSet].filter(id => own.has(id) && meta[id]);
     let html = ytAwayHeadHtml(list);
     if (accel.length) {
       html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">⚡ ' +
@@ -656,9 +712,13 @@
     const N = 12, times = [];
     for (let i = 0; i < N; i++) times.push(t0 + (t1 - t0) * i / (N - 1));
     const chanSeries = idx => times.map(t => { const s = histAtOrBefore(chn, t); return s ? s[idx] : null; }).filter(v => v != null);
+    const own = ownIds();
     const sumSeries = idx => times.map(t => {
       let tot = 0, any = false;
-      for (const arr of Object.values((hist && hist.videos) || {})) { const s = histAtOrBefore(arr, t); if (s) { tot += s[idx] || 0; any = true; } }
+      for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
+        if (!own.has(id)) continue;   // the robot's file holds other channels' videos too
+        const s = histAtOrBefore(arr, t); if (s) { tot += s[idx] || 0; any = true; }
+      }
       return any ? tot : null;
     }).filter(v => v != null);
     // a flat line says nothing and just adds ink — only draw one that actually moves
@@ -937,7 +997,7 @@
       } catch (e) {}
     }
 
-    prevTotals = null; sessionStart = null; history = []; perVideo = {}; paused = false;
+    prevTotals = null; sessionStart = null; history = []; perVideo = {}; paused = false; velHi = null;
     restoreVel();   // a quick reload resumes the velocity card instead of zeroing it
     $('setupPanel').style.display = 'none';
     $('channelBanner').style.display = 'flex';
@@ -1204,6 +1264,9 @@
   const VEL_RESUME = 30 * 60e3;
   const velKey = () => 'yt_vel:' + (chanId || '');
   let velBackfilled = 0, velSeeded = false;
+  // the strip's high-water mark: a live bar is the rise above the highest total seen, so a
+  // revision down and its climb back are not drawn as a spike of new views
+  let velHi = null;
   function saveVel() {
     if (!chanId || !sessionStart) return;
     try {
@@ -1232,19 +1295,25 @@
     for (const [id, p] of Object.entries(saved.perVideo || {})) perVideo[id] = { ...p, tickV: 0 };
     velSeeded = true;
   }
+  /* The faded bars: per-minute rises on your own newest uploads (the Worker samples only
+     those), from readings exactly one minute apart — a wider step is not a minute and would
+     pile several minutes into one bar. A rise counts only above the video's high-water mark,
+     so a dip to a stale reading and the climb back are not views. */
   function backfillBars() {
-    const now = Date.now(), bars = new Array(MAX_BARS).fill(0);
+    const now = Date.now(), bars = new Array(MAX_BARS).fill(0), own = ownIds();
     let any = false;
     for (const [vid, arr] of Object.entries(snaps)) {
       const m = meta[vid];
-      if (!m || !arr || arr.length < 2) continue;
+      if (!own.has(vid) || !m || !arr || arr.length < 2) continue;
       const pub = new Date(m.publishedAt).getTime();
       if (!pub) continue;
+      let hi = arr[0][1];
       for (let i = 1; i < arr.length; i++) {
-        if (arr[i][0] - arr[i - 1][0] > 2) continue;   // not minute data — no vote
+        const d = arr[i][1] - hi;
+        if (d > 0) hi = arr[i][1];
+        if (arr[i][0] - arr[i - 1][0] !== 1) continue;   // not a one-minute pair — no vote
         const slot = Math.floor((now - (pub + arr[i][0] * 60e3)) / 60e3);
         if (slot < 0 || slot >= MAX_BARS) continue;
-        const d = arr[i][1] - arr[i - 1][1];
         if (d > 0) { bars[MAX_BARS - 1 - slot] += d; any = true; }
       }
     }
@@ -1307,6 +1376,7 @@
       else if (newlySeen.views || newlySeen.likes || newlySeen.comments) {
         sessionStart.views += newlySeen.views; sessionStart.likes += newlySeen.likes; sessionStart.comments += newlySeen.comments;
         if (prevTotals) { prevTotals.views += newlySeen.views; prevTotals.likes += newlySeen.likes; prevTotals.comments += newlySeen.comments; }
+        if (velHi != null) velHi += newlySeen.views;
       }
 
       [['viewsNum','viewsDelta','views'],['likesNum','likesDelta','likes'],['subsNum','subsDelta','subs'],['commentsNum','commentsDelta','comments']].forEach(([n, dl, k]) => {
@@ -1332,7 +1402,9 @@
       renderAnswer();
 
       if (prevTotals) {
-        history.push(Math.max(0, totals.views - prevTotals.views));
+        if (velHi == null) velHi = prevTotals.views;
+        history.push(Math.max(0, totals.views - velHi));
+        velHi = Math.max(velHi, totals.views);
         if (history.length > MAX_BARS) {
           history.shift();
           if (velBackfilled > 0) velBackfilled--;   // faded bars age out of the left edge
@@ -1348,7 +1420,8 @@
           const b = document.createElement('div');
           b.className = 'bar' + (v === 0 ? ' zero' : '') + (back ? ' back' : '');
           b.style.height = Math.max(3, Math.round((v / max) * 100)) + '%';
-          b.title = '+' + fmt.format(v) + ' views' + (back ? ' — recorded before this tab opened' : '');
+          b.title = '+' + fmt.format(v) + (v === 1 ? ' view' : ' views') +
+            (back ? ' on your newest upload(s) in that minute — recorded before this tab opened' : '');
           wrap.appendChild(b);
         });
       }
@@ -1440,7 +1513,7 @@
     const at = (row, name) => { const i = M.indexOf(name); return i < 0 ? null : row[i + 1]; };
     for (const r of c.rows || []) rollupMap[r[0]] = {
       avgPct: at(r, 'averageViewPercentage'), subs: at(r, 'subscribersGained'), shares: at(r, 'shares'),
-      likes28: at(r, 'likes'), dislikes: at(r, 'dislikes'), saves: at(r, 'videosAddedToPlaylists')
+      views28: at(r, 'views'), likes28: at(r, 'likes'), dislikes: at(r, 'dislikes'), saves: at(r, 'videosAddedToPlaylists')
     };
     dislikesOk = M.includes('dislikes');
     savesOk = M.includes('videosAddedToPlaylists');
@@ -3594,11 +3667,35 @@
       : '';
     return { h: verdict, f: signed(t) + ' ' + u(t) + ' in 24h', p: usual + vs + wk + note };
   }
+  /* The views the chip ranks. The channel's public view total updates in lumps — it sat on
+     128,165 from Sunday evening to Tuesday morning while the videos' own counts rose by
+     hundreds — so a 24-hour window on it read "+0 views, your quietest" on busy days. So
+     the series is built from the robot's per-video recordings instead: at each robot reading,
+     every one of your own videos at its high-water mark (a dip to a stale reading and the
+     climb back are not views), summed. A video counts from its first reading, or from zero
+     when that reading came within three hours of it going up. The Mover and the biggest
+     hour read the same recordings, so the three agree. */
+  function ownViewSeries(chn) {
+    const own = ownIds(), vids = (hist && hist.videos) || {}, from = Date.now() - 10 * 864e5;
+    const times = chn.map(x => x[0]).filter(t => t >= from);
+    const tot = times.map(() => 0), seen = times.map(() => false);
+    for (const [id, arr] of Object.entries(vids)) {
+      if (!own.has(id) || !Array.isArray(arr) || !arr.length) continue;
+      const born = meta[id] ? Date.parse(meta[id].publishedAt) || 0 : 0;
+      const base = born && arr[0][0] - born <= 3 * 3600e3 ? 0 : (arr[0][1] || 0);
+      let j = 0, hi = null;
+      for (let k = 0; k < times.length; k++) {
+        while (j < arr.length && arr[j][0] <= times[k]) { hi = Math.max(hi == null ? -Infinity : hi, arr[j][1] || 0); j++; }
+        if (hi != null) { tot[k] += hi - base; seen[k] = true; }
+      }
+    }
+    return times.map((t, k) => [t, 0, seen[k] ? tot[k] : null]).filter(x => x[2] != null);
+  }
   function answerToday() {
     const chn = hist && ((hist.channels && hist.channels[chanId]) || hist.channel);
     if (!chn || chn.length < 3) return { h: 'Still watching.', f: fmt.format((lastTotals && lastTotals.views) || 0), p: 'Total views so far. Once the history robot has a couple of days recorded, this turns into how the last 24 hours compare with your usual.' };
     // rolling 24-hour windows, not calendar days — the words say "24 hours" to match
-    const b = dayBuckets(chn, 2, 8);
+    const b = dayBuckets(ownViewSeries(chn), 2, 8);
     const latest = chn[chn.length - 1];
     if (!b[0] || !b[0].ok) {
       // three different reasons, and only one of them fills in by itself
@@ -3646,12 +3743,21 @@
   }
   function answerAudience() {
     const lt = chanLifetime;
-    const pcts = videoIds.map(id => (rollupMap[id] || {}).avgPct).filter(x => x != null);
-    const ret = lt && lt[3] != null ? lt[3] : (pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null);
+    // Without the lifetime figure, each video's 28-day average is weighted by its 28-day
+    // views: a plain mean would let a 20-view video count as much as a 20,000-view one,
+    // and that is not "the average viewer".
+    let wSum = 0, wViews = 0;
+    for (const id of videoIds) {
+      const ru = rollupMap[id] || {};
+      if (ru.avgPct == null || !(ru.views28 > 0)) continue;
+      wSum += ru.avgPct * ru.views28; wViews += ru.views28;
+    }
+    const life = !!(lt && lt[3] != null);
+    const ret = life ? lt[3] : (wViews > 0 ? wSum / wViews : null);
     if (ret == null) return { h: 'Still loading.', f: fmt.format((lastTotals && lastTotals.subs) || 0), p: 'Subscribers so far. Retention and watch time arrive with YouTube’s official stats, which lag a day or two.' };
     const verdict = ret >= 60 ? 'They stay.' : ret >= 40 ? 'They mostly stay.' : 'They drift off.';
     const extra = lt ? ' Across everything you’ve posted that’s ' + fmtHours(lt[1]) + ' of watch time.' : '';
-    return { h: verdict, f: Math.round(ret) + '% watched', p: 'The average viewer gets through ' + Math.round(ret) + '% of a video.' + extra + ' Country, device and age breakdowns live in each video’s full breakdown — open any row in the table.' };
+    return { h: verdict, f: Math.round(ret) + '% watched', p: (life ? 'The average viewer gets through ' : 'Over the last 28 days, the average viewer gets through ') + Math.round(ret) + '% of a video.' + extra + ' Country, device and age breakdowns live in each video’s full breakdown — open any row in the table.' };
   }
   function answerNext() {
     const pubs = videoIds.map(id => meta[id] && new Date(meta[id].publishedAt).getTime()).filter(Boolean).sort((a, b) => b - a);
@@ -3711,8 +3817,9 @@
     const vids = (hist && hist.videos) || {};
     const now = Date.now();
     let total = 0, best = null, n = 0;
+    const own = ownIds();
     for (const [id, arr] of Object.entries(vids)) {
-      if (!meta[id] || !arr || !arr.length) continue;
+      if (!own.has(id) || !meta[id] || !arr || !arr.length) continue;
       const latest = arr[arr.length - 1];
       if (now - latest[0] > 6 * 3600e3) continue;
       // a video published inside the window starts from zero at the moment it went up —

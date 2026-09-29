@@ -195,8 +195,9 @@ console.log('\na hole in the recording');
 
 console.log('\nthe YouTube gain buckets follow the same rules');
 {
-  const G = new Function('hist', 'NOW', `
+  const G = new Function('hist', 'NOW', 'OWN', `
     const Date = globalThis.Date; const realNow = Date.now;
+    const ownIds = () => new Set(OWN || Object.keys(hist.videos || {}));
     ${lift(YT, 'function ytGainBuckets(from)')}
     return from => { Date.now = () => NOW; try { return ytGainBuckets(from); } finally { Date.now = realNow; } };`);
   const arr = [[T0, 998], [T0 + 10 * MIN, 1002], [T0 + 20 * MIN, 998], [T0 + 30 * MIN, 1002], [T0 + 40 * MIN, 1010],
@@ -207,6 +208,9 @@ console.log('\nthe YouTube gain buckets follow the same rules');
   check('a jump across a day-long gap goes in no hour, only the total', g.total === 502, g.total);
   const old = G({ videos: { v: [[NOW - 20 * DAY, 10], [NOW - 20 * DAY + 10 * MIN, 50]] } }, NOW)(NOW - 30 * DAY);
   check('nothing older than 14 days is read as an hour', old.hours.size === 0 && old.total === 0, old.total);
+  // the robot's file holds every tracked channel's videos in one map
+  const two = G({ videos: { v: arr, other: [[T0, 100], [T0 + 10 * MIN, 900]] } }, NOW, ['v'])(T0 - HOUR);
+  check('another channel\'s video is not counted as yours', two.total === 502 && ![...two.hours.values()].some(b => b.byPost.has('other')), two.total);
 }
 
 console.log('\nround numbers are news only the first time');

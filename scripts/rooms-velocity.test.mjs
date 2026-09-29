@@ -472,7 +472,9 @@ console.log('\nwhile you were away — the YouTube mirror');
   /* The feed: crossings between two recorded samples only, same ladder as the milestone
      party, one line per subject, video rows tappable with their thumbnails. */
   const feed = YT.slice(YT.indexOf('function ytAway()'), YT.indexOf('\n  }\n', YT.indexOf('function ytAway()')));
-  check('crossings come from consecutive recorded samples', /ladder\(chn\[i - 1\]\[1\] \|\| 0, chn\[i\]\[1\] \|\| 0\)/.test(feed));
+  check('crossings are tested against each series\' high-water mark', /ladder\(hiS, s\)/.test(feed) && /ladder\(hi, v\)/.test(feed) &&
+    /hi = Math\.max\(hi, v\);/.test(feed));
+  check('the feed reads your own videos only', /if \(!own\.has\(id\)/.test(feed));
   check('small rungs are not news — 100 for a video, 1,000 for channel views',
     /if \(m < 100\) continue;/.test(feed) && /if \(m < 1000\) continue;/.test(feed));
   check('one line per subject, capped at eight',
@@ -484,11 +486,14 @@ console.log('\nwhile you were away — the YouTube mirror');
   check('rows are real keyboard buttons and the handler is wired once',
     /role="button" tabindex="0" data-vid="/.test(rw) && /el\.dataset\.wired/.test(rw));
 
-  /* The richer half: the headline is EXACT (the robot records the channel's own totals),
-     and yesterday is ranked on the channel's real daily views. */
+  /* The headline's views come from your own videos' recordings (the channel total moves in
+     lumps), subscribers from the channel count with stale dips dropped — and nothing is
+     called "exact". Yesterday is ranked on the channel's new daily highs. */
   const head = YT.slice(YT.indexOf('function ytAwayHeadHtml('), YT.indexOf('\n  }\n', YT.indexOf('function ytAwayHeadHtml(')));
-  check('the headline subtracts two real channel readings',
-    /\(b\[2\] \|\| 0\) - \(a\[2\] \|\| 0\)/.test(head) && /histAtOrBefore\(chn, awaySince\)/.test(head));
+  check('the headline views are the own-video rises, the biggest hour\'s basis',
+    /ytGainBuckets\(awaySince\)\.total/.test(head) && /histAtOrBefore\(chn, awaySince\)/.test(head) &&
+    /dropStaleDips\(chanSeries\(\), 1\)/.test(head));
+  check('and it no longer claims to be exact', !/exact/.test(head));
   check('a subscriber drop shows signed, not clamped', /ds > 0 \? '\+' : '−'/.test(head));
   check('and it stays silent for a short absence or an empty one',
     /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
@@ -513,7 +518,7 @@ console.log('\nvelocity survives a reload');
     check(page + ' — a quick reload resumes; a long gap does not', /VEL_RESUME = 30 \* 60e3/.test(src) &&
       /Date\.now\(\) - saved\.at <= VEL_RESUME/.test(src));
     check(page + ' — backfill only trusts minute-resolution samples',
-      page === 'YouTube' ? /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2\) continue;/.test(src)
+      page === 'YouTube' ? /arr\[i\]\[0\] - arr\[i - 1\]\[0\] !== 1\) continue;/.test(src) && /if \(!own\.has\(vid\)/.test(src)
                          : /arr\[i\]\[0\] - arr\[i - 1\]\[0\] > 2 \* 60e3\) continue;/.test(src));
     check(page + ' — the silent lead-in is trimmed, not shown as a wall of zeros',
       /while \(s < bars\.length && bars\[s\] === 0\) s\+\+;/.test(src));
@@ -807,6 +812,75 @@ console.log('\nbest time to post is answered in exactly one place');
     check(page + ' — hour labels read as a clock', hourLabel(0) === '12am–1am' && hourLabel(15) === '3pm–4pm' && hourLabel(23) === '11pm–12am',
       [hourLabel(0), hourLabel(15), hourLabel(23)].join(' / '));
   }
+}
+
+/* YouTube's away card, run on fixtures shaped like the robot's history.json: one flat map
+   of videos across every tracked channel, per-video counts that flip between a fresh and a
+   stale reading, and a channel total that moves in lumps and flips back and forth. */
+console.log('\nYouTube away card — own videos, new highs, no "exact"');
+{
+  const body = n => { const i = YT.indexOf('function ' + n + '('); return YT.slice(i, YT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const cst = n => { const i = YT.indexOf('  const ' + n + ' = '); return YT.slice(i, YT.indexOf('\n', i)) + '\n'; };
+  const MIN = 60e3, HOUR = 3600e3, DAY = 864e5;
+  // noon local, so local-day arithmetic in the fixtures is unambiguous
+  const noon = new Date(); noon.setHours(12, 0, 0, 0);
+  const NOW = noon.getTime();
+  const make = new Function('hist', 'videoIds', 'meta', 'awaySince', 'NOW', `
+    const RealDate = globalThis.Date;
+    class Date extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } }
+    const fmt = new Intl.NumberFormat('en-US'), esc = s => String(s), chanId = 'me';
+    const videoTitle = id => (meta[id] && meta[id].title) || id;
+    const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3;
+    let accelSet = new Set();
+    ${cst('histAtOrBefore')}${cst('histHiAt')}${cst('ownIds')}${cst('chanSeries')}${cst('ordinal')}
+    ${YT.slice(YT.indexOf('  const clip = (s, n) =>'), YT.indexOf('\n  };\n', YT.indexOf('  const shortCap = ')) + 5)}
+    ${YT.slice(YT.indexOf('  const fmtAgo = ts =>'), YT.indexOf('\n  };\n', YT.indexOf('  const fmtAgo = ts =>')) + 5)}
+    ${body('nextMilestone')}${body('dropStaleDips')}${body('ytGainBuckets')}${body('ytAway')}
+    ${body('ytAwayHeadHtml')}${body('ytMomentsHtml')}${body('buildAccel')}
+    return { ytAway, ytAwayHeadHtml, ytMomentsHtml, buildAccel: () => (buildAccel(), accelSet) };`);
+  const T = NOW - 10 * HOUR;
+  // "mine" crosses 1,000, dips to a stale 998, comes back: one crossing, the first one
+  const mine = [[T - DAY, 900], [T, 990], [T + 20 * MIN, 1002], [T + 40 * MIN, 998], [T + 60 * MIN, 1004], [T + 80 * MIN, 1010]];
+  const other = [[T - DAY, 100], [T, 200], [T + 20 * MIN, 5200]];
+  const chn = [[T - DAY, 222, 50000], [T, 222, 50000], [T + 60 * MIN, 209, 50000], [T + 120 * MIN, 223, 50000], [NOW - HOUR, 223, 50000]];
+  const hist = { channels: { me: chn }, videos: { mine, other } };
+  const meta = { mine: { title: 'My video', thumb: '' }, other: { title: 'Not mine', thumb: '' } };
+  const M = make(hist, ['mine'], meta, T - 30 * MIN, NOW);
+  const feed = M.ytAway();
+  check('YouTube — another channel\'s video never reaches the feed', !feed.some(a => a.id === 'other'), JSON.stringify(feed));
+  const hit = feed.find(a => a.id === 'mine');
+  check('YouTube — a re-crossing after a stale dip is not news: the first crossing is shown',
+    !!hit && hit.at === T + 20 * MIN, hit ? String(hit.at - T) : 'none');
+  const h = M.ytAwayHeadHtml(feed);
+  check('YouTube — the headline counts views on your own videos, rises above the high-water mark only',
+    /\+20 views<\/b> on your videos/.test(h), h);
+  check('YouTube — a stale subscriber dip (222 → 209 → 223) nets to +1, singular', /\+1 subscriber<\/b>/.test(h) && !/13|14 sub/.test(h), h);
+  check('YouTube — the headline counts videos that crossed, and never says exact',
+    /<b>1<\/b> video crossed a round number/.test(h) && !/exact/.test(h), h);
+  const drop = make({ channels: { me: [[T - DAY, 235, 1], [T, 235, 1], [NOW - HOUR, 234, 1]] }, videos: {} }, [], {}, T - 30 * MIN, NOW).ytAwayHeadHtml([]);
+  check('YouTube — a real loss of one still shows', /−1 subscriber<\/b>/.test(drop), drop);
+
+  // the channel total flips +734 / −734 three times in a day: that day is +734, not +2,202
+  const day = k => { const d = new Date(NOW); d.setDate(d.getDate() - k); d.setHours(9, 0, 0, 0); return d.getTime(); };
+  const flips = [[day(6), 1, 1000], [day(5), 1, 1100], [day(4), 1, 1300], [day(3), 1, 1350], [day(2), 1, 1400]];
+  const y = day(1);
+  for (const [dt, v] of [[0, 1400], [HOUR, 2134], [2 * HOUR, 1400], [3 * HOUR, 2134], [4 * HOUR, 1400], [5 * HOUR, 2134]]) flips.push([y + dt, 1, v]);
+  flips.push([NOW - HOUR, 1, 2134]);
+  const mom = make({ channels: { me: flips }, videos: {} }, [], {}, null, NOW).ytMomentsHtml();
+  check('YouTube — yesterday counts only new highs, so a flipping total is not booked three times',
+    /Yesterday: <b>\+734 views<\/b>/.test(mom), mom);
+  check('YouTube — rank 1 names its pool: the best of the last N recorded days',
+    /your best of the last 5 recorded days/.test(mom), mom);
+  const quiet = flips.slice(0, 5).concat([[y, 1, 1400], [y + HOUR, 1, 1410], [NOW - HOUR, 1, 1410]]);
+  const mq = make({ channels: { me: quiet }, videos: {} }, [], {}, null, NOW).ytMomentsHtml();
+  check('YouTube — the bottom of the pool is called quietest, not "5th best"', /your quietest of the last 5 recorded days/.test(mq), mq);
+
+  // ⚡: +60 today after a day the count was revised down is not "accelerating"
+  const rev = [[NOW - 3 * DAY, 1300], [NOW - 2 * DAY, 1300], [NOW - DAY, 1000], [NOW - 10 * MIN, 1060]];
+  const grow = [[NOW - 3 * DAY, 1000], [NOW - 2 * DAY, 1000], [NOW - DAY, 1030], [NOW - 10 * MIN, 1100]];
+  const acc = make({ channels: { me: chn }, videos: { rev, grow, notmine: grow } }, ['rev', 'grow'], {}, null, NOW).buildAccel();
+  check('YouTube — ⚡ never follows a downward revision', !acc.has('rev'), [...acc].join(','));
+  check('YouTube — ⚡ still marks a real speed-up, on your own videos only', acc.has('grow') && !acc.has('notmine'), [...acc].join(','));
 }
 
 /* Two grids of the same cells, over different stretches of a video's life. */
