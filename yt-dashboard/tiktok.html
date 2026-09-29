@@ -193,7 +193,7 @@
 
   <div class="card" id="alertsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
-    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the hours nobody had this page open. <b>Tap any post to open its full breakdown.</b></p>
+    <p class="explain" style="margin-top:8px">Round numbers your account and your posts crossed recently, and anything picking up speed. Built from your Worker's own recordings, so it covers the time nobody had this page open, up to the last two weeks. <b>Tap any post to open its full breakdown.</b></p>
     <div id="alertsContent"><p class="dnote">checking…</p></div>
   </div>
 
@@ -273,7 +273,7 @@
   <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings -->
   <div class="card" id="recTrendsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Trends — from your own recordings</div>
-    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from what your Worker recorded: nothing fetched, nothing guessed, and a gap in the recording stays a gap.</p>
+    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from what your Worker recorded, with nothing fetched. A gap in the recording is left out, not guessed.</p>
     <div id="recTrendsContent"><p class="dnote">compiling…</p></div>
   </div>
 
@@ -420,15 +420,17 @@
     for (const [id, rec] of Object.entries(vids)) {
       if (!rec || !rec.create_time) continue;
       const c = pjCurveOf(id, rec.create_time, rec);
-      cands.push({ curve: c, age: Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000)) });
-      const r = pjRef(c); if (r) refs.push(r);
+      cands.push({ id, curve: c, age: Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000)) });
+      const r = pjRef(c); if (r) refs.push({ id, ...r });
     }
     scoreCache = new Map();
     for (const v of videos) {
       const rec = vids[v.id], c = rec ? pjCurveOf(v.id, rec.create_time, rec) : null;
       const ageM = Math.max(0, Math.round((Date.now() - v.create_time * 1000) / 60000));
+      // Excluded by id, as renderProjection does. pjCurveOf builds a fresh array on every
+      // call, so an identity test never matched and a 44-48h post voted on its own share.
       scoreCache.set(v.id, pjScore(c, ageM, v.view_count || 0,
-        refs.filter(r => r.c !== c), cands.filter(cc => cc.curve !== c)));
+        refs.filter(r => r.id !== v.id), cands.filter(cc => cc.id !== v.id)));
     }
   }
   const scoreOf = v => (scoreCache && scoreCache.has(v.id)) ? scoreCache.get(v.id) : null;
@@ -1148,6 +1150,9 @@
       const h = JSON.parse(localStorage.getItem(histKey(openId)) || 'null');
       if (h && h.videos) { hist = h; histSince = newestTs(h); }
     } catch (e) { /* corrupt or unavailable — start from the server */ }
+    // stores saved before launch points were stamped at their real age still hold the
+    // early copies; this clears them (see dropEarlyLaunchPts), and costs nothing once clean
+    for (const r of Object.values(hist.videos || {})) if (r && Array.isArray(r.s)) r.s = dropEarlyLaunchPts(r.s);
     // the old device-wide key cannot be attributed to an account, so it goes rather than
     // being adopted by whoever happens to sign in first. The Worker re-serves this window.
     try { localStorage.removeItem('tt_hist'); } catch (e) {}
@@ -1161,6 +1166,7 @@
         if (st) {
           const h2 = JSON.parse(st);
           if (h2 && h2.videos) {
+            for (const r of Object.values(h2.videos)) if (r && Array.isArray(r.s)) r.s = dropEarlyLaunchPts(r.s);
             hist = h2; histSince = newestTs(h2);
             localStorage.setItem(histKey(openId), st);
           }
@@ -1169,11 +1175,46 @@
       } catch (e) { try { localStorage.removeItem(TT_STAGE); } catch (e2) {} }
     }
   }
+  /* Launch points that sit among raw recordings, stamped early.
+
+     /tiktok/launches used to stamp each five-minute bucket's MAX at the bucket's START,
+     about four minutes before the reading it came from. Those points were saved into this
+     store beside the raw samples, and since a raw sample is always on a whole minute and a
+     launch point (t0 + age, t0 in whole seconds) almost never is, they never collided. The
+     series zigzagged instead, and every climb back was counted as new views.
+
+     A launch point is a bare [ts, views] pair; every raw reading carries likes, comments and
+     shares too. Such a pair OFF the minute grid, with a raw reading within five minutes, is
+     one of those early copies: the raw readings already hold the real values there, so it
+     goes. One with no raw reading nearby is the only record of that stretch and stays. The
+     Worker now stamps each point at its reading's own time (on the grid, on top of the raw
+     sample), so this only ever finds points saved before that, or sent by an older Worker. */
+  function dropEarlyLaunchPts(arr) {
+    if (!Array.isArray(arr) || !arr.some(p => p.length > 2)) return arr;
+    const raw = arr.filter(p => p.length > 2).map(p => p[0]);
+    let j = 0;
+    return arr.filter(p => {
+      if (p.length > 2 || p[0] % 60000 === 0) return true;
+      while (j < raw.length && raw[j] < p[0]) j++;
+      const near = (j < raw.length && raw[j] - p[0] <= 5 * 60e3) || (j > 0 && p[0] - raw[j - 1] <= 5 * 60e3);
+      return !near;
+    });
+  }
   function mergeHist(b) {
     if (!b) return;
     if (!hist || !hist.videos) hist = { videos: {} };
-    // followers / updated / totals arrive whole every time, so they replace
-    for (const k of Object.keys(b)) if (k !== 'videos') hist[k] = b[k];
+    // updated / totals arrive whole every time, so they replace
+    for (const k of Object.keys(b)) {
+      if (k === 'videos') continue;
+      /* Followers too, but only with a history that reaches at least as far as the one
+         already here. A Worker whose KV read failed used to send [], and replacing with that
+         wiped up to 400 days of follower history on this device until the next good pull. */
+      if (k === 'followers') {
+        const endOf = a => (Array.isArray(a) && a.length ? +a[a.length - 1][0] || 0 : 0);
+        if (!Array.isArray(b.followers) || !b.followers.length || endOf(b.followers) < endOf(hist.followers)) continue;
+      }
+      hist[k] = b[k];
+    }
     for (const [id, rec] of Object.entries(b.videos || {})) {
       if (!rec) continue;
       const cur = hist.videos[id];
@@ -1182,8 +1223,10 @@
       cur.title = rec.title || cur.title;
       cur.cover = rec.cover || cur.cover;
       const byTs = new Map((cur.s || []).map(s => [s[0], s]));
-      for (const s of (rec.s || [])) byTs.set(s[0], s);      // same minute, newer read wins
-      cur.s = [...byTs.values()].sort((a, b2) => a[0] - b2[0]);
+      // same minute, newer read wins — except that a launch point, which carries views
+      // only, never replaces the full raw reading it was taken from
+      for (const s of (rec.s || [])) { const ex = byTs.get(s[0]); if (!ex || ex.length <= s.length) byTs.set(s[0], s); }
+      cur.s = dropEarlyLaunchPts([...byTs.values()].sort((a, b2) => a[0] - b2[0]));
     }
     // keep the local copy bounded — newest posts only
     const ids = Object.keys(hist.videos).sort((a, b2) => (hist.videos[b2].create_time || 0) - (hist.videos[a].create_time || 0));
@@ -1195,9 +1238,18 @@
       try { localStorage.setItem(histKey(histOwner), JSON.stringify(hist)); } catch (e) { /* quota — memory copy still fine */ }
     }
   }
-  // ?since= keeps a poll to just the new minutes instead of the whole retention window
+  // ?since= keeps a poll to just the new minutes instead of the whole retention window.
+  // On its own, though, the Worker never reaches back more than three days, so a device
+  // that stayed closed longer kept a hole that never filled — and the jump across it once
+  // landed in a single hour. After more than two and a half days away this also asks for
+  // enough days to reach back to the last sample here (up to 14; D1 keeps 60).
   async function pullHistory() {
-    try { mergeHist(await api('/tiktok/history' + (histSince ? '?since=' + histSince : ''))); }
+    let q = '';
+    if (histSince) {
+      const gapD = (Date.now() - histSince) / 864e5;
+      q = '?since=' + histSince + (gapD > 2.5 ? '&days=' + Math.min(14, Math.ceil(gapD) + 1) : '');
+    }
+    try { mergeHist(await api('/tiktok/history' + q)); }
     catch (e) { /* keep whatever is already drawn */ }
   }
   // /tiktok/history only carries the last few days of samples, because its job is "what
@@ -1205,7 +1257,9 @@
   // posts that already finished — and for anything older than a few days that falls
   // entirely outside that window even though the Worker's database still holds it.
   // /tiktok/launches serves it age-indexed; converting back to absolute timestamps lets
-  // mergeHist do the union, so this can only ever ADD to what is already drawn.
+  // mergeHist do the union, so this can only ever ADD to what is already drawn. Launch
+  // points carry the real age of the reading that holds each bucket's max, so they
+  // coincide with raw samples and cannot interleave with them.
   // Twenty minutes, not two hours. The Worker now answers this from cache unless the set
   // of finished launches has actually changed, so asking costs it a 22-row query — and
   // the moment that matters is the one where a second usable reference appears and the
@@ -1219,20 +1273,24 @@
     try { b = await api('/tiktok/launches'); } catch (e) { return; }
     if (!b || !b.curves) return;
     launchPulled = Date.now();
+    /* An older Worker stamps each point at its bucket's START while the value is the
+       bucket's max, normally its last reading. Without `ages: 'exact'` in the answer, each
+       point is moved to the middle of its bucket's last minute, which is where that reading
+       usually sits; an early copy that still lands among raw readings is then dropped by
+       mergeHist (dropEarlyLaunchPts). */
+    const lag = b.ages === 'exact' ? 0 : (b.step || 5) * 60000 - 30000;
     const conv = { videos: {} };
     for (const [id, rec] of Object.entries(b.curves)) {
       if (!rec || !rec.create_time || !Array.isArray(rec.s) || rec.s.length < 8) continue;
       const t0 = rec.create_time * 1000;
       conv.videos[id] = {
         create_time: rec.create_time, title: rec.title || '', cover: rec.cover || '',
-        // Exactly t0 + age, with no rounding to the minute grid. Flooring these onto whole
-        // minutes looks tidier and is wrong: create_time is a whole SECOND, not a whole
-        // minute, so flooring drags every point up to 59s earlier than the age it was
-        // recorded at — which pushed age 0 to −1 and got the first point of every curve
-        // dropped, then shifted the rest down by one. The offset from the live sampler's
-        // grid is real but harmless: mergeHist unions by timestamp, and a finished launch
-        // has no live samples left inside its window to collide with anyway.
-        s: rec.s.map(p => [t0 + p[0] * 60000, p[1]])
+        // t0 + age, rounded only to the millisecond: an exact age is that reading's own
+        // timestamp minus create_time, so this lands on the raw sample itself and mergeHist
+        // keeps one copy. Flooring onto whole minutes would be wrong: create_time is a whole
+        // SECOND, so flooring dragged every point up to 59s early, pushed age 0 to −1 and
+        // got the first point of every curve dropped.
+        s: rec.s.map(p => [Math.round(t0 + p[0] * 60000) + lag, p[1]])
       };
     }
     // a curve that lands after the card was drawn would otherwise wait a whole poll to
@@ -1340,12 +1398,18 @@
     let any = false;
     for (const rec of Object.values((hist && hist.videos) || {})) {
       const arr = (rec && rec.s) || [];
+      // gains above the post's high-water mark only, as in ttGainBuckets: a count that
+      // dipped and came back has gained nothing
+      let hi = arr.length ? arr[0][1] || 0 : 0;
       for (let i = 1; i < arr.length; i++) {
+        const v = arr[i][1] || 0;
+        if (v <= hi) continue;
+        const d = v - hi;
+        hi = v;
         if (arr[i][0] - arr[i - 1][0] > 2 * 60e3) continue;   // not minute data — no vote
         const slot = Math.floor((now - arr[i][0]) / 60e3);
         if (slot < 0 || slot >= MAX_BARS) continue;
-        const d = arr[i][1] - arr[i - 1][1];
-        if (d > 0) { bars[MAX_BARS - 1 - slot] += d; any = true; }
+        bars[MAX_BARS - 1 - slot] += d; any = true;
       }
     }
     if (!any) return [];
@@ -1395,6 +1459,10 @@
       if (!was) continue;                      // first sighting contributes nothing
       tick += gain;
       for (const k of ['views', 'likes', 'comments', 'shares']) step[k] += Math.max(0, cur[k] - was[k]);
+      // The baseline is the highest count seen, not the latest. Storing a dipped count made
+      // the climb back read as new views: 1,010 → 1,000 → 1,010 showed +10. The table's
+      // counts still come from `videos`; this is only what the next tick diffs against.
+      for (const k of ['views', 'likes', 'comments', 'shares']) cur[k] = Math.max(cur[k], was[k] || 0);
     }
     const first = !velSession;
     perPost = seen;
@@ -3122,31 +3190,60 @@
     touchSeen();
   }
 
-  /* Positive recorded view-gains, bucketed by local hour, across every post's recording
-     inside [from, now]. One pass serves three readers: the away headline (total), the
+  /* Recorded view-gains, bucketed by local hour, across every post's recording inside
+     [from, now]. One pass serves three readers: the away headline (total), the
      biggest-hour line (max bucket, with the post that carried it), and the yesterday
-     line (buckets rolled up by local day). Negative deltas are TikTok revising a count —
-     recorded, not viewership — and don't vote, same rule as everywhere else. */
+     line (buckets rolled up by local day).
+
+     Three rules keep it to views that really arrived, and in the hour they arrived:
+       · A gain is a rise above the highest count seen so far on that post (its high-water
+         mark), not above the previous reading. A count TikTok revised down and then back
+         up has gained nothing, so a revision, and its rebound, never votes. After a real
+         downward revision, gains count again once the old peak is passed.
+       · A post's first reading inside the window counts from that reading, so a rise
+         between a reading before `from` and one after it is not counted.
+       · A rise across a hole in the recording (readings more than TT_GAP apart) belongs to
+         no single hour. It is kept in `total`, because those views really came in, but
+         goes in no hour, and every local day the hole touches is returned in `incomplete`,
+         so a day with a hole is left out rather than shown short or ranked.
+     Each gain is filed under the hour just before its reading (arr[i][0] − 1), because a
+     reading taken at 3:00 carries the views that came in before 3:00. */
+  const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's hourly tier
   function ttGainBuckets(from) {
     const vids = (hist && hist.videos) || {};
     const now = Date.now();
     const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
+    const incomplete = new Set();  // local days (en-CA) a hole in some post's recording touches
     let total = 0;
     for (const [id, rec] of Object.entries(vids)) {
       const arr = (rec && rec.s) || [];
-      for (let i = 1; i < arr.length; i++) {
-        if (arr[i][0] < from || arr[i][0] > now) continue;
-        const d = arr[i][1] - arr[i - 1][1];
-        if (d <= 0) continue;
+      if (!arr.length) continue;
+      // the high-water mark as it stood at `from`, so the same reading gains the same
+      // amount whichever window asks
+      let hi = arr[0][1] || 0, i = 1;
+      for (; i < arr.length && arr[i][0] <= from; i++) hi = Math.max(hi, arr[i][1] || 0);
+      for (; i < arr.length; i++) {
+        if (arr[i][0] > now) break;
+        const v = arr[i][1] || 0;
+        if (v <= hi) continue;
+        const d = v - hi;
+        hi = v;
+        const prev = arr[i - 1][0];
+        if (prev < from) continue;
         total += d;
-        const h = new Date(arr[i][0]); h.setMinutes(0, 0, 0);
+        if (arr[i][0] - prev > TT_GAP) {
+          const day = new Date(prev); day.setHours(0, 0, 0, 0);
+          for (; day.getTime() < arr[i][0]; day.setDate(day.getDate() + 1)) incomplete.add(day.toLocaleDateString('en-CA'));
+          continue;
+        }
+        const h = new Date(arr[i][0] - 1); h.setMinutes(0, 0, 0);
         const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
         b.gain += d;
         b.byPost.set(id, (b.byPost.get(id) || 0) + d);
         hours.set(h.getTime(), b);
       }
     }
-    return { total, hours };
+    return { total, hours, incomplete };
   }
 
   /* Accelerating: gaining meaningfully faster than it was a day ago. The absolute floor
@@ -3162,8 +3259,14 @@
       const nowS = arr[arr.length - 1];
       const d1 = ATB(arr, now - 864e5), d2 = ATB(arr, now - 2 * 864e5);
       if (!d1 || !d2 || d1 === d2 || d1 === nowS) continue;
-      const today = nowS[1] - d1[1], before = d1[1] - d2[1];
-      if (today >= ACCEL_MIN && today >= before * ACCEL_RATIO) accelSet.add(id);
+      /* Two stretches of about a day each, compared per day. With a hole in the recording
+         near either mark, "today" could span 40 hours against a "day before" of 8, and a
+         steady post read as accelerating. A stretch outside 20-28 hours abstains, and a day
+         before that did not rise (a revision, or nothing) is no baseline to beat. */
+      const sT = nowS[0] - d1[0], sB = d1[0] - d2[0];
+      if (sT < 20 * 36e5 || sT > 28 * 36e5 || sB < 20 * 36e5 || sB > 28 * 36e5) continue;
+      const today = (nowS[1] - d1[1]) / sT * 864e5, before = (d1[1] - d2[1]) / sB * 864e5;
+      if (before > 0 && today >= ACCEL_MIN && today >= before * ACCEL_RATIO) accelSet.add(id);
     }
   }
 
@@ -3181,10 +3284,18 @@
       while (m <= to && hits.length < 4) { hits.push(m); m = nextMilestone(m); }
       return hits;
     };
+    /* Crossings are measured from the highest count seen so far (a high-water mark per
+       subject, seeded from the readings before the window), not from the previous reading.
+       Otherwise a count that dips below a round number and comes back crosses it again, and
+       a milestone passed twelve days ago returned as new. Only a first crossing is news. */
+    let hiF = f.length ? f[0][1] || 0 : 0, hiL = f.length ? f[0][2] || 0 : 0;
     for (let i = 1; i < f.length; i++) {
-      if (f[i][0] < since) continue;
-      for (const m of ladder(f[i - 1][1] || 0, f[i][1] || 0)) out.push({ k: 'followers', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' followers</b>' });
-      for (const m of ladder(f[i - 1][2] || 0, f[i][2] || 0)) out.push({ k: 'likes', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' likes</b> on the account' });
+      const xF = f[i][1] || 0, xL = f[i][2] || 0;
+      if (f[i][0] >= since) {
+        if (xF > hiF) for (const m of ladder(hiF, xF)) out.push({ k: 'followers', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' followers</b>' });
+        if (xL > hiL) for (const m of ladder(hiL, xL)) out.push({ k: 'likes', at: f[i][0], t: 'passed <b>' + fmt.format(m) + ' likes</b> on the account' });
+      }
+      hiF = Math.max(hiF, xF); hiL = Math.max(hiL, xL);
     }
     const vids = (hist && hist.videos) || {};
     for (const [id, rec] of Object.entries(vids)) {
@@ -3194,12 +3305,14 @@
       // the cover rides along so the feed can show WHICH post at a glance — the Worker
       // records it, and the live list is the fallback for anything it missed
       const cover = (rec && rec.cover) || (live && live.cover_image_url) || '';
+      let hi = arr.length ? arr[0][1] || 0 : 0;
       for (let i = 1; i < arr.length; i++) {
-        if (arr[i][0] < since) continue;
-        for (const m of ladder(arr[i - 1][1] || 0, arr[i][1] || 0)) {
+        const x = arr[i][1] || 0;
+        if (arr[i][0] >= since && x > hi) for (const m of ladder(hi, x)) {
           if (m < 100) continue;   // the first hundred views is not news
           out.push({ k: 'v:' + id, id, cover, at: arr[i][0], t: '<b>' + esc(cap.slice(0, 46) || 'a post') + '</b> passed ' + fmt.format(m) + ' views' });
         }
+        hi = Math.max(hi, x);
       }
     }
     /* One line per thing, not one per rung. A post that climbed three milestones inside the
@@ -3259,12 +3372,15 @@
       rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
         at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
     }
-    // yesterday, ranked among the full local days the recordings cover
+    // yesterday, ranked among the full local days the recordings cover. A day with a hole
+    // in the recording is left out, not ranked short.
     const day = new Map();
-    for (const [at, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+    const gd = ttGainBuckets(Date.now() - ALERT_DAYS * 864e5);
+    for (const [at, b] of gd.hours) {
       const k = new Date(at).toLocaleDateString('en-CA');
       day.set(k, (day.get(k) || 0) + b.gain);
     }
+    for (const k of gd.incomplete) day.delete(k);
     const y = new Date(); y.setDate(y.getDate() - 1);
     const yk = y.toLocaleDateString('en-CA'), tk = new Date().toLocaleDateString('en-CA');
     const done = [...day.entries()].filter(([k]) => k !== tk);
@@ -3349,12 +3465,19 @@
      how many recorded days they rest on — "+9,800 over 7 recorded days" and "over 4"
      are different claims, and the small print is the difference. */
   let recTrendsRange = 90;
+  // A past day with a hole in some post's recording is dropped, so it is drawn as a gap and
+  // counts toward no week: its views are known to be missing, so its total would be short.
+  // Today stays (it never joins a week) and `gaps` says whether it has a hole so far.
   function recDayGains(days) {
     const out = new Map();   // local day (en-CA) → recorded views gained
-    for (const [at, b] of ttGainBuckets(Date.now() - days * 864e5).hours) {
+    const g = ttGainBuckets(Date.now() - days * 864e5);
+    for (const [at, b] of g.hours) {
       const k = new Date(at).toLocaleDateString('en-CA');
       out.set(k, (out.get(k) || 0) + b.gain);
     }
+    const tk = new Date().toLocaleDateString('en-CA');
+    for (const k of g.incomplete) if (k !== tk) out.delete(k);
+    out.gaps = g.incomplete;
     return out;
   }
   const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
@@ -3380,7 +3503,8 @@
     const vSum = videos.reduce((a, v) => a + (v.view_count || 0), 0);
     const lSum = videos.reduce((a, v) => a + (v.like_count || 0), 0);
     let html = '<div class="metric-grid">' +
-      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—', day.has(tk) ? 'views recorded' : 'nothing recorded yet') +
+      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—',
+        day.gaps.has(tk) ? 'part of today wasn’t recorded' : day.has(tk) ? 'views recorded' : 'nothing recorded yet') +
       mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? last7.length + ' recorded day' + (last7.length === 1 ? '' : 's') : 'no full days recorded') +
       mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? prev7.length + ' recorded day' + (prev7.length === 1 ? '' : 's') : 'no full days recorded') +
       (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)), 'exact, between two snapshots') : '') +
@@ -3747,13 +3871,17 @@
     ttSyncKnown = body;
     setSyncStatus('busy');
     try {
-      await fetch(workerUrl + '/tiktok/sync', {
+      const r = await fetch(workerUrl + '/tiktok/sync', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + session, 'Content-Type': 'application/json' },
         body: JSON.stringify({ bundle })
       });
+      /* fetch resolves on a 401 or a 500 too, so "synced" has to wait for an ok. A refused
+         save forgets what it tried to send, so the next change retries it. It does not sign
+         out: a 401 here is left to the next poll, whose own check handles it. */
+      if (!r.ok) { ttSyncKnown = ''; setSyncStatus(''); return; }
       setSyncStatus('on');
-    } catch (e) { setSyncStatus(''); }
+    } catch (e) { ttSyncKnown = ''; setSyncStatus(''); }
   }
   // trailing, so a burst of theme clicks costs one KV write rather than one per click
   function ttSyncSoon(stamp) {
@@ -3860,17 +3988,28 @@
       try {
         const obj = JSON.parse(rd.result);
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('not a saved-data file');
-        let n = 0;
+        let n = 0, hadHist = false;
         for (const [k, v] of Object.entries(obj)) {
           if (typeof v !== 'string') continue;
           if (k === 'tt_sess') continue;            // never, even if the file carries one
           const ok = TT_PREFS.includes(k) || k === CELEB_KEY || k === 'tt_worker' ||
             (k.startsWith('tt_hist:') && k !== 'tt_hist');
           if (!ok) continue;
-          try { localStorage.setItem(k.startsWith('tt_hist:') ? TT_STAGE : k, v); n++; } catch (e2) {}
+          try {
+            localStorage.setItem(k.startsWith('tt_hist:') ? TT_STAGE : k, v);
+            if (k.startsWith('tt_hist:')) hadHist = true; else n++;
+          } catch (e2) {}
         }
-        ttNote('imported ' + n + ' item' + (n === 1 ? '' : 's'));
-        alert('Imported ' + n + ' saved items. Reload the page to use them.');
+        // imported settings are this device's newest choice, so the next sync pull must not
+        // put the old ones back over them
+        if (n) { try { localStorage.setItem(TT_SYNC_AT, String(Date.now())); } catch (e2) {} }
+        // The recording is staged, and only adopted by an account with nothing recorded on
+        // this browser, so it is reported apart from the settings rather than as one of them.
+        if (!n && !hadHist) { ttNote('nothing imported'); alert('Nothing in that file could be imported.'); return; }
+        const what = n ? 'Imported ' + n + ' setting' + (n === 1 ? '' : 's') + (hadHist ? ' and a recording' : '')
+                       : 'Imported a recording';
+        ttNote(what.toLowerCase());
+        alert(what + (hadHist ? ' (used only if this browser has none of its own)' : '') + '. Reload the page to use ' + (n + (hadHist ? 1 : 0) === 1 ? 'it' : 'them') + '.');
       } catch (err) { showError('That file didn\u2019t look right: ' + err.message); }
     };
     rd.readAsText(f);

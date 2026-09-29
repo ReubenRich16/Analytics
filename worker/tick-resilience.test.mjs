@@ -281,6 +281,16 @@ console.log('\n7. one TikTok account cannot take down the others');
     const r3 = await W.ttTick({ ...TT, MINUTE: clean, DB: mockDB() });
     check('a healthy run reports no errors', r3.errors === undefined, JSON.stringify(r3.errors));
     check('and writes both snapshots', clean.m.has('tt:snap:A') && clean.m.has('tt:snap:B'));
+
+    // A failed read of the follower history must not be taken for an empty one. It used to
+    // append one snapshot to [] and write that back, wiping 400 days of history for good.
+    const kv4 = splitKV('tt:followers:A', 'get');
+    const longAgo = JSON.stringify([[onScan.getTime() - 200 * 864e5, 100, 1, 1], [onScan.getTime() - 5 * 3600e3, 300, 9, 4]]);
+    kv4.m.set('tt:followers:A', longAgo);
+    await W.ttTick({ ...TT, MINUTE: kv4, DB: mockDB() });
+    check('a failed follower read leaves the stored history untouched', kv4.m.get('tt:followers:A') === longAgo,
+      String(kv4.m.get('tt:followers:A')).slice(0, 80));
+    check('while the other account still gets its snapshot', JSON.parse(kv4.m.get('tt:followers:B') || '[]').length === 1);
   } finally { globalThis.fetch = realFetch; Date.now = realNow; }
 }
 

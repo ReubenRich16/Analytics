@@ -454,23 +454,41 @@
     return Math.round(s / 86400) + 'd ago';
   };
 
-  // per-video positive view-gains bucketed by local hour — the biggest-hour line's
-  // evidence. A count that went backwards is YouTube revising, and doesn't vote.
+  /* Per-video view-gains bucketed by local hour — the biggest-hour line's evidence.
+       · A gain is a rise above the highest count seen so far on that video (its high-water
+         mark). YouTube's per-video counts flip between a fresh and a stale reading, and a
+         climb back to where the count already was is not new views, so a revision and its
+         rebound never vote.
+       · A video's first reading inside the window counts from that reading.
+       · A rise across readings more than 90 minutes apart belongs to no single hour. It is
+         kept in `total` and left out of the hours. `from` is held to the last 14 days,
+         because past that the robot keeps one reading a day.
+     Each gain is filed under the hour just before its reading, which is when it came in. */
   function ytGainBuckets(from) {
     const now = Date.now(), hours = new Map();
+    from = Math.max(from, now - 14 * 864e5);
+    let total = 0;
     for (const [id, arr] of Object.entries((hist && hist.videos) || {})) {
-      for (let i = 1; i < arr.length; i++) {
-        if (arr[i][0] < from || arr[i][0] > now) continue;
-        const d = arr[i][1] - arr[i - 1][1];
-        if (d <= 0) continue;
-        const h = new Date(arr[i][0]); h.setMinutes(0, 0, 0);
+      if (!Array.isArray(arr) || !arr.length) continue;
+      let hi = arr[0][1] || 0, i = 1;
+      for (; i < arr.length && arr[i][0] <= from; i++) hi = Math.max(hi, arr[i][1] || 0);
+      for (; i < arr.length; i++) {
+        if (arr[i][0] > now) break;
+        const v = arr[i][1] || 0;
+        if (v <= hi) continue;
+        const d = v - hi;
+        hi = v;
+        if (arr[i - 1][0] < from) continue;
+        total += d;
+        if (arr[i][0] - arr[i - 1][0] > 90 * 60e3) continue;
+        const h = new Date(arr[i][0] - 1); h.setMinutes(0, 0, 0);
         const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
         b.gain += d;
         b.byPost.set(id, (b.byPost.get(id) || 0) + d);
         hours.set(h.getTime(), b);
       }
     }
-    return { hours };
+    return { total, hours };
   }
 
   /* The feed. Crossings between two recorded samples only — no "you are close to" and no
@@ -2444,6 +2462,12 @@
     } catch (e) { return; }
     if (!b || !b.curves) return;
     launchPulled = Date.now();
+    /* Each point's age is the real age of the reading that holds its bucket's max, so it
+       rounds onto the same whole-minute age as that reading's own sample here, and the two
+       merge into one. An older Worker stamps the bucket's START instead, about four minutes
+       before that reading; without `ages: 'exact'` each point moves to its bucket's last
+       minute, rather than lifting the count at the bucket's first minute. */
+    const lag = b.ages === 'exact' ? 0 : (b.step || 5) - 1;
     let changed = false;
     for (const [vid, rec] of Object.entries(b.curves)) {
       if (!rec || !rec.pub || !Array.isArray(rec.s) || rec.s.length < 8) continue;
@@ -2452,7 +2476,7 @@
       if (!meta[vid]) meta[vid] = { title: rec.title || vid, publishedAt: rec.pub, thumb: '' };
       const byAge = new Map((snaps[vid] || []).map(p => [p[0], p]));
       for (const smp of rec.s) {
-        const age = smp[0];
+        const age = Math.round(smp[0]) + lag;
         if (!(age >= 0)) continue;
         const ex = byAge.get(age);
         if (!ex) { byAge.set(age, [age, smp[1]]); changed = true; }

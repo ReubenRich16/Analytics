@@ -361,7 +361,9 @@ const PJ_MEMO   = 60e3;          // per-isolate breather, so a burst costs nothi
 // the old answer from cache after the deploy — which is exactly what the floating-point
 // bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint;
 // v4 widens each curve from PJ_WINDOW to PJ_SPAN, so every cached body is the wrong shape.
-const PJ_CACHE  = 4;
+// v5 stamps each point at the real age of the reading that holds its bucket's max, not at
+// the bucket's start, so every cached body carries the old, early ages.
+const PJ_CACHE  = 5;
 
 // /run's cooldown — see the route. Module-level, so it lives as long as the isolate does.
 const RUN_COOLDOWN = 60e3;
@@ -449,8 +451,21 @@ async function d1Launches(env, platform, vids) {
   // worker/d1-launches.test.mjs could not catch it, because a mock only ever reproduces
   // the SQL semantics its author believed in; the live peek is what caught it.
   const bucketOf = '(CAST((s.ts - v.published_at) / ? AS INTEGER))';
+  /* Launch points carry the real age of the reading that holds each bucket's max, so they
+     coincide with raw samples and cannot interleave with them.
+
+     The point used to be stamped at the bucket's START while carrying its MAX, which is
+     normally the bucket's last reading, about four minutes later. The pages turn an age
+     back into a timestamp, so each point landed a few minutes before the readings it came
+     from. On TikTok, mergeHist unions by timestamp, so a post's store read high, lower,
+     higher again every five minutes, and every climb back was counted as new views (about
+     1.8x over a launch). Early race rivals were read four minutes ahead of their age.
+
+     `s.ts` is a bare column beside the single MAX() aggregate. SQLite (and so D1) fills a
+     bare column from the row that holds the max, so `t` is that reading's own timestamp,
+     not some other row's. */
   const sres = await env.DB.prepare(
-    'SELECT s.video_id AS id, ' + bucketOf + ' AS b, MAX(s.views) AS views' +
+    'SELECT s.video_id AS id, ' + bucketOf + ' AS b, MAX(s.views) AS views, s.ts AS t' +
     ' FROM samples s JOIN videos v ON v.platform = s.platform AND v.video_id = s.video_id' +
     ' WHERE s.platform = ? AND s.video_id IN (' + marks + ')' +
     ' AND s.ts >= v.published_at AND s.ts <= v.published_at + ?' +
@@ -458,8 +473,15 @@ async function d1Launches(env, platform, vids) {
     ' ORDER BY s.video_id, b'
   ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_SPAN, bucket).all();
 
+  // The age in minutes, to six decimals: exact to well under a millisecond, so the page can
+  // turn it back into the sample's own timestamp with Math.round(t0 + age * 60000).
+  const pubOf = new Map(vids.map(v => [v.video_id, v.published_at]));
   const byId = {};
-  for (const r of (sres.results || [])) (byId[r.id] = byId[r.id] || []).push([r.b * PJ_STEP, r.views]);
+  for (const r of (sres.results || [])) {
+    const pub = pubOf.get(r.id);
+    const age = r.t != null && pub != null ? Math.round((r.t - pub) / 60000 * 1e6) / 1e6 : r.b * PJ_STEP;
+    (byId[r.id] = byId[r.id] || []).push([age, r.views]);
+  }
   const curves = {};
   for (const v of vids) {
     const s = byId[v.video_id];
@@ -513,7 +535,9 @@ async function launchBody(env, platform) {
   }
   if (!vids) { vids = await d1Finished(env, platform); ids = vids.map(v => v.video_id).join(','); }
 
-  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, span: PJ_SPAN, ids,
+  // `ages: 'exact'` tells the pages each age is a real reading's, not a bucket start —
+  // an older Worker's answer lacks it, and the pages then correct for the lag themselves
+  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, span: PJ_SPAN, ages: 'exact', ids,
                  ...(await d1Launches(env, platform, vids)) };
   // a write only when the answer actually changed, so this stays at one or two KV writes
   // a day per partition against a 1,000/day cap currently running at about 220
@@ -1377,7 +1401,11 @@ async function ttHandler(request, env, url) {
   if (p === '/tiktok/history') {
     let snap = {}, followers = [];
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || '{}'); } catch (e) {}
-    try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+    // An absent key is a new account and really is []. A read that THREW is not: sending []
+    // then told the page to replace up to 400 days of stored follower history with nothing.
+    // So a failed read leaves `followers` out of the answer, and the page keeps what it has.
+    try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { followers = undefined; }
+    const fpart = followers === undefined ? {} : { followers };
     // phase 3: D1 answers by default, KV falls back. followers stays on KV either way —
     // it's eight writes a day, so there is nothing to gain by migrating it.
     const src = url.searchParams.get('src');
@@ -1387,12 +1415,12 @@ async function ttHandler(request, env, url) {
         const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0, since);
         // see the note on the YouTube route: an empty incremental read is a normal answer
         if (since || hasVideos(b) || src === 'd1' || !hasVideos(snap))
-          return json({ ...snap, videos: b.videos, followers }, 200, { 'X-CC-Source': 'd1' });
+          return json({ ...snap, videos: b.videos, ...fpart }, 200, { 'X-CC-Source': 'd1' });
       } catch (e) {
         if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);
       }
     }
-    return json({ ...snap, followers }, 200, { 'X-CC-Source': 'kv' });
+    return json({ ...snap, ...fpart }, 200, { 'X-CC-Source': 'kv' });
   }
   // same slice as /launches, scoped to this account's partition
   if (p === '/tiktok/launches') {
@@ -1414,7 +1442,10 @@ async function ttHandler(request, env, url) {
     if (request.method === 'POST') {
       let b = null; try { b = await request.json(); } catch (e) {}
       if (!b || b.bundle === undefined) return json({ error: 'no bundle' }, 400);
-      await env.MINUTE.put(key, JSON.stringify(b.bundle));
+      // a failed put (the daily KV write limit, say) must reach the page as a failure, so
+      // its footer does not say "synced" over a save that never happened
+      try { await env.MINUTE.put(key, JSON.stringify(b.bundle)); }
+      catch (e) { return json({ error: 'sync save failed: ' + String((e && e.message) || e) }, 502); }
       return json({ ok: true });
     }
     let stored = '{}';
@@ -1478,10 +1509,13 @@ async function ttTick(env) {
     // Follower history, for the milestone projection. TikTok exposes no history of its own,
     // so we sample every ~3h — 8 writes a day per account, negligible against the KV budget.
     try {
-      let fh = [];
-      try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+      // A read that throws is not an empty history. Treating it as one appended a single
+      // snapshot to [] and wrote that back, wiping up to 400 days of follower history for
+      // good, so a failed read skips this tick's snapshot instead.
+      let fh = [], fhFailed = false;
+      try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { fhFailed = true; }
       const lastAt = fh.length ? fh[fh.length - 1][0] : 0;
-      if (now - lastAt > 3 * 3600e3) {
+      if (!fhFailed && now - lastAt > 3 * 3600e3) {
         const { ok, body } = await ttGet('user/info/?fields=follower_count,likes_count,video_count', token);
         const u = ok && body && body.data && body.data.user;
         if (u) {

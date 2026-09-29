@@ -381,7 +381,10 @@ console.log('\nwhile you were away');
   /* Only crossings that actually happened between two recorded samples. No "you are close
      to", no rounding up to the nearest nice number — both would be the page inventing an
      event that did not occur. */
-  check('the feed reports crossings between two real samples', /ladder\(f\[i - 1\]\[1\] \|\| 0, f\[i\]\[1\] \|\| 0\)/.test(feed));
+  // measured from the highest count seen so far, so a dip and a recovery is not a new
+  // crossing (run against real readings in scripts/tt-gains.test.mjs)
+  check('the feed reports crossings from the high-water mark, between two real samples',
+    /if \(xF > hiF\) for \(const m of ladder\(hiF, xF\)\)/.test(feed) && /hiF = Math\.max\(hiF, xF\)/.test(feed));
   check('it uses the same milestone ladder as the projection card', /nextMilestone\(/.test(feed));
   check('the first hundred views on a post is not treated as news', /if \(m < 100\) continue;/.test(feed));
   check('the feed is bounded in time and in length',
@@ -426,7 +429,11 @@ console.log('\nwhile you were away');
   check('a stamp from the future is refused rather than trusted',
     /v > 0 && v < Date\.now\(\) \? v : null/.test(TT));
   const gb = TT.slice(TT.indexOf('function ttGainBuckets('), TT.indexOf('\n  }\n', TT.indexOf('function ttGainBuckets(')));
-  check('a count that went backwards does not vote in the gain buckets', /if \(d <= 0\) continue;/.test(gb));
+  // a rise counts only above the post's high-water mark, so a revision's rebound never
+  // votes, and a rise across a hole goes in no hour (behaviour in scripts/tt-gains.test.mjs)
+  check('a count that went backwards does not vote in the gain buckets, nor its rebound',
+    /if \(v <= hi\) continue;\s*const d = v - hi;\s*hi = v;/.test(gb));
+  check('a rise across a hole in the recording goes in no single hour', /arr\[i\]\[0\] - prev > TT_GAP/.test(gb) && /TT_GAP = 75 \* 60e3/.test(TT));
   const head = TT.slice(TT.indexOf('function ttAwayHeadHtml('), TT.indexOf('\n  }\n', TT.indexOf('function ttAwayHeadHtml(')));
   check('the headline only appears for a real absence, and says nothing over guessing',
     /AWAY_MIN/.test(head) && /if \(!bits\.length\) return '';/.test(head));
@@ -490,8 +497,8 @@ console.log('\nwhile you were away — the YouTube mirror');
     /best\.gain >= 30/.test(mom) && /top\[1\] >= best\.gain \* 0\.6/.test(mom));
   check('yesterday ranks on channel days, today never ranks, and thin data abstains',
     /\.filter\(\(\[k\]\) => k !== tk\)/.test(mom) && /done\.length >= 3/.test(mom));
-  check('a count that went backwards does not vote',
-    /if \(d <= 0\) continue;/.test(YT.slice(YT.indexOf('function ytGainBuckets('), YT.indexOf('\n  }\n', YT.indexOf('function ytGainBuckets(')))));
+  check('a count that went backwards does not vote, nor its rebound',
+    /if \(v <= hi\) continue;/.test(YT.slice(YT.indexOf('function ytGainBuckets('), YT.indexOf('\n  }\n', YT.indexOf('function ytGainBuckets(')))));
   check('the feed styles exist in the shared stylesheet, with landscape thumbs',
     /#awayContent \.alert \.acover \{ width:44px; height:25px;/.test(CSS));
 }

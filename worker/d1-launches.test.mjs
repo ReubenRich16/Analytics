@@ -75,7 +75,10 @@ function mockD1(vids, rows) {
         rowsRead++;
         const b = Math.floor((r.ts - p) / bucket), k = r.video_id + '|' + b;
         const cur = g.get(k);
-        if (!cur || r.views > cur.views) g.set(k, { id: r.video_id, b, views: r.views });
+        // SQLite's bare-column rule: beside a single MAX(), `s.ts AS t` comes from the row
+        // holding the max. Among tied rows SQLite may pick any; this takes the first seen.
+        const wantT = /s\.ts AS t/.test(sql);
+        if (!cur || r.views > cur.views) g.set(k, { id: r.video_id, b, views: r.views, ...(wantT ? { t: r.ts } : {}) });
       }
       return { results: [...g.values()].sort((a, b2) => a.id.localeCompare(b2.id) || a.b - b2.b) };
     }
@@ -146,16 +149,27 @@ console.log('\n2. downsampling keeps what the model needs');
   check('the bucket is an explicit integer cast, in both SELECT and GROUP BY', casts === 2, casts);
   check('one point per step, not one per minute',
     s.length === Math.floor(48 * 60 / W.PJ_STEP) + 1, s.length + ' points');
-  check('every age is a whole number of steps', s.every(p => p[0] % W.PJ_STEP === 0));
-  check('ages run from 0 to the full window',
-    s[0][0] === 0 && s[s.length - 1][0] === 48 * 60, s[0][0] + '..' + s[s.length - 1][0]);
+  /* Each point is stamped at the age of the reading that holds its bucket's max, not at
+     the bucket's start. The start stamp put every value about four minutes before the
+     reading it came from: the TikTok page's store then zigzagged against its own raw
+     samples (about 1.8x views counted over a launch), and early race rivals read high. */
+  check('the reading\'s own timestamp is selected beside the max', /MAX\(s\.views\) AS views, s\.ts AS t/.test(DB.lastSql));
+  const rawAt = new Map(raw.map(r => [r.ts, r.views]));
+  check('every point sits exactly on a real reading, value included',
+    s.every(p => rawAt.get(Math.round(pub + p[0] * 60000)) === p[1]),
+    s.filter(p => rawAt.get(Math.round(pub + p[0] * 60000)) !== p[1]).slice(0, 3).map(p => p.join('@')).join(' '));
+  check('one point per bucket still', new Set(s.map(p => Math.floor(p[0] / W.PJ_STEP))).size === s.length);
+  check('ages run from the first bucket to the full window',
+    s[0][0] < W.PJ_STEP && s[s.length - 1][0] === 48 * 60, s[0][0] + '..' + s[s.length - 1][0]);
+  check('the answer says its ages are exact, so a page can tell it from an older Worker\'s',
+    /ages: 'exact'/.test(fs.readFileSync(HERE + 'worker.js', 'utf8')));
   check('the curve stays monotone', s.every((p, i) => i === 0 || p[1] >= s[i - 1][1]));
   const rawFinal = raw[raw.length - 1].views;
   check('the 48h total survives exactly', s[s.length - 1][1] === rawFinal, s[s.length - 1][1] + ' vs ' + rawFinal);
   // MAX per bucket, so the downsampled point is the highest count seen in those minutes
   const inBucket = raw.filter(r => r.ts - pub >= 10 * 60000 && r.ts - pub < 15 * 60000);
   const want = Math.max(...inBucket.map(r => r.views));
-  check('each point is the highest count in its bucket', s.find(p => p[0] === 10)[1] === want);
+  check('each point is the highest count in its bucket', s.find(p => p[0] >= 10 && p[0] < 15)[1] === want);
 }
 
 /* 3 — the load-bearing property: holes must survive */
