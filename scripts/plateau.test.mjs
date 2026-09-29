@@ -221,7 +221,7 @@ function weekCurve(final, k, tailPerDay) {
   check('so the card settles with no week figure at all', pTwo.state === 'settled' && pTwo.week == null);
   check('and says how many more posts would turn it on', pTwo.weekHave === 2, pTwo.weekHave);
   check('in words, with the number in them',
-    /2 have one so far/.test(M.pjWeekWaitHtml(pTwo.weekHave)), M.pjWeekWaitHtml(pTwo.weekHave));
+    /2 have been so far, so 1 more to go/.test(M.pjWeekWaitHtml(pTwo.weekHave)), M.pjWeekWaitHtml(pTwo.weekHave));
   check('never claiming less than what is already counted',
     M.pjWeek(wr, 6 * 60, 99999) === null || M.pjWeek(wr, 6 * 60, 99999).lo >= 99999);
 }
@@ -456,7 +456,7 @@ function loo(all, h) {
   // up to 80% of the way: a countdown to the 90% point, worded as exactly that
   const early = M.pjProject(refs, 6 * 60, 500);
   check('under 80% the bar counts down to the 90% point', early.pct <= .8 &&
-    /a typical launch is 90% in by .+ from now/.test(strip(M.pjBarHtml(early, 500))), strip(M.pjBarHtml(early, 500)));
+    /your usual post reaches 90% of its total in another .+/.test(strip(M.pjBarHtml(early, 500))), strip(M.pjBarHtml(early, 500)));
   check('and never says "most of the rest"', !/most of the rest/i.test(M.pjBarHtml(early, 500) + M.pjSentenceHtml(early)));
   // past 80%: less than half of what is left lands by the 90% mark, so no countdown
   const late = { ...early, pct: .89, rest: 60 };
@@ -472,7 +472,7 @@ function loo(all, h) {
   check('with enough posts but a loose spread it says they vary, not "-1 more"',
     /vary too much at this age/.test(M.pjWeekWaitHtml(4, 'loose')) && !/-1|0 more/.test(M.pjWeekWaitHtml(4, 'loose')));
   check('and with too few recorded at this age it says that',
-    /not enough of your full-week posts were recorded at this age/.test(M.pjWeekWaitHtml(3, 'few-at-age')));
+    /not enough of your full-week posts were tracked at this age/.test(M.pjWeekWaitHtml(3, 'few-at-age')));
   const wide = [scurve(2000, 2), scurve(1400, 20), scurve(900, 6), scurve(1600, 12)].map(c => {
     const out = c.map(p => [p[0], p[1]]); for (let m = 49 * 60; m <= 8 * 1440; m += 120) out.push([m, Math.round(c[c.length - 1][1] * (1 + (m - 48 * 60) / 1440 * .02))]);
     return M.pjRef(out); });
@@ -486,10 +486,10 @@ function loo(all, h) {
   const w1 = M.pjProject([], 6 * 60, 400, [done]);
   check('one finished launch is on track but not recording', w1.onTrack === 1 && w1.recording === 0, JSON.stringify(w1));
   check('so the wait card does not say "still recording"',
-    !/still recording/.test(M.pjWaitHtml(w1)) && /One finished launch so far/.test(M.pjWaitHtml(w1)), strip(M.pjWaitHtml(w1)));
+    !/being tracked now/.test(M.pjWaitHtml(w1)) && /One post has its first 48 hours tracked so far/.test(M.pjWaitHtml(w1)), strip(M.pjWaitHtml(w1)));
   const rec = { curve: scurve(1000, 8).filter(p => p[0] <= 20 * 60), age: 20 * 60 };
   const w2 = M.pjProject([], 6 * 60, 400, [rec]);
-  check('one still going says so', w2.recording === 1 && /still recording/.test(M.pjWaitHtml(w2)));
+  check('one still going says so', w2.recording === 1 && /One post is being tracked now/.test(M.pjWaitHtml(w2)));
 
   // early is two different waits
   const young = M.pjProject(refs, 3 * 60, 90);
@@ -504,10 +504,10 @@ function loo(all, h) {
   const own = scurve(2400, 8.1);
   const old = M.pjProject(refs, 12 * 1440, 2600, []);
   check('the done text is about a post past its first week, not a two-month-old one',
-    /past its first week needs estimating/.test(M.pjBodyHtml(old, 2600, own, refs, 12 * 1440)) &&
+    /Its first week is over too, so there’s nothing left to estimate/.test(M.pjBodyHtml(old, 2600, own, refs, 12 * 1440)) &&
     !/two-month-old/.test(src + ttSrc));
-  check('the explainer says "the count so far", not "today’s count"',
-    !/Today’s count divided/.test(src + ttSrc) && /The count so far divided by that share/.test(src) && /The count so far divided by that share/.test(ttSrc));
+  check('the explainer speaks of the views so far, not "today’s count"',
+    !/Today’s count divided/.test(src + ttSrc) && /based on how quickly your past videos reached theirs/.test(src) && /This post’s views so far, scaled up by that share/.test(ttSrc));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

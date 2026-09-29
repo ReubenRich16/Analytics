@@ -92,7 +92,7 @@ console.log('\npaintLife — every outcome is visible');
   M.paintLife(nf.wrap, { why: 'notfound', at: Date.now() });
   check('a post the Worker never recorded says so instead of hiding',
     /No recording of this post yet/.test(nf.wrap.ex.innerHTML) && /within about five minutes/.test(nf.wrap.ex.innerHTML) &&
-    /60 days old or drops out of your 60 newest/.test(nf.wrap.ex.innerHTML) && nf.wrap.style.display === 'block');
+    /60 days old or drop out of your 60 newest/.test(nf.wrap.ex.innerHTML) && nf.wrap.style.display === 'block');
   check('and draws no chart', nf.wrap.ch.innerHTML === '');
 
   const th = host();

@@ -80,16 +80,19 @@ console.log('\nthe away card');
     }
     return { videos: { p: { create_time: Math.floor(dayStart(20) / 1000), title: 'a post', s } }, followers: [] };
   };
-  const yline = html => (html.match(/Yesterday: [^<]*<b>[^<]*<\/b> — [^<]*/) || [''])[0];
+  const yline = html => (html.replace(/<\/?span[^>]*>/g, '').match(/Yesterday: [^<]*<b>[^<]*<\/b> — [^<]*/) || [''])[0];
 
   const best = make(build(k => k === 1 ? 4800 : 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
-  check('a best yesterday says what it is best of', /— your best of the last 14 recorded days$/.test(yline(best)), yline(best));
+  check('a best yesterday says what it is best of', /— your best of the last 14 full days tracked$/.test(yline(best)) && /<span class="cc-win">your best of the last 14 full days tracked<\/span>/.test(best), yline(best));
+  const tied = make(build(k => k === 1 || k === 4 ? 4800 : 480), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
+  check('a yesterday tied for best is still "your best", but not celebrated as a record',
+    /— your best of the last 14 full days tracked$/.test(yline(tied)) && !/cc-win/.test(tied), yline(tied));
   const quiet = make(build(k => k === 1 ? 48 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
-  check('the quietest day is called that, not "14th best"', /— your quietest of the last 14 recorded days$/.test(yline(quiet)), yline(quiet));
+  check('the quietest day is called that, not "14th best"', /— your quietest of the last 14 full days tracked$/.test(yline(quiet)) && !/cc-win/.test(quiet), yline(quiet));
   const second = make(build(k => k === 1 ? 96 : k === 5 ? 48 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
-  check('second from the bottom is "2nd quietest"', /— 2nd quietest of the last 14 recorded days$/.test(yline(second)), yline(second));
+  check('second from the bottom is "2nd quietest"', /— 2nd quietest of the last 14 full days tracked$/.test(yline(second)), yline(second));
   const mid = make(build(k => k === 1 ? 480 + 12 * 48 + 24 : 480 + k * 48), [{ id: 'p' }], {}, null, null).ttMomentsHtml();
-  check('the upper half reads as "Nth best"', /— 3rd best of the last 14 recorded days$/.test(yline(mid)), yline(mid));
+  check('the upper half reads as "Nth best"', /— 3rd best of the last 14 full days tracked$/.test(yline(mid)) && !/cc-win/.test(mid), yline(mid));
   check('and the pool starts at a local midnight, so no partial first day is ranked',
     /s0\.setHours\(0, 0, 0, 0\); s0\.setDate\(s0\.getDate\(\) - ALERT_DAYS\);/.test(fn('function ttMomentsHtml()')));
 
@@ -100,15 +103,15 @@ console.log('\nthe away card');
   const vids = [{ id: 'p' }, { id: 'q' }, { id: 'r' }];
   const head = make(hist, vids, { follower_count: 207 }, away, away + 19 * HOUR - 0).ttAwayHeadHtml([]);
   check('the headline says which posts its views cover when the store holds fewer',
-    /recorded across your 1 newest posts/.test(head), head);
+    /views<\/b> on your 1 newest posts/.test(head), head);
   check('followers run to the live count in the header (207 − 200)', /\+7 followers<\/b>/.test(head), head);
   const later = make(hist, vids, { follower_count: 207 }, away, NOW - 2 * HOUR).ttAwayHeadHtml([]);
-  check('the absence is measured to when she came back, not to now', /While you were away \(<b>17h<\/b>\)/.test(later), later);
+  check('the absence is measured to when she came back, not to now', /In the <b>17h<\/b> since you last looked: /.test(later), later);
   const stale = { ...hist, followers: [[NOW - 30 * HOUR, 190, 1, 1], [NOW - 2 * HOUR, 205, 1, 1]] };
   const nofol = make(stale, vids, { follower_count: 207 }, away, NOW).ttAwayHeadHtml([]);
   check('followers are left out when the nearest snapshot is over 3h before she left', !/follower/.test(nofol), nofol);
   const all = make(hist, [{ id: 'p' }], { follower_count: 207 }, away, NOW).ttAwayHeadHtml([]);
-  check('and says just "your posts" when it holds every listed post', /recorded across your posts/.test(all), all);
+  check('and says just "your posts" when it holds every listed post', /views<\/b> on your posts/.test(all), all);
 
   const vis = TT.slice(TT.indexOf('function resumeSeen()'), TT.indexOf("window.addEventListener('pageshow'"));
   check('a resumed tab re-reads the away stamp, but only after a real absence',
@@ -165,10 +168,10 @@ console.log('\nthe velocity strip');
     st.velBg[st.velBg.length - 1] === 12 && st.velSession.views === 1210, JSON.stringify(st.velBg));
   const bars = els.bars.children;
   const last = bars[bars.length - 1];
-  check('its bar says so, and is faded', /\+1,200 views while the page was in the background \(12m\)/.test(last.title) && /back/.test(last.className), last.title);
+  check('its bar says so, and is faded', /\+1,200 views while the page was in the background \(12 min\)/.test(last.title) && /back/.test(last.className), last.title);
   check('and does not set the scale: the ordinary 10 is still the tallest', bars[2].style.height === '100%', bars[2].style.height);
   check('a faded backfilled bar says it covers one minute', /\+5 views in that minute — recorded before this tab opened/.test(bars[0].title), bars[0].title);
-  check('the rate says it is a session average', /views\/min this session/.test(fs.readFileSync(new URL('../yt-dashboard/tiktok.html', import.meta.url), 'utf8')));
+  check('the rate says it is an average since the page opened', /views\/min since opening/.test(fs.readFileSync(new URL('../yt-dashboard/tiktok.html', import.meta.url), 'utf8')));
   // a post published after the page opened starts from zero
   st = run($, fmtUS, document, [post('a', 1310), post('new', 40, Math.floor((T + 5 * MIN) / 1000))], st, T + 15 * MIN);
   check('a post published mid-session counts its first views', st.perPost.new.sessV === 40 && st.velSession.views === 1250,
@@ -224,15 +227,15 @@ console.log('\nwhere this one is heading, for an old post');
     return pjBodyHtml;`)();
   const withLife = B({ state: 'settled' }, 5000, null, [], 4 * 1440, 3100);
   check('the hourly record gives the 48-hour figure when the launch is not loaded',
-    /About <b>3,100 views<\/b> by the end of its first 48 hours \(from the hourly record\), and it has added 1,900 since\./.test(withLife), withLife);
+    /About <b>3,100 views<\/b> by the end of its first 48 hours \(from the hourly chart\), and it has added 1,900 since\./.test(withLife), withLife);
   const none = B({ state: 'settled' }, 5000, null, [], 4 * 1440, null);
   check('without it, nothing is asserted about whether it was recorded',
-    /Its minute-by-minute launch isn’t loaded on this page \(only your newest posts’ launches are\)/.test(none) && !/none of the launch was recorded/.test(none), none);
+    /Its close-up counts aren’t kept on this page \(only your newest posts’ are\)/.test(none) && !/none of the launch was recorded/.test(none), none);
   const done = B({ state: 'done' }, 5000, null, [], 20 * 1440, null);
-  check('past a week it says the projection has retired and points below',
-    /Its first week is over, so the projection has retired — the lifetime count is the number that matters now\. The hourly record below shows how it got there\./.test(done), done);
+  check('past a week it says there is nothing left to estimate and points below',
+    /Its first week is over, so there is nothing left to estimate — its total views are the number to go by\. The hourly chart below shows how it got there\./.test(done), done);
   const doneLife = B({ state: 'done' }, 5000, null, [], 20 * 1440, 3100);
-  check('and past a week with the record, it gives the figure and retires', /About <b>3,100 views<\/b>/.test(doneLife) && /retired/.test(doneLife), doneLife);
+  check('and past a week with the record, it gives the figure and retires', /About <b>3,100 views<\/b>/.test(doneLife) && /nothing left to estimate/.test(doneLife), doneLife);
 }
 
 console.log('\nlaunch curves');
@@ -271,17 +274,17 @@ console.log('\nlaunch curves');
   const target = { id: 'me', create_time: (NOW - 300 * MIN) / 1000 };
   hist.videos.me = mk(300, 800, 2880);
   const html = L(hist, NOW, (series, opts) => { got = { series, opts }; })(target);
-  const gold = got.series.find(s => s.name === 'Typical launch').pts;
+  const gold = got.series.find(s => s.name === 'Your usual post').pts;
   // at 5 hours: finished 250, 300, 22,500 → median 300; the 10-hour-old post (12.5) would pull it to 275
   check('an unfinished launch does not vote on the typical line', gold[10] === 300, gold[10]);
   check('the scale follows this post and the typical line, not the viral one', got.opts.yMax > 0 && got.opts.yMax < 10000, got.opts.yMax);
-  check('and the viral line is counted as running off the top', /1 past launch runs off the top\./.test(html), html);
-  check('the title and explainer say what the grey lines are', /Launch curves — first 48 hours, aligned by age/.test(html) &&
-    /Grey lines are up to 8 of your most recent other launches/.test(html), html);
+  check('and the viral line is counted as running off the top', /1 other post runs off the top\./.test(html), html);
+  check('the title and explainer say what the grey lines are', /First 48 hours — this post vs your others/.test(html) &&
+    /Grey lines are up to 8 of your newest other posts/.test(html), html);
   const noFocus = L({ videos: { f1: hist.videos.f1, f2: hist.videos.f2 } }, NOW, (series, opts) => { got = { series, opts }; })({ id: 'gone', create_time: (NOW - 9000 * MIN) / 1000 });
-  check('with no line for this post it says so instead of pointing at one', /this post’s own launch isn’t loaded here/.test(noFocus) && !/bright line/.test(noFocus), noFocus);
+  check('with no line for this post it says so instead of pointing at one', /this post’s own first 48 hours aren’t loaded here/.test(noFocus) && !/bright line/.test(noFocus), noFocus);
   const thin = L({ videos: { running: hist.videos.running } }, NOW, () => {})(target);
-  check('the thin note counts finished launches on this page', /and this page has 0 finished so far/.test(thin), thin);
+  check('the thin note counts finished launches on this page', /tracked without gaps through their first 48 hours, and this page has 0 so far/.test(thin), thin);
 }
 
 console.log('\nthe minute chart');
@@ -311,7 +314,7 @@ console.log('\nthe minute chart');
   check('a post outside the 20 newest is told it dropped out of this chart', /This chart keeps your 20 newest posts, so this one has dropped out of it\./.test(out), out);
   const fresh = { id: 'fresh', create_time: (NOW - 2 * HOUR) / 1000 };
   const nw = M({ videos: {} }, [fresh], NOW, () => {})(fresh);
-  check('a new post is told it will be picked up within minutes', /your Worker picks new posts up within about five minutes and records their first 48 hours automatically/.test(nw), nw);
+  check('a new post is told it will be picked up within minutes', /new posts are picked up within about five minutes and tracked automatically from then on/.test(nw), nw);
 }
 
 console.log('\nhashtags in the drawer');
@@ -333,7 +336,7 @@ console.log('\nhashtags in the drawer');
   const scores = { me: 50000, a: 100, b: 100, c: 1000, d: 100, e: 100 };
   const out = H(vids, scores)(vids[0]);
   check('the tag figure is median against median, without the post itself', /#dance <b>100%<\/b>/.test(out), out);
-  check('the explainer says so', /typical \(middle\) total views of your other posts carrying that tag/.test(out));
+  check('the explainer says so', /How your other posts with each tag do, next to your usual post: 100% is usual/.test(out) && /typical \(middle\) views/.test(out));
   const once = H([{ id: 'me', title: '#rare' }, { id: 'a', title: '#rare' }, { id: 'b', title: 'x' }], { me: 5, a: 5, b: 5 })({ id: 'me', title: '#rare' });
   check('a tag on only one other post gets no figure', !/%/.test(once.split('|')[2]), once);
 }
@@ -342,7 +345,7 @@ console.log('\nthe race label counts its rows');
 {
   const r = fn('function renderTtRace(v, mount)');
   check('the label uses the real number of rivals, singular when one',
-    /const n = rivals\.length, pl = n === 1 \? '' : 's';/.test(r) && /' most recent recorded post' \+ pl/.test(r) && /' best recorded opening' \+ pl/.test(r));
+    /const n = rivals\.length, pl = n === 1 \? '' : 's';/.test(r) && /' newest other post' \+ pl/.test(r) && /' other post' \+ pl \+ ' with the most views/.test(r));
 }
 
 console.log('\ncount axes have whole-number ticks');
@@ -354,7 +357,7 @@ for (const [page, src] of [['tiktok.html', TT], ['index.html', YT]]) {
   check(page + ': and a 2.5 step becomes 2', !ns(0, 9, 4, true).ticks.some(t => t % 1), ns(0, 9, 4, true).ticks.join(','));
 }
 check('every TikTok count chart asks for whole ticks',
-  /'Recorded views per day', \{ at, tips, int: true/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
+  /'Views per day', \{ at, tips, int: true/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
   /at, tips, int: true, x0: lifeAgeTxt/.test(TT) && /int: true, yMax/.test(TT) && /at: rec\.s\.map\(s => s\[0\]\), int: true/.test(TT) &&
   /niceScale\(0, ceil, 4, true\)/.test(TT));
 

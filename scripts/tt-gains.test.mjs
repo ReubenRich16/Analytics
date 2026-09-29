@@ -173,7 +173,7 @@ console.log('\na hole in the recording');
   check('the Trends card says a gap is left out, not guessed',
     /A gap in the recording is left out, not guessed\./.test(TT) && !/a gap in the recording stays a gap/.test(TT));
   check('the away card says how far back it reaches',
-    /so it covers the time nobody had this page open, up to the last two weeks\./.test(TT));
+    /Milestones your account and posts passed in the last 14 days, and any post that is speeding up — tracked even while this page was closed\./.test(TT) && /ALERT_DAYS = 14;/.test(TT));
 
   // the hole is backfilled when it can be
   const ph = fn('async function pullHistory()');

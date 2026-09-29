@@ -53,7 +53,7 @@ console.log('\nthe TikTok card answers what TikTok can actually answer');
   /* YouTube's third chip is Audience, from retention and demographics. TikTok's Display API
      exposes neither, so shipping an "Audience" chip there could only ever be empty. */
   check('it does not pretend to have audience data', !/answerAudience/.test(TT));
-  check('it answers Engagement instead', /'Engagement'/.test(TT) && /function answerEngagement/.test(TT));
+  check('it answers like rate instead', /'Like rate'/.test(TT) && /function answerEngagement/.test(TT));
   check('and says why that stands in for it', /no audience or retention data/.test(TT));
 
   /* The newest chip has to describe the ACTUAL newest post. scored() drops anything with no
@@ -66,7 +66,7 @@ console.log('\nthe TikTok card answers what TikTok can actually answer');
   check('and an ungradeable newest says so rather than naming another post',
     /if \(mine == null\)/.test(body));
   check('the "too early" reasons are told apart',
-    /launch window is still running/.test(body) && /Four comparable posts are needed/.test(body) &&
+    /too soon to grade: not enough of your earlier posts have their first 48 hours fully tracked/.test(body) && /At least 4 are needed before a ranking means anything/.test(body) &&
     /Grades start once a post is/.test(body) && /has no views counted yet/.test(body) && /vary too much at this age/.test(body));
 }
 
@@ -135,8 +135,8 @@ for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'follo
   check(page + ' — and the chip refuses to speak from it rather than dividing',
     /if \(!b\[0\] \|\| !b\[0\]\.ok\) \{/.test(src) &&
     (page === 'TikTok'
-      ? /No follower reading since/.test(src) && /Followers are down/.test(src) && /aren’t fully recorded yet/.test(src)
-      : /came back lower than it was/.test(src) && /aren’t fully recorded yet/.test(src)));
+      ? /No follower count since/.test(src) && /Followers are down/.test(src) && /aren’t fully tracked yet/.test(src)
+      : /came back lower than it was/.test(src) && /aren’t fully tracked yet/.test(src)));
   // followers and subscribers really do fall — for those a fall is a result, not a flap
   const fall = M.dayBuckets(flap, 1, 3, true);
   check(page + ' — with allowNeg a real fall is kept and marked ok', fall[0].ok && fall[0].gain === -200, JSON.stringify(fall[0]));
@@ -187,7 +187,7 @@ for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'follo
   check(page + ' — a missing 24 hours before says so rather than dividing by nothing',
     /weren’t fully recorded, so there is nothing to hold it against/.test(gone.p), gone.p);
   const odd = M.weekPlace1([{ ok: true, rate: 40, spanH: 19, gain: 32 }, { ok: true, rate: 40, spanH: 24, gain: 40 }], unit);
-  check(page + ' — a scaled window admits it was scaled', /Measured over 19 hours and scaled to 24/.test(odd.p), odd.p);
+  check(page + ' — a scaled window admits it was scaled', /Based on 19 hours of counts, scaled to 24/.test(odd.p), odd.p);
   check(page + ' — every answer is still a paintable {h,f,p}',
     [best, mid, tiny, gone, odd].every(a => a && a.h && a.f && a.p));
 }
@@ -218,7 +218,7 @@ console.log('\nMover — the post that did the work in the last 24 hours');
   const res = run({ videos: { a: series(300), b: series(100), c: series(-50), d: series(500, { staleH: 8 }) } });
   check('the biggest mover wins; the flapping counter and the stale series do not vote', res.f === '+300 in 24h', res.f);
   check('its share is of the recorded total, so 300 of 400 is 75%', /75%/.test(res.p), res.p);
-  check('it names the pool it counted', /across your 2 recorded videos/.test(res.p), res.p);
+  check('it names the pool it counted', /across your 2 tracked videos/.test(res.p), res.p);
   check('and says "over the last 24 hours", not "today"', /over the last 24 hours/.test(res.p) && !/today/.test(res.f + res.p), res.p);
   check('nothing recorded still answers with a sentence', !!run(null).h && !!run(null).p && run(null).h === 'A quiet 24 hours.');
   check('a lopsided day is called out', /doing the lifting/.test(res.h), res.h);
@@ -234,7 +234,7 @@ console.log('\nMover — the post that did the work in the last 24 hours');
   const tt = ttMover({ videos: { a: { s: series(80) }, b: { s: series(20) }, gone: { s: series(999) } } },
     [{ id: 'a', title: 'post a', create_time: oldS }, { id: 'b', title: 'post b', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
   check('TikTok — same rules, and a post outside the 60-post window abstains', tt.f === '+80 in 24h', tt.f);
-  check('TikTok — the pool is named: the newest posts being recorded', /80% of the ~100 gained by the 2 newest posts being recorded/.test(tt.p), tt.p);
+  check('TikTok — the pool is named: the newest posts being recorded', /80% of the ~100 gained by the 2 newest posts being tracked/.test(tt.p), tt.p);
   const nb = ttMover({ videos: { a: { s: series(300) }, n: { s: [[NOW - 19 * H, 900], [NOW - 0.5 * H, 5000]] } } },
     [{ id: 'a', title: 'Old steady one', create_time: oldS }, { id: 'n', title: 'Brand new', create_time: (NOW - 20 * H) / 1000 }],
     v => v.title, fmtUS, atb, NOW)();
@@ -313,11 +313,11 @@ console.log('\nHit rate — run or cold patch');
   check('counts the last five against the median of everything before them', res.f === '3 of 5', res.f);
   check('and names that median in the sentence', /95 views/.test(res.p), res.p);
   check('it says what the figure is — a total so far, or a projection — not a "comparable stretch"',
-    /each video’s total so far, or its projected 48-hour total while still launching/.test(res.p) &&
+    /each video’s total so far, or its estimated 48-hour total while under 2 days old/.test(res.p) &&
     !/comparable stretch/.test(grab(YT, 'answerHitRate') + grab(TT, 'answerHitRate')), res.p);
   check('and says older ones have had longer', /Older videos have had longer to add views/.test(res.p));
   check('a thin catalogue declines to call a run', /Too early/.test(ytHit(() => mkRows([200, 90, 300]), fmtUS)().h));
-  check('TikTok carries the same chip against its posts', /function answerHitRate/.test(TT) && /beat the typical earlier post/.test(TT));
+  check('TikTok carries the same chip against its posts', /function answerHitRate/.test(TT) && /beat your usual earlier post/.test(TT));
 }
 
 console.log('\nMilestone — a typical day, a calendar date, an honest percentage');
@@ -347,7 +347,7 @@ for (const [src, page, lbl, one, name] of [[YT, 'YouTube', 'subscribers', 'subsc
   const p = M.projectMilestone(pts, lbl, one);
   check(page + ' — one viral day does not set the pace (typical 7.5, not ~38)', /your typical \+7\.5 /.test(p.text.replace(/<[^>]*>/g, '')), p.text);
   check(page + ' — the basis is named', /the middle of the last 14 days/.test(p.text), p.text);
-  check(page + ' — and the date follows the typical pace (about 17 days)', p.daysOut > 16 && p.daysOut < 18.5 && /\(1[78] days\)/.test(p.text), p.text);
+  check(page + ' — and the date follows the typical pace (about 17 days)', p.daysOut > 16 && p.daysOut < 18.5 && /\(in 1[78] days\)/.test(p.text), p.text);
   check(page + ' — the unit is the full word', new RegExp(lbl + ' a day').test(p.text), p.text);
   // near the milestone late in the evening: the ETA is after midnight, so it is tomorrow
   const late = pts.map(x => x.slice()); late[late.length - 1][1] = 4995;
@@ -366,15 +366,15 @@ for (const [src, page, lbl, one, name] of [[YT, 'YouTube', 'subscribers', 'subsc
   // chip: far away is "Next stop", close is "in reach"
   const hist = page === 'YouTube' ? { channels: { c: pts.map(x => [x[0], x[1], 0]) } } : { followers: pts.map(x => [x[0], x[1], 0]) };
   const chip = build(NOW)(fmtUS, hist, 'c', { follower_count: 4870 }, { subs: 4870 }).answerMilestone();
-  check(page + ' — 17 days out is still "in reach" (30 days or less)', chip.h === '5,000 is in reach.', chip.h);
+  check(page + ' — 17 days out is still "in reach" (30 days or less)', chip.h === '5,000 ' + lbl + ' is in reach.', chip.h);
   const slow = pts.map((x, i) => [x[0], 4000 + i, 0]);
   const far = build(NOW)(fmtUS, page === 'YouTube' ? { channels: { c: slow } } : { followers: slow }, 'c', null, null).answerMilestone();
-  check(page + ' — a milestone months away is "Next stop", not "in reach"', far.h === 'Next stop: 5,000.', far.h + ' / ' + far.p);
+  check(page + ' — a milestone months away is "Next milestone", not "in reach"', far.h === 'Next milestone: 5,000 ' + lbl + '.', far.h + ' / ' + far.p);
   check(page + ' — the chip text carries no tags', !/[<>]/.test(chip.p), chip.p);
-  check(page + ' — progress is floored', chip.f === '97% there', chip.f);
+  check(page + ' — progress is floored', chip.f === '97% of 5,000', chip.f);
   const near = page === 'YouTube' ? { channels: { c: late.map(x => [x[0], x[1], 0]) } } : { followers: late.map(x => [x[0], x[1], 0]) };
   const chip2 = build(NOW)(fmtUS, near, 'c', { follower_count: 4995 }, { subs: 4995 }).answerMilestone();
-  check(page + ' — a milestone a day away is "in reach"', chip2.h === '5,000 is in reach.', chip2.h);
+  check(page + ' — a milestone a day away is "in reach"', chip2.h === '5,000 ' + lbl + ' is in reach.', chip2.h);
   // the live count is newer than the last sample and has crossed: the chip moves on
   const stale = pts.map(x => [x[0] - 3 * 3600e3, x[1], 0]);
   const crossed = build(NOW)(fmtUS, page === 'YouTube' ? { channels: { c: stale } } : { followers: stale }, 'c', { follower_count: 5003 }, { subs: 5003 }).answerMilestone();
@@ -426,9 +426,9 @@ console.log('\nNewest — the real reason a post cannot be graded');
   const l = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], sc, { n: 'loose' }, fmtUS, NOW);
   check('a loose projection says the posts vary too much', /vary too much at this age/.test(l.p), l.p);
   const nm = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], sc, { n: 'nomodel' }, fmtUS, NOW);
-  check('not enough launches keeps its own sentence', /enough of your finished launches/.test(nm.p), nm.p);
+  check('not enough launches keeps its own sentence', /not enough of your earlier posts have their first 48 hours fully tracked/.test(nm.p), nm.p);
   const thin = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds.slice(0, 3)], { ...sc, n: 1000 }, {}, fmtUS, NOW);
-  check('the threshold counts OTHER posts, like the report card', /only 3 of your other posts do/.test(thin.p), thin.p);
+  check('the threshold counts OTHER posts, like the report card', /only 3 of your other posts can so far/.test(thin.p), thin.p);
   const ok = tt([{ ...young, create_time: (NOW - 8 * H) / 1000 }, ...olds], { ...sc, n: 1150 }, {}, fmtUS, NOW);
   check('with four others it ranks', ok.f === 'Beats 60%', ok.f);
 
@@ -469,7 +469,7 @@ console.log('\nEngagement — one typical like rate');
   check('a true median: 30 posts at 7.0…12.8% → 9.9%', a.f === '9.9% typical', a.f);
   check('the newest is the real newest, and 93 views is too few to judge', /too few views to judge yet \(93\)/.test(a.p), a.p);
   const b = run([...vids, { id: 'new', create_time: 5000, view_count: 1000, like_count: 87 }]);
-  check('a judged newest quotes its rate and % of typical', /Your newest: 8\.7%, 88% of typical — within your normal spread/.test(b.p), b.p);
+  check('a judged newest quotes its rate and % of typical', /Your newest: 8\.7%, 88% of your usual — within your normal spread/.test(b.p), b.p);
   const z = run([...vids, { id: 'new', create_time: 5000, view_count: 0, like_count: 0 }]);
   check('a 0-view newest is not swapped for the one before it', /too few views to judge yet \(0\)/.test(z.p), z.p);
   check('fewer than three posts says so plainly', run(vids.slice(0, 2)).h === 'Not enough posts yet.');
@@ -494,7 +494,7 @@ for (const [src, page] of [[TT, 'TikTok'], [YT, 'YouTube']]) {
   check(page + ' — three hours after posting says "3 hours", not "0 days"', a.f === '3 hours', a.f);
   check(page + ' — and is on schedule against a 3-day gap', a.h === 'You’re on schedule.' && /about (every )?3 days/.test(a.p), a.p);
   check(page + ' — 36 hours is "1 day", not "2 days"', run([36, 108, 180, 252]).f === '1 day');
-  check(page + ' — the window is named', page === 'TikTok' ? /between your last 5 posts/.test(a.p) : /\(last 5 uploads\)/.test(a.p), a.p);
+  check(page + ' — the window is named', page === 'TikTok' ? /between posts \(based on your last 5\)/.test(a.p) : /\(last 5 uploads\)/.test(a.p), a.p);
   check(page + ' — a gap under a day is given in hours', /about (every )?12 hours/.test(run([2, 14, 26, 38, 50]).p), run([2, 14, 26, 38, 50]).p);
   check(page + ' — "Just posted" means under two days', run([40, 100]).h === 'Just posted.' && run([60, 100]).h === 'Keep going.');
 }

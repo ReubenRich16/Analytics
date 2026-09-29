@@ -147,16 +147,27 @@ function world(targetAgeMin) {
   check('the rank is the post\'s real place in the field', rank === 3, 'got #' + rank);
 }
 {
+  // a clear lead over every rival is a genuine record: marked for motion.js to celebrate.
+  // A tie for first, or any lower place, is not.
+  const w = world(360);
+  const lead = build('latest').run({ ...w.target, view_count: 9000 }, w.hist, w.videos);
+  check('a post out in front of every rival wears the win mark', /<b class="cc-win">#1 of 5<\/b>/.test(lead), (lead.match(/#\d+ of \d+/) || [])[0]);
+  const third = build('latest').run(w.target, w.hist, w.videos);
+  check('a post in 3rd place is not celebrated', !/cc-win/.test(third));
+  const tie = build('latest').run({ ...w.target, view_count: Math.round(3000 * 360 / 600) }, w.hist, w.videos);
+  check('a post tied for first is not celebrated', !/cc-win/.test(tie), (tie.match(/#\d+ of \d+/) || [])[0]);
+}
+{
   // modes pick different sets: newest four vs highest four at that age
   const w = world(360);
   w.hist.videos.late = { create_time: Math.floor((NOW - 400 * 60000) / 1000), title: 'newest rival',
                          cover: '', s: curve(NOW - 400 * 60000, 40) };
   const latest = build('latest').run(w.target, w.hist, w.videos);
   const best = build('best').run(w.target, w.hist, w.videos);
-  check('latest mode names itself', /most recent recorded posts/.test(latest));
-  check('best mode names itself', /best recorded openings/.test(best));
+  check('latest mode names itself', /newest other posts/.test(latest));
+  check('best mode names itself', /other posts with the most views/.test(best));
   check('and both count the rows really shown, not a flat ten',
-    /your <b>5 most recent recorded posts<\/b>/.test(latest) && /your <b>5 best recorded openings<\/b>/.test(best));
+    /your <b>5 newest other posts<\/b> at the same age/.test(latest) && /your <b>5 other posts with the most views<\/b> at the same age/.test(best));
   check('the newest, weakest rival appears in latest mode', /newest rival/.test(latest));
   check('both modes list every rival when there are fewer than ten',
     (latest.match(/class="hbar-row"/g) || []).length === (best.match(/class="hbar-row"/g) || []).length);
@@ -468,20 +479,20 @@ console.log('\nreport card — honest reasons, one typical like rate');
   const a = card(young, [young, ...others], sc);
   check('a 3-hour-old post with 28 scored others gets no letter', /— Not graded yet/.test(a) && !/ (A\+|A-|A|B\+|B|C|D|F) Beats/.test(a), a);
   check('and the reason is its age, not a lack of posts',
-    /reach is graded once this post is 5 hours old and its first 48 hours can be projected/.test(a) && !/four comparable posts/.test(a), a);
+    /Reach is graded once this post is 5 hours old and its first 48 hours can be estimated/.test(a) && !/4 other posts/.test(a), a);
   const b = card({ ...young, create_time: (NOW - 8 * H) / 1000 }, [young, ...others], sc);
-  check('past 5 hours the reason drops the age', /reach is graded once this post’s first 48 hours can be projected/.test(b), b);
+  check('past 5 hours the reason drops the age', /Reach is graded once this post’s first 48 hours can be estimated/.test(b), b);
   const small = card(young, [young, ...others.slice(0, 3)], sc);
-  check('a genuinely small pool keeps the four-posts reason', /Reach needs at least four comparable posts/.test(small), small);
-  check('and grades on engagement with the band in the headline', /Beats \d+% of your posts on engagement — (about|above|below) typical \(\d+%\)/.test(small), small);
+  check('a genuinely small pool keeps the four-posts reason', /A reach grade needs at least 4 other posts to compare with/.test(small), small);
+  check('and grades on engagement with the band in the headline', /Beats \d+% of your other posts on like rate — (about|above|below) your usual \(\d+%\)/.test(small), small);
   const ranked = { id: 'r', create_time: (NOW - 10 * H) / 1000, view_count: 2725, like_count: 260 };
   const r = card(ranked, [ranked, ...others], { ...sc, r: 5393 });
-  check('the headline says the percentile is reach', /Beats \d+% of your 28 posts on reach/.test(r), r);
+  check('the headline says the percentile is reach', /Beats \d+% of your 28 other posts on reach/.test(r), r);
   check('a launching post’s reach reads as an estimate by 48h, not as views', /~5,393 by 48h/.test(r) && !/5,393 views/.test(r), r);
   check('the reach explainer admits older posts carry a longer tail', /Older posts have had longer to pick up late views/.test(r), r);
   const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };
   const zc = card(zero, [zero, ...others], sc);
-  check('a 0-view post gets no engagement bar and no F', !/Engagement \S+ \d+% of typical/.test(zc) && !/ F /.test(zc), zc);
+  check('a 0-view post gets no engagement bar and no F', !/Like rate \S+ \d+% of your usual/.test(zc) && !/ F /.test(zc), zc);
   const src = grab('ttReportCardHtml');
   check('the engagement bar is coloured from its own index when reach is graded',
     /idx >= 100 \? 'var\(--up\)' : idx >= 85 \? 'var\(--accent\)' : 'var\(--gold\)'/.test(src));
