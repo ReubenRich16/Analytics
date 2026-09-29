@@ -62,13 +62,13 @@ const HOT_HOURS   = 48;
               warm   2–14d   every 15 min     26 videos     2,534
               cool  14–60d   every hour      101 videos     2,429
      TikTok   hot    0–48h   every minute      5 posts      7,200
-              tail   2–60d   15 min / hour   ≤15 posts        720
+              tail   2–60d   15 min / hour   ~55 posts      2,400   (~15 × 96 + ~40 × 24)
                                                            ─────────
-                                                            ~19,200 samples/day
+                                                            ~20,900 samples/day
 
    D1 bills a row-write for the table row AND one for every index on it, so the cost per
    sample is 1 + (indexes on samples). schema.sql keeps exactly one, which puts this at
-   about 38,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
+   about 42,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
    alone.
 
    Two caveats worth knowing. This comment said a flat "two row-writes" while samples
@@ -76,9 +76,9 @@ const HOT_HOURS   = 48;
    checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And for
    a long stretch the live database still carried that second index, because the deploy's
    schema step failed on every run (the API token lacked the D1 permission — see
-   deploy-worker.yml), leaving the real bill at ~58,000. The token gained the permission
+   deploy-worker.yml), leaving the real bill at ~63,000. The token gained the permission
    and the schema applied on 31 Aug 2026, dropping the index — the bill now matches the
-   ~38,000 plan.
+   ~42,000 plan.
 
    Reading the roster to decide who is due costs under 200 rows every 15 minutes. The
    extra YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
@@ -87,8 +87,9 @@ const HOT_HOURS   = 48;
 
    TikTok's tail is capped by its own API rather than by this cadence — the list call
    returns 20 posts a page, so the hourly pass asks for 60 and the minute passes ask for
-   20. At her rate 60 posts is about three and a half weeks, so the far end of the cool
-   tier is thinner there than on YouTube.
+   20. So on TikTok the 15-minute tier covers only the 20 newest posts (about 8 days at her
+   rate) and the hourly tier the 60 newest (about three and a half weeks); an older post is
+   not recorded at all.
 
    A tapering cadence used to be rejected here on the grounds that it "makes the gap
    between consecutive samples vary, which silently breaks any chart that plots by array
@@ -1018,8 +1019,11 @@ async function pairsHandler(request, env) {
     catch (e) { return json({ error: 'store failed' }, 502); }
     return json({ ok: true, n: Math.min(400, body.pairs.length) });
   }
+  // a failed read is an error, not an empty list: answering [] made the page treat "no
+  // pairs" as the truth and overwrite the device's own copy with it
   let stored = '[]';
-  try { stored = (await env.MINUTE.get(key)) || '[]'; } catch (e) {}
+  try { stored = (await env.MINUTE.get(key)) || '[]'; }
+  catch (e) { return json({ error: 'pairs read failed' }, 502); }
   return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
 }
 

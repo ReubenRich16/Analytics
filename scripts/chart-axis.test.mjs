@@ -319,5 +319,21 @@ console.log('\nthe two views are a toggle');
   check('and maps the hovered row back through rowIdx', /d\.tips\[d\.rowIdx\[n\]\]/.test(src));
 }
 
+// TikTok's lineChart: a caller with one point a day says what a gap is outright, so the
+// views-per-day line is never drawn straight across a missing day
+console.log('\nTikTok lineChart maxGap');
+{
+  const TT = fs.readFileSync(new URL('../yt-dashboard/tiktok.html', import.meta.url), 'utf8');
+  const lift = n => { const i = TT.indexOf(n); return TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const LC = new Function('fmt', 'const esc=s=>String(s); const chartPush=()=>0;\n' +
+    lift('  function niceScale(') + lift('  function axisNum(') + lift('  function lineChart(') + '\nreturn lineChart;')(new Intl.NumberFormat('en-US'));
+  const D = 864e5, at = [0, 1, 2, 3, 5, 6, 7].map(d => d * D), pts = [5, 6, 7, 8, 9, 10, 11];
+  const paths = h => [...h.matchAll(/ d="([^"]+)"/g)].map(m => m[1]);
+  const lineD = h => paths(h).find(d => !/Z/.test(d)) || '';
+  const withGap = LC(pts, 'red', 'x', { at, maxGap: 1.5 * D }), without = LC(pts, 'red', 'x', { at });
+  check('with maxGap, a missing day splits the line in two', (lineD(withGap).match(/M/g) || []).length === 2, lineD(withGap));
+  check('without it, four times the median spacing lets the line run straight across', (lineD(without).match(/M/g) || []).length === 1, lineD(without));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail?1:0);

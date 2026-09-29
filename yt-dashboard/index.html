@@ -2241,15 +2241,15 @@
         '<button class="ghost' + (rateView === 'rank' ? ' active' : '') + '" data-rv="rank">Ranked</button>' +
       '</div>' +
       (rateView === 'rank'
-        ? '<p class="explain">Your ten highest like rates, plus the newest wherever it lands. The dashed line is ' +
+        ? '<p class="explain">Your ' + Math.min(10, s.pts.length) + ' highest like rates, plus the newest wherever it lands. The dashed line is ' +
           'your typical rate (' + s.medRate.toFixed(1) + '%). Views are on the right because the same rate on 150 ' +
           'views and on 2,000 are different achievements — a ranking on rate alone would hide that.</p>' +
           rankListHtml(s.pts, s.sTips, common)
         : '<p class="explain">Each dot is a video: how many people found it across the bottom, and what share of them ' +
           'liked it up the side. The horizontal line is your typical rate (' + s.medRate.toFixed(1) + '%), so ' +
           s.above + ' of your ' + s.pts.length + ' videos sit on or above it — that is what "typical" means here, not ' +
-          'good or bad. <b>The top-left corner is the interesting one</b>: ' + s.quiet + ' videos that fewer people saw ' +
-          'but a bigger share of them loved. Your best-loved and your newest are labelled. Hover or tap any dot for ' +
+          'good or bad. <b>The top-left corner is the interesting one</b>: ' + s.quiet + (s.quiet === 1 ? ' video' : ' videos') + ' that fewer people saw ' +
+          'but an above-typical share of them liked. Your best-loved and your newest are labelled. Hover or tap any dot for ' +
           'the full numbers.</p>' +
           ratePlotHtml(s.pts, s.sTips, common));
   }
@@ -3913,7 +3913,7 @@
     // valText, because the default "N · X%" would print each day as a share of the
     // seven averages summed — a percentage of nothing anyone can interpret
     const dowRows = Object.entries(avgVpdBy(rows, r => r.dow)).map(([d, v]) => ({ label: DAYFULL[+d], val: Math.round(v), valText: fmt.format(Math.round(v)) + ' views avg' })).sort((a, b) => b.val - a.val);
-    if (dowRows.length >= 2) html += section('Best day to post', 'Average total views of the uploads you’ve posted on each weekday — your strongest is <b>' + esc(dowRows[0].label) + '</b>.', hbarList(dowRows, { color: 'var(--up)' }));
+    if (dowRows.length >= 2) html += section('Best day to post', 'Average total views of the uploads you’ve posted on each weekday — your strongest is <b>' + esc(dowRows[0].label) + '</b>. A weekday needs at least 2 scored uploads before it gets a figure, so any day missing here has fewer.', hbarList(dowRows, { color: 'var(--up)' }));
     const byHour = [];
     for (let h = 0; h < 24; h++) {
       const a = rows.filter(r => r.hour === h && r.score != null).map(r => r.score);
@@ -3924,8 +3924,15 @@
     }
     byHour.sort((a, b) => b.val - a.val);
     // the hours never posted in are stated rather than silently absent, compressed
-    // into ranges so fifteen of them read as one clause instead of a list
-    const posted = new Set(byHour.map(r => r.h)), quiet = [];
+    // into ranges so fifteen of them read as one clause instead of a list. Taken from
+    // EVERY upload: an hour whose only upload is too new to score has still been posted in.
+    const posted = new Set(rows.map(r => r.hour)), quiet = [];
+    const scoredHours = new Set(byHour.map(r => r.h));
+    const young = [...posted].filter(h => !scoredHours.has(h)).sort((a, b) => a - b).map(h => {
+      const hr = rows.filter(r => r.hour === h);
+      return hName(h) + (hr.length === 1 ? ' has an upload that is' : ' has uploads that are') +
+        (hr.every(r => r.ageM < PJ_HORIZON) ? ' too new to score yet' : ' not scored yet');
+    });
     for (let h = 0; h < 24; h++) {
       if (posted.has(h)) continue;
       const start = h;
@@ -3937,12 +3944,14 @@
       (byHour[0].n === 1 ? ' (resting on a single video, so treat it as a lead, not a pattern)' : ' (' + byHour[0].n + ' videos)') +
       '. The count on each row says how much it rests on — an hour with one video is an anecdote. Your history, not a guarantee: YouTube only shows “when your viewers are online” inside Studio and the API doesn’t share it.',
       hbarList(byHour, { color: 'var(--accent)' }) +
-      (quiet.length ? '<p class="dnote" style="margin-top:8px">Never posted at ' + quiet.join(', ') + ' — those hours can’t score until something goes out then.</p>' : ''));
+      (quiet.length || young.length ? '<p class="dnote" style="margin-top:8px">' +
+        (quiet.length ? 'No uploads yet at ' + quiet.join(', ') + ' — those hours can’t score until something goes out then.' : '') +
+        (young.length ? (quiet.length ? ' ' : '') + young.join('; ') + '.' : '') + '</p>' : ''));
     const pubs = rows.map(r => r.pub).sort((a, b) => a - b), gaps = [];
     for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
     if (gaps.length >= 3) {
       const g2 = gaps.slice().sort((a, b) => a - b), medGap = g2[g2.length >> 1], sameDay = gaps.filter(x => x < 0.5).length;
-      let note = 'You upload roughly every <b>' + (medGap < 1 ? Math.round(medGap * 24) + ' hours' : medGap.toFixed(1) + ' days') + '</b>.';
+      let note = 'You upload roughly every <b>' + (medGap < 1 / 24 ? 'less than an hour' : medGap < 1 ? Math.round(medGap * 24) + (Math.round(medGap * 24) === 1 ? ' hour' : ' hours') : medGap.toFixed(1) + ' days') + '</b>.';
       if (sameDay >= 2) note += ' You’ve bunched ' + sameDay + ' uploads into a single day a few times — spreading them out gives each its own launch window and push from YouTube.';
       html += noteSection('Posting rhythm', note);
     }
@@ -4004,6 +4013,9 @@
     const ltLikes = lt ? lt[4] : tl;
     const ltDis = lt ? (lt[5] != null ? lt[5] : null) : (hasRu ? dis : null);
     const posPct = (ltDis != null && ltLikes + ltDis > 0) ? Math.round(ltLikes / (ltLikes + ltDis) * 100) : null;
+    // at the top, not inside the scatter's if-block: the Median views tile needs it first
+    const med = arr => { const s = arr.slice().sort((a, b) => a - b); const n = s.length;
+      return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0; };
     let html = '';
     // headline lifetime totals
     html += '<div class="dsection"><h4>Lifetime totals</h4><p class="explain">Everything your channel has earned' + (lt ? ' (YouTube official, all-time)' : ' (live counts across your uploads)') + '.</p><div class="metric-grid">' +
@@ -4020,11 +4032,12 @@
       '</div></div>';
     // per-video averages + ratios ("avg likes vs total")
     const engPct = tv ? (tl / tv * 100) : 0, cpk = tv ? (tc / tv * 1000) : 0;
-    const vpds = rows.map(r => r.score).filter(v => v != null).sort((a, b) => a - b);
-    const medVpd = vpds.length ? vpds[vpds.length >> 1] : 0;
-    html += '<div class="dsection"><h4>Per-video averages</h4><p class="explain">What a typical upload of yours does — useful as the bar any new video should beat.</p><div class="metric-grid m8">' +
+    // the true middle of the current view counts, on the same basis as Avg views and the
+    // scatter's "typical" line, so the card prints one typical figure, not three
+    const vc = videoIds.map(id => (perVideo[id] && perVideo[id].views) || 0).filter(x => x > 0);
+    html += '<div class="dsection"><h4>Per-video averages</h4><p class="explain">Averages get pulled up by your biggest hits — the median is your typical video.</p><div class="metric-grid m8">' +
       mcell('Avg views', fmt.format(Math.round(tv / n)), 'per video') +
-      mcell('Median views', fmt.format(Math.round(medVpd)), 'typical video, whole launch') +
+      mcell('Median views', vc.length ? fmt.format(Math.round(med(vc))) : '\u2014', 'the middle video') +
       mcell('Avg likes', fmt.format(Math.round(tl / n)), 'per video') +
       mcell('Avg comments', fmt.format(Math.round(tc / n)), 'per video') +
       mcell('Like rate', engPct.toFixed(1) + '%', 'likes per view') +
@@ -4044,11 +4057,9 @@
       const newest = pts.reduce((a, b) => (b.at > a.at ? b : a));
       const bestLoved = pts.reduce((a, b) => (b.rate > a.rate ? b : a));
       for (const p of pts) { p.hot = p.id === newest.id; p.best = p.id === bestLoved.id; }
-      const med = arr => { const s = arr.slice().sort((a, b) => a - b); const n = s.length;
-        return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0; };
       const medRate = med(pts.map(p => p.rate)), medViews = med(pts.map(p => p.x));
       const above = pts.filter(p => p.rate >= medRate).length;
-      const quiet = pts.filter(p => p.rate >= medRate && p.x < medViews).length;
+      const quiet = pts.filter(p => p.rate > medRate && p.x < medViews).length;
       const sTips = pts.map(p => videoTitle(p.id) + ' — ' + fmt.format(p.x) + ' views · ' + fmt.format(p.y) + ' likes · ' +
         p.rate.toFixed(1) + '% like rate (' + (medRate ? (p.rate / medRate).toFixed(1) : '1.0') + '× typical) · ' +
         p.cpk.toFixed(1) + ' comments/1k · ' + new Date(p.at).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }));
@@ -4063,10 +4074,16 @@
     // best & worst performers
     const byV = rows.filter(r => r.score != null).sort((a, b) => b.score - a.score);
     const nameOf = id => videoTitle(id);
+    // a video inside its first 48 hours is scored by its projected total, so the row says so
+    const rowOf = r => {
+      const young = r.ageM < 2 * 1440, sc = Math.round(r.score);
+      return { label: nameOf(r.id), val: Math.max(1, sc), valText: (young ? '~' : '') + fmt.format(sc) + (young ? ' projected' : ' views') };
+    };
     html += section('Top 5 videos', 'By total views \u2014 or the projected first-48-hour total while a launch is still running, so a new upload can appear here on merit rather than on being new.',
-      hbarList(byV.slice(0, 5).map(r => ({ label: nameOf(r.id), val: Math.round(r.score), valText: fmt.format(Math.round(r.score)) + ' views' })), { color: 'var(--up)' }));
-    if (byV.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical video. Consider refreshing titles, tags or thumbnails.',
-      hbarList(byV.slice(-5).reverse().map(r => ({ label: nameOf(r.id), val: Math.max(1, Math.round(r.score)), valText: fmt.format(Math.round(r.score)) + ' views' })), { color: 'var(--down)' }));
+      hbarList(byV.slice(0, 5).map(rowOf), { color: 'var(--up)' }));
+    // ten, not eight: below ten the bottom five overlap the top five and reach the middle
+    if (byV.length >= 10) html += section('Weakest 5 — worth a second look', 'These under-perform your typical video. Consider refreshing titles, tags or thumbnails.',
+      hbarList(byV.slice(-5).reverse().map(rowOf), { color: 'var(--down)' }));
     el.innerHTML = html;
   }
 

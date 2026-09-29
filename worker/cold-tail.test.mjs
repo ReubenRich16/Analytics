@@ -75,19 +75,20 @@ console.log('\n2. the arithmetic the comment promises');
   const W_PER = 1 + idx;
   // TikTok's side of the table, which this file cannot derive: its cadence is set by the
   // list API's 20-a-page cap rather than by coldDue, and by her posting rate
-  const ttHot = 7200, ttTail = 720;
+  // tail: ~15 posts in the 20 newest at 15 min (×96) + ~40 more of the 60 newest hourly (×24)
+  const ttHot = 7200, ttTail = 15 * 96 + 40 * 24;
   const samples = hot + warm + cool + ttHot + ttTail;
   const rowWrites = samples * W_PER;
   check('YouTube hot is about 6,300 samples a day', Math.abs(hot - 6336) < 300, Math.round(hot));
   check('the tail adds a few thousand, not tens of thousands', warm + cool < 8000, Math.round(warm + cool));
-  check('both platforms come to the ~19,200 samples/day the table claims',
-    Math.abs(samples - 19200) < 700, Math.round(samples));
+  check('both platforms come to the ~20,900 samples/day the table claims',
+    Math.abs(samples - 20900) < 700, Math.round(samples));
   check('the schema keeps exactly one index on samples', idx === 1, idx + ' found');
   check('the redundant prune index is dropped rather than created',
     /DROP INDEX IF EXISTS idx_samples_prune/.test(schema) &&
     !/CREATE INDEX[^;]*idx_samples_prune/i.test(schema));
-  check('so the sampler costs the ~38,000 row-writes/day the comment claims',
-    Math.abs(rowWrites - 38000) < 2000, Math.round(rowWrites));
+  check('so the sampler costs the ~42,000 row-writes/day the comment claims',
+    Math.abs(rowWrites - 42000) < 2000, Math.round(rowWrites));
   check('the hot windows alone are about 27,000 of it',
     Math.abs((hot + ttHot) * W_PER - 27000) < 2000, Math.round((hot + ttHot) * W_PER));
   check('the total fits the 100,000/day row-write allowance with room to spare',

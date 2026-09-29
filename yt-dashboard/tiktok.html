@@ -237,7 +237,7 @@
         <option value="shares">Sort: most shares</option>
         <option value="eng">Sort: engagement rate</option>
         <option value="title">Sort: caption A–Z</option>
-        <option value="" disabled>— or click a column header —</option>
+        <option value="" disabled>— on a wide screen, click a column header —</option>
       </select>
     </div>
     <div class="tscroll">
@@ -246,8 +246,8 @@
           <th></th>
           <th data-sort="title" style="text-align:left" title="Click to sort">Caption</th>
           <th data-sort="views" title="Click to sort">Views</th>
-          <th data-sort="tickV" title="Views this post gained since the last refresh. Click to sort">+tick</th>
-          <th data-sort="sessV" title="Views this post has gained since you opened this tab. Click to sort">+session</th>
+          <th data-sort="tickV" title="Views this post gained since the last refresh. Click to sort">+Since refresh</th>
+          <th data-sort="sessV" title="Views this post has gained this session. Click to sort">+This session</th>
           <th data-sort="likes" title="Click to sort">Likes</th>
           <th data-sort="comments" title="Click to sort">Comments</th>
           <th data-sort="shares" title="Click to sort">Shares</th>
@@ -257,7 +257,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's restricted Research and Business APIs carry them). +tick and +session survive a quick reload — within 30 minutes the session resumes and the gap is counted; longer away, a fresh session starts and the velocity strip backfills, faded, from your Worker's recordings. A post that drops out of TikTok's 60-post window stops being counted rather than counting backwards.</p>
+    <p class="dnote" style="padding:10px 16px">+Since refresh = views each post gained since the previous refresh; +This session = views since this session began (a reload within 30 minutes carries on). ⚡ = gaining at least 1.5× as fast as the previous 24 hours, with 50+ views in the last day. Both counts survive a quick reload — within 30 minutes the session resumes and the gap is counted; longer away, a fresh session starts; if a post is in its first 48 hours, the Now room's velocity strip backfills, faded, from your Worker's minute-by-minute recordings. TikTok's API provides views, likes, comments and shares. It does not expose retention, traffic sources or audience demographics — those aren't available to an app like this one (only TikTok's API for Business carries them, and only for Business accounts). Only your newest 60 posts are fetched; an older post stops being counted rather than counting backwards.</p>
   </div>
   </div>
 
@@ -274,7 +274,7 @@
   <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings -->
   <div class="card" id="recTrendsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Trends — from your own recordings</div>
-    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from what your Worker recorded, with nothing fetched. A gap in the recording is left out, not guessed.</p>
+    <p class="explain" style="margin-top:8px">TikTok publishes no history of its own, so every chart here is built from your Worker’s recordings, as kept on this device. A gap in the recording is left out, not guessed.</p>
     <div id="recTrendsContent"><p class="dnote">compiling…</p></div>
   </div>
 
@@ -285,8 +285,8 @@
 
   <!-- HASHTAGS -->
   <div class="card" id="tagsCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">What's working — hashtags &amp; keywords</div>
-    <p class="explain" style="margin-top:8px">Every hashtag across your captions, ranked by the <b>average reach of the posts that use it</b> — so a tag on two hits beats a tag spread across ten quiet ones. Use the winners in your next caption.</p>
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">What's working — hashtags</div>
+    <p class="explain" style="margin-top:8px">Every hashtag across your captions, ranked by the <b>typical reach of the posts that use it</b> — so a tag on two hits beats a tag spread across ten quiet ones. Use the winners in your next caption.</p>
     <div id="tagsContent"><p class="dnote">crunching…</p></div>
   </div>
 
@@ -528,7 +528,9 @@
   /* opts.color paints every bar; r.color paints one, and r.strong bolds it. The race needs
      to say "this row is the post you are looking at" among ten rivals, and colour alone
      would be doing that with hue on a page that ships fourteen themes. Existing callers
-     pass neither, so their output is unchanged byte for byte. */
+     pass neither, so their output is unchanged byte for byte. r.sub puts a count on its own
+     second line under the figure — on a phone the value column is 78px, and one string of
+     "16,621 views · 3 posts" broke wherever it ran out of room. */
   function hbarList(rows, opts) {
     const max = Math.max(1, ...rows.map(r => r.val));
     return rows.map(r => {
@@ -536,7 +538,8 @@
       const col = r.color || (opts && opts.color);
       return '<div class="hbar-row"' + (r.strong ? ' style="font-weight:700"' : '') + ' title="' + esc(r.label) + '"><div class="hlabel">' + esc(r.label) + '</div>' +
         '<div class="htrack"><div class="hfill" style="width:' + Math.max(1, r.val / max * 100).toFixed(1) + '%' + (col ? ';background:' + col : '') + '"></div></div>' +
-        '<div class="hval">' + val + '</div></div>';
+        '<div class="hval">' + (r.sub ? '<span style="display:block;white-space:nowrap">' + val + '</span>' +
+        '<small style="display:block;white-space:nowrap">' + esc(r.sub) + '</small>' : val) + '</div></div>';
     }).join('');
   }
 
@@ -629,8 +632,11 @@
        edge. That is exactly the "data stopped at 48 hours" report, and the data had not
        stopped: it was in D1, it was served, it was merged, and then it was drawn as
        nothing. 75 minutes clears the hourly tier with slack. */
+    // opts.maxGap: a caller whose points have a known spacing (one a day) says what a
+    // gap is outright, rather than leaving it to four times the median spacing
     let maxGap = Infinity;
-    if (at && pts.length > 2) {
+    if (at && opts.maxGap) maxGap = opts.maxGap;
+    else if (at && pts.length > 2) {
       const dts = []; for (let i = 1; i < at.length; i++) dts.push(at[i] - at[i - 1]);
       dts.sort((a, b) => a - b);
       maxGap = Math.max(4 * dts[dts.length >> 1], 75 * 60e3);
@@ -1706,6 +1712,9 @@
       // a post with no figure (under a day old, for the average) sorts last either way
       if (x == null || y == null) return x == null && y == null ? (b.create_time || 0) - (a.create_time || 0) : x == null ? 1 : -1;
       let c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+      // a tie on "moving right now" (nothing moved this refresh) falls back to newest
+      // first, not to a disguised most-views list
+      if (c === 0 && (tableSort.key === 'tickV' || tableSort.key === 'sessV')) return (b.create_time || 0) - (a.create_time || 0);
       if (c === 0) c = (a.view_count || 0) - (b.view_count || 0);
       return c * dir;
     });
@@ -1716,7 +1725,10 @@
       th.classList.toggle('desc', on && dir === -1);
       th.classList.toggle('asc', on && dir === 1);
     });
-    $('tableLabel').textContent = 'Posts \u2014 tracking ' + rows.length + ' \u00b7 tap a row for the full breakdown, \u2197 to open it on TikTok' +
+    // "newest 60 of 312" only when the list really is cut short; otherwise it is all of them
+    const shown = rows.length >= 60 && me && (me.video_count || 0) > rows.length
+      ? 'newest ' + rows.length + ' of ' + fmt.format(me.video_count) : 'showing ' + rows.length;
+    $('tableLabel').textContent = 'Posts \u2014 ' + shown + ' \u00b7 tap a row for the full breakdown, \u2197 to open it on TikTok' +
       (listPartial ? ' \u00b7 TikTok sent only part of the list' : '');
     const tb = $('tbody'); tb.innerHTML = '';
     for (const v of rows) {
@@ -1725,10 +1737,10 @@
       if (d.tickV > 0) tr.className = 'mover';
       tr.innerHTML =
         '<td class="covercell">' + (v.cover_image_url ? '<img class="cover" loading="lazy" alt="" src="' + esc(v.cover_image_url) + '">' : '') + '</td>' +
-        '<td class="title">' + (accelSet.has(v.id) ? '<span title="Accelerating \u2014 gaining at least ' + ACCEL_RATIO + '\u00d7 as fast as the day before, on at least ' + ACCEL_MIN + ' views a day">\u26a1 </span>' : '') + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
+        '<td class="title">' + (accelSet.has(v.id) ? '<span title="Speeding up \u2014 gaining at least ' + ACCEL_RATIO + '\u00d7 as fast as the previous 24 hours, with at least ' + ACCEL_MIN + ' views in the last day">\u26a1 </span>' : '') + esc(capOf(v)) + (v.share_url ? ' <a class="ttopen" href="' + esc(v.share_url) + '" target="_blank" rel="noopener" title="Open this post on TikTok" aria-label="Open on TikTok">\u2197</a>' : '') + '</td>' +
         '<td data-label="Views">' + fmt.format(v.view_count || 0) + '</td>' +
-        '<td data-label="+tick">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
-        '<td data-label="+session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
+        '<td data-label="+Since refresh">' + (d.tickV > 0 ? '<span class="tickup">+' + fmt.format(d.tickV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
+        '<td data-label="+This session">' + (d.sessV > 0 ? '<span class="tickup">+' + fmt.format(d.sessV) + '</span>' : '<span class="zero">\u00b7</span>') + '</td>' +
         '<td data-label="Likes">' + fmt.format(v.like_count || 0) + '</td>' +
         '<td data-label="Comments">' + fmt.format(v.comment_count || 0) + '</td>' +
         '<td data-label="Shares">' + fmt.format(v.share_count || 0) + '</td>' +
@@ -3187,9 +3199,8 @@
       : Math.floor(hrs / 24) + ' day' + (Math.floor(hrs / 24) === 1 ? '' : 's');
     if (pubs.length < 4) return { h: hrs < 48 ? 'Just posted.' : 'Keep going.', f: sinceTxt,
       p: 'Since your last post. A few more and this can say whether that is your usual gap.' };
-    const k = Math.min(pubs.length, 10), gaps = [];
-    for (let i = 1; i < k; i++) gaps.push((pubs[i - 1] - pubs[i]) / 864e5);
-    const med = pjMed(gaps), days = hrs / 24;
+    // the same gaps the Coach's Posting rhythm reads, so the two agree by construction
+    const ug = usualGap(10), k = ug.posts, med = ug.med, days = hrs / 24;
     const gapTxt = med < 1 ? Math.max(1, Math.round(med * 24)) + ' hour' + (Math.round(med * 24) <= 1 ? '' : 's')
       : Math.round(med) + ' day' + (Math.round(med) === 1 ? '' : 's');
     const verdict = days <= med ? 'You’re on schedule.' : days <= med * 2 ? 'You’re due.' : 'It’s been a while.';
@@ -3236,7 +3247,7 @@
      Same rules as the YouTube page: gains scaled to a 24-hour rate because the sampling
      windows are elastic, a count that went backwards is skipped, and a post not sampled
      in the last six hours doesn't get to claim "today". A post that has scrolled out of
-     TikTok's 60-post window abstains — there is no caption left to name it by. */
+     the 60 newest posts the page fetches abstains — there is no caption left to name it by. */
   function answerMover() {
     const rec = (hist && hist.videos) || {};
     const now = Date.now();
@@ -3344,15 +3355,15 @@
         '<button class="ghost' + (rateView === 'rank' ? ' active' : '') + '" data-rv="rank">Ranked</button>' +
       '</div>' +
       (rateView === 'rank'
-        ? '<p class="explain">Your ten highest like rates, plus the newest wherever it lands. The dashed line is ' +
+        ? '<p class="explain">Your ' + Math.min(10, s.pts.length) + ' highest like rates, plus the newest wherever it lands. The dashed line is ' +
           'your typical post’s rate (' + s.medRate.toFixed(1) + '%). Views are on the right because the same rate on 150 ' +
           'views and on 2,000 are different achievements — a ranking on rate alone would hide that.</p>' +
           rankListHtml(s.pts, s.sTips, common)
         : '<p class="explain">Each dot is a post: how many people found it across the bottom, and what share of them ' +
           'liked it up the side. The horizontal line is your typical post’s rate (' + s.medRate.toFixed(1) + '%), so ' +
           s.above + ' of your ' + s.pts.length + ' posts sit on or above it — that is what "typical" means here, not ' +
-          'good or bad. <b>The top-left corner is the interesting one</b>: ' + s.quiet + ' posts that fewer people saw ' +
-          'but a bigger share of them loved. Your best-loved and your newest are labelled. Hover or tap any dot for ' +
+          'good or bad. <b>The top-left corner is the interesting one</b>: ' + s.quiet + (s.quiet === 1 ? ' post' : ' posts') + ' that fewer people saw ' +
+          'but an above-typical share of them liked. Your best-loved and your newest are labelled. Hover or tap any dot for ' +
           'the full numbers.</p>' +
           ratePlotHtml(s.pts, s.sTips, common));
   }
@@ -3373,7 +3384,9 @@
       views: a.views + (v.view_count || 0), likes: a.likes + (v.like_count || 0),
       comments: a.comments + (v.comment_count || 0), shares: a.shares + (v.share_count || 0)
     }), { views: 0, likes: 0, comments: 0, shares: 0 });
-    const paces = videos.map(scoreOf).filter(x => x != null).sort((a, b) => a - b);
+    // the true middle of the current view counts, on the same basis as Avg views and the
+    // scatter's "typical" line, so the card prints one typical figure, not three
+    const vc = videos.map(v => v.view_count || 0).filter(x => x > 0);
     let html = '<div class="dsection"><h4>Totals</h4><p class="explain">Across the ' + n + ' posts the API returns.</p><div class="metric-grid m8">' +
       mcell('Posts', fmt.format(n)) +
       mcell('Followers', fmt.format(me.follower_count || 0)) +
@@ -3384,9 +3397,9 @@
       mcell('Account likes', fmt.format(me.likes_count || 0), 'lifetime, all posts') +
       mcell('Following', fmt.format(me.following_count || 0)) +
       '</div></div>';
-    html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">The bar any new post should beat.</p><div class="metric-grid m8">' +
+    html += '<div class="dsection"><h4>Per-post averages</h4><p class="explain">Averages get pulled up by your biggest hits — the median is your typical post.</p><div class="metric-grid m8">' +
       mcell('Avg views', fmt.format(Math.round(t.views / n))) +
-      mcell('Median views', fmt.format(Math.round(paces[paces.length >> 1] || 0)), 'typical post, whole run') +
+      mcell('Median views', vc.length ? fmt.format(Math.round(pjMed(vc))) : '\u2014', 'the middle post') +
       mcell('Avg likes', fmt.format(Math.round(t.likes / n))) +
       mcell('Avg comments', fmt.format(Math.round(t.comments / n))) +
       mcell('Avg shares', fmt.format(Math.round(t.shares / n))) +
@@ -3422,7 +3435,7 @@
       const bestLoved = seen.length ? seen.reduce((a, b) => (b.rate > a.rate ? b : a)) : null;
       for (const p of pts) { p.hot = !!newestV && p.id === newestV.id; p.best = !!bestLoved && p.id === bestLoved.id; }
       const above = pts.filter(p => p.rate >= medRate).length;
-      const quiet = pts.filter(p => p.rate >= medRate && p.x < medViews).length;
+      const quiet = pts.filter(p => p.rate > medRate && p.x < medViews).length;
       const sTips = pts.map(p => p.cap + ' \u2014 ' + fmt.format(p.x) + ' views \u00b7 ' + fmt.format(p.y) + ' likes \u00b7 ' +
         p.rate.toFixed(1) + '% like rate (' + (medRate ? (p.rate / medRate).toFixed(1) : '1.0') + '\u00d7 typical) \u00b7 ' +
         p.cpk.toFixed(1) + ' comments/1k \u00b7 ' + p.spk.toFixed(1) + ' shares/1k \u00b7 ' +
@@ -3431,10 +3444,18 @@
       html += '<div class="dsection" id="rateWrap">' + rateBodyHtml() + '</div>';
     }
     const top = scored().sort((a, b) => scoreOf(b) - scoreOf(a));
+    // a post inside its first 48 hours is scored by its projected total, so the row says so
+    // rather than printing an estimate as if it were a view count
+    const rowOf = v => {
+      const young = Date.now() - (v.create_time || 0) * 1000 < 2 * 864e5, sc = Math.round(scoreOf(v));
+      return { label: capOf(v), val: Math.max(1, sc), valText: (young ? '~' : '') + fmt.format(sc) + (young ? ' projected' : ' views') };
+    };
     html += section('Top 5 posts', 'By total views \u2014 or the projected first-48-hour total while a launch is still running, so a new post can appear here on merit rather than on being new.',
-      hbarList(top.slice(0, 5).map(v => ({ label: capOf(v), val: Math.round(scoreOf(v)), valText: fmt.format(Math.round(scoreOf(v))) + ' views' })), { color: 'var(--up)' }));
-    if (top.length >= 8) html += section('Weakest 5 — worth a second look', 'These under-perform your typical post.',
-      hbarList(top.slice(-5).reverse().map(v => ({ label: capOf(v), val: Math.max(1, Math.round(scoreOf(v))), valText: fmt.format(Math.round(scoreOf(v))) + ' views' })), { color: 'var(--down)' }));
+      hbarList(top.slice(0, 5).map(rowOf), { color: 'var(--up)' }));
+    // ten, not eight: below ten the bottom five overlap the top five and reach the middle
+    // post, and "under-perform your typical post" would be false for some of them
+    if (top.length >= 10) html += section('Weakest 5 — worth a second look', 'These under-perform your typical post.',
+      hbarList(top.slice(-5).reverse().map(rowOf), { color: 'var(--down)' }));
     el.innerHTML = html;
   }
 
@@ -3845,16 +3866,46 @@
   // A past day with a hole in some post's recording is dropped, so it is drawn as a gap and
   // counts toward no week: its views are known to be missing, so its total would be short.
   // Today stays (it never joins a week) and `gaps` says whether it has a hole so far.
+  //
+  // A day the recording watched counts as recorded even when nothing rose on it — a quiet
+  // day is a real +0, not a missing one.
+  //
+  // Coverage: this device keeps the newest posts only, so a day from before the oldest kept
+  // post had other posts gaining views that are no longer here to count. Days before that
+  // post's first two days are dropped (`oldKept`), and so is everything before the latest
+  // resume of the recording after a hole of more than six hours (`coverFrom`) — a day on
+  // the far side of that hole is not a day this copy can vouch for.
   function recDayGains(days) {
     const out = new Map();   // local day (en-CA) → recorded views gained
-    const g = ttGainBuckets(Date.now() - days * 864e5);
+    const now = Date.now(), from = now - days * 864e5;
+    const g = ttGainBuckets(from);
+    const kOf = t => new Date(t).toLocaleDateString('en-CA');
+    const vids = (hist && hist.videos) || {};
+    const times = [];
+    let oldest = Infinity;
+    for (const rec of Object.values(vids)) {
+      if (rec && rec.create_time) oldest = Math.min(oldest, rec.create_time * 1000);
+      for (const x of (rec && rec.s) || []) if (x[0] >= from && x[0] <= now) { times.push(x[0]); if (!out.has(kOf(x[0]))) out.set(kOf(x[0]), 0); }
+    }
     for (const [at, b] of g.hours) {
-      const k = new Date(at).toLocaleDateString('en-CA');
+      const k = kOf(at);
       out.set(k, (out.get(k) || 0) + b.gain);
     }
-    const tk = new Date().toLocaleDateString('en-CA');
+    const tk = kOf(now);
     for (const k of g.incomplete) if (k !== tk) out.delete(k);
-    out.gaps = g.incomplete;
+    times.sort((a, b) => a - b);
+    let resume = -Infinity;
+    for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] > 6 * 3600e3) resume = times[i];
+    const oldKept = oldest < Infinity ? oldest + 2 * 864e5 : -Infinity;
+    const coverFrom = Math.max(resume, oldKept);
+    const gaps = new Set(g.incomplete);
+    for (const k of [...out.keys()]) {
+      if (new Date(k + 'T00:00:00').getTime() >= coverFrom) continue;
+      if (k === tk) gaps.add(tk); else out.delete(k);
+    }
+    out.gaps = gaps;
+    out.coverFrom = coverFrom;
+    out.notKept = oldKept >= resume;   // the older days are missing because they aren't kept here
     return out;
   }
   const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
@@ -3867,11 +3918,17 @@
     const day = recDayGains(16);
     const doneKeys = [...day.keys()].filter(k => k !== tk).sort();
     const sum = ks => ks.reduce((a, k) => a + (day.get(k) || 0), 0);
-    const last7 = doneKeys.slice(-7), prev7 = doneKeys.slice(-14, -7);
+    // calendar weeks: the seven days before today and the seven before those. "The last 7
+    // days that have data" could reach back a fortnight and still call itself a week.
+    const dk = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('en-CA'); };
+    const last7 = doneKeys.filter(k => k >= dk(7) && k <= dk(1)), prev7 = doneKeys.filter(k => k >= dk(14) && k <= dk(8));
+    const wkSub = ks => ks.length === 7 ? '7 days' : ks.length + ' of 7 days recorded';
 
     // the pulse: the whole account in one tile row, every cell honest about its basis
     const f = fseries();
     const fNow = f.length ? f[f.length - 1] : null;
+    // the newest follower figure can be a 3-hourly snapshot from hours ago; "now" is a claim
+    const fNowStale = () => !!fNow && Date.now() - fNow[0] > 6 * 3600e3;
     // a recording younger than a week still has a true answer — over its own span,
     // and the tile says which, because "+96 over 7 days" and "over 4" differ
     const fBase = (f.length ? ATB(f, Date.now() - 7 * 864e5) : null) || (f.length > 1 ? f[0] : null);
@@ -3883,9 +3940,11 @@
     let html = '<div class="metric-grid">' +
       mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—',
         day.gaps.has(tk) ? 'part of today wasn’t recorded' : day.has(tk) ? 'views recorded' : 'nothing recorded yet') +
-      mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? last7.length + ' recorded day' + (last7.length === 1 ? '' : 's') : 'no full days recorded') +
-      mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? prev7.length + ' recorded day' + (prev7.length === 1 ? '' : 's') : 'no full days recorded') +
-      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)), 'exact, between two snapshots') : '') +
+      mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? wkSub(last7) : 'no full days recorded') +
+      mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? wkSub(prev7)
+        : day.notKept && day.coverFrom > new Date(dk(8) + 'T00:00:00').getTime() ? 'older days aren’t kept on this device' : 'no full days recorded') +
+      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)),
+        fNowStale() ? 'last snapshot ' + fmtAgo(fNow[0]) : 'exact, between two snapshots') : '') +
       '</div>';
     // week against week, only when both weeks have enough days to be a claim
     if (last7.length >= 5 && prev7.length >= 5 && sum(prev7) > 0) {
@@ -3903,9 +3962,13 @@
       const at = ks.map(k => new Date(k + 'T12:00:00').getTime());
       const tips = ks.map(k => '+' + fmt.format(day.get(k) || 0) + ' views — ' +
         new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }));
+      const kept = (hist && hist.videos) || {};
+      const who = videos.length && videos.every(v => kept[v.id]) ? 'your posts' : 'your ' + Object.keys(kept).length + ' newest posts';
       html += '<div class="dsection"><h4>Views per day — recorded</h4>' +
-        '<p class="explain">Views your posts gained each full day, summed from the recordings. Today is excluded — it isn’t finished being a day. A missing day is a gap in the recording, not a zero.</p>' +
-        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, int: true, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
+        '<p class="explain">Views ' + who + ' gained each full day, from the recordings kept on this device. Today is excluded — it isn’t finished being a day. A missing day is a gap in the recording, not a zero.</p>' +
+        // a line is never drawn across a missing day: more than a day and a half between
+        // two points breaks the path
+        lineChart(pts, 'var(--live)', 'Recorded views per day', { at, tips, int: true, maxGap: 1.5 * 864e5, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
     } else {
       html += '<p class="dnote">The views-per-day chart needs a few full recorded days — it fills itself in as the Worker keeps sampling.</p>';
     }
@@ -3923,7 +3986,7 @@
           [30, 90, 0].map(n => '<button class="ghost' + (recTrendsRange === n ? ' active' : '') + '" data-rec="' + n + '">' + (n === 0 ? 'All' : n + ' days') + '</button>').join('') +
           '</div>' +
           lineChart(pts, 'var(--up)', 'Follower history', { at, tips, int: true,
-            x0: new Date(seg[0][0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), x1: 'now' }) + '</div>';
+            x0: new Date(seg[0][0]).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), x1: fNowStale() ? fmtAgo(fNow[0]) : 'now' }) + '</div>';
       }
     }
 
@@ -3937,7 +4000,7 @@
     if (hbAny) {
       const max = Math.max(...hb, 1);
       html += '<div class="dsection"><h4>When views actually arrive</h4>' +
-        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>, from the recordings. This is when your audience watches — the Coach room answers when to post, which is a different question.</p>' +
+        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>. A new post’s first hours land wherever it was published, so your posting times shape this as much as your audience’s habits.</p>' +
         '<div class="bars" style="justify-content:space-between">' +
         hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm') + '"></div>').join('') +
         '</div>' +
@@ -3954,114 +4017,173 @@
   }
 
   /* ---------- hashtags, with the account's own record attached ----------
-     Ranked by the average REACH of the posts carrying each tag, not by how often the tag
-     was used. Frequency ranks your habits; this ranks your results, and a tag on two hits
-     should beat a tag spread across ten quiet ones.
+     Ranked by the TYPICAL (middle) reach of the posts carrying each tag, not by how often
+     the tag was used. Frequency ranks your habits; this ranks your results, and a tag on
+     two hits should beat a tag spread across ten quiet ones.
 
-     "Reach" is scoreOf — each post's own first-48-hour total once its launch is over, and
-     the projected total while one is still running. That is the same figure the report
-     card and the Top 5 use, so a tag cannot look good here and bad three cards away.
+     The middle, not the average: an average let one viral post carry every tag on it, so a
+     tag whose posts mostly sat below the typical post still read as "pulling its weight"
+     next to a line that quotes the account's MEDIAN. Median against median. With two posts
+     the median is the average, so the two-hits promise above still holds.
 
-     A tag used once is not a record of anything, so it is listed as untested rather than
-     ranked: on an account with sixty posts, a single lucky video would otherwise sit at
-     the top of the list with a number that means nothing. */
+     "Reach" is scoreOf — a post's total views once it is two days old, and the estimated
+     first-48-hour total while it is younger. That is the same figure the report card and
+     the Top 5 use, so a tag cannot look good here and bad three cards away.
+
+     How often a tag was USED is counted over every post the page holds, scored or not. A
+     tag on one older post and on the still-unscored newest one has been used twice, and
+     calling it "used once" was simply a wrong count.
+
+     A tag with fewer than TAG_MIN scored posts is not a record of anything, so it is listed
+     rather than ranked: on an account with sixty posts, a single lucky video would
+     otherwise sit at the top of the list with a number that means nothing. */
   const TAG_MIN = 2;
+  // the ONE tag ranking — the Coach card and the Idea Studio's prompt both read it, so the
+  // AI is never told a tag is a winner that the card calls untested
+  function tagRanks() {
+    const map = {}, uses = {};
+    for (const v of videos) {
+      const sc = scoreOf(v);
+      for (const t of hashtagsOf(v)) {
+        uses[t] = (uses[t] || 0) + 1;
+        if (sc == null) continue;
+        (map[t] || (map[t] = [])).push(sc);
+      }
+    }
+    const rated = Object.entries(map).filter(([, a]) => a.length >= TAG_MIN)
+      .map(([t, a]) => ({ tag: t, n: a.length, med: pjMed(a) }))
+      .sort((a, b) => b.med - a.med);
+    const ratedSet = new Set(rated.map(r => r.tag));
+    const rest = Object.keys(uses).filter(t => !ratedSet.has(t)).sort();
+    return { rated, once: rest.filter(t => uses[t] === 1), waiting: rest.filter(t => uses[t] > 1) };
+  }
   function renderTags() {
     const el = $('tagsContent');
     if (!el) return;
     const pool = scored();
     if (pool.length < 3) {
       el.innerHTML = '<p class="dnote">Not enough comparable posts yet. A tag needs at least ' + TAG_MIN +
-        ' posts behind it before its average means anything, and the account needs a few more before ' +
+        ' posts behind it before its typical figure means anything, and the account needs a few more before ' +
         'there is a typical post to measure against.</p>';
       return;
-    }
-    const map = {};
-    for (const v of pool) {
-      const sc = scoreOf(v);
-      if (sc == null) continue;
-      for (const t of hashtagsOf(v)) { const e = map[t] || (map[t] = { n: 0, s: 0 }); e.n++; e.s += sc; }
     }
     const all = pool.map(scoreOf).filter(x => x != null);
     if (!all.length) { el.innerHTML = '<p class="dnote">No comparable reach figures yet.</p>'; return; }
     const med = pjMed(all);
-    const rated = Object.entries(map).filter(([, e]) => e.n >= TAG_MIN)
-      .map(([t, e]) => ({ tag: t, n: e.n, avg: e.s / e.n }))
-      .sort((a, b) => b.avg - a.avg);
-    const untested = Object.entries(map).filter(([, e]) => e.n < TAG_MIN).map(([t]) => t).sort();
+    const { rated, once, waiting } = tagRanks();
+    const chips = list => '<div class="chiprow">' + list.slice(0, 20).map(t => '<span class="chip">' + esc(t) + '</span>').join('') +
+      (list.length > 20 ? '<span class="chip">+' + (list.length - 20) + ' more</span>' : '') + '</div>';
+    const leftovers = () =>
+      (once.length ? section('Used once, so far untested',
+        'These have no typical figure yet — one post is not a record. Reuse one and it joins the list above.', chips(once)) : '') +
+      (waiting.length ? section('Waiting on a scored post',
+        'Used on more than one post, but fewer than ' + TAG_MIN + ' of those posts can be scored yet — the newest are too new. Each joins the list above once ' + TAG_MIN + ' can.', chips(waiting)) : '');
     if (!rated.length) {
-      el.innerHTML = '<p class="dnote">No tag has been used on ' + TAG_MIN + ' posts yet' +
-        (untested.length ? ' \u2014 ' + untested.length + ' have been used once' : '') +
-        '. Reuse one and it starts earning a figure here.</p>';
+      el.innerHTML = '<p class="dnote">No tag has ' + TAG_MIN + ' scored posts behind it yet' +
+        (once.length ? ' — ' + once.length + (once.length === 1 ? ' has' : ' have') + ' been used once' : '') +
+        '. Reuse one and it starts earning a figure here.</p>' + leftovers();
       return;
     }
     let html = hbarList(rated.slice(0, 10).map(t => ({
-      label: t.tag, val: Math.round(t.avg),
-      valText: fmt.format(Math.round(t.avg)) + ' views \u00b7 ' + t.n + ' posts'
+      label: t.tag, val: Math.round(t.med),
+      valText: fmt.format(Math.round(t.med)) + ' views typical', sub: t.n + ' posts'
     })), { color: 'var(--up)' });
     // where the median sits, so a bar is readable as better or worse than usual rather
     // than only as longer or shorter than the bar above it
     html += '<p class="dnote" style="margin-top:8px">Your typical post reaches <b>' +
-      fmt.format(Math.round(med)) + ' views</b>, so anything above that is a tag pulling its weight. ' +
-      'The second figure is how many posts the average rests on.</p>';
+      fmt.format(Math.round(med)) + ' views</b> (a post under two days old counts by its estimated 48-hour total), so anything above that is a tag pulling its weight. ' +
+      'The second line is how many posts the typical figure rests on.</p>';
     if (rated.length > 10) html += '<p class="dnote">' + (rated.length - 10) + ' more tags have a figure; the ten strongest are shown.</p>';
-    if (untested.length) {
-      html += section('Used once, so far untested',
-        'These have no average yet \u2014 one post is not a record. Reuse one and it joins the list above.',
-        '<div class="chiprow">' + untested.slice(0, 20).map(t => '<span class="chip">' + esc(t) + '</span>').join('') + '</div>');
-    }
-    el.innerHTML = html;
+    el.innerHTML = html + leftovers();
+  }
+
+  /* The ONE posting gap: the middle gap between the newest `k` posts, taken from every post
+     the page holds — scored or not. The Next chip and the Coach's Posting rhythm both read
+     it (with the same ten posts), so the two can no longer disagree about how often she posts. The Coach used to take
+     its gaps from scored posts only, which dropped the newest gap every time. */
+  function usualGap(k) {
+    const pubs = videos.map(v => (v.create_time || 0) * 1000).filter(Boolean).sort((a, b) => b - a);
+    const n = Math.min(pubs.length, k), gaps = [];
+    for (let i = 1; i < n; i++) gaps.push((pubs[i - 1] - pubs[i]) / 864e5);
+    return gaps.length ? { med: pjMed(gaps), posts: n, gaps: gaps.length } : null;
   }
 
   function renderCoaching() {
     const el = $('coachContent');
     if (videos.length < 4) { el.innerHTML = '<p class="dnote">Once a few posts are tracked, personalised coaching appears here.</p>'; return; }
+    // scores rank the rows; WHEN she posted comes from every post, scored or not
     const rows = scored().map(v => ({ d: new Date(v.create_time * 1000), pace: scoreOf(v), tags: hashtagsOf(v) }));
-    const avgBy = (keyfn) => {
+    const medBy = (keyfn) => {
       const g = {};
       for (const r of rows) { const k = keyfn(r); (g[k] = g[k] || []).push(r.pace); }
       return Object.entries(g).filter(([, a]) => a.length >= 2)
-        .map(([k, a]) => ({ k, avg: a.reduce((x, y) => x + y, 0) / a.length }));
+        .map(([k, a]) => ({ k, med: pjMed(a), n: a.length }));
     };
+    const plural = (n, one) => n + ' ' + one + (n === 1 ? '' : 's');
     let html = '';
     const fh = hist && Array.isArray(hist.followers) ? hist.followers : [];
     if (fh.length > 3) html += milestoneHtml(projectMilestone(liveFollowers(fh), 'followers', 'follower'));
-    const byDay = avgBy(r => r.d.getDay()).sort((a, b) => b.avg - a.avg);
-    if (byDay.length >= 2) html += section('Best day to post', 'Average total views of the posts you published on each weekday — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
-      hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.avg), valText: fmt.format(Math.round(x.avg)) + ' views avg' })), { color: 'var(--up)' }));
+    const byDay = medBy(r => r.d.getDay()).sort((a, b) => b.med - a.med);
+    if (byDay.length >= 2) {
+      const shown = new Set(byDay.map(x => +x.k)), left = [];
+      for (let d = 1; d <= 7; d++) if (!shown.has(d % 7)) left.push(DAYFULL[d % 7]);
+      const leftTxt = left.length === 1 ? left[0] : left.slice(0, -1).join(', ') + ' and ' + left[left.length - 1];
+      html += section('Best day to post', 'Typical (middle) total views of the posts you published on each weekday, so one viral post can’t carry a day — your strongest is <b>' + esc(DAYFULL[+byDay[0].k]) + '</b>.',
+        hbarList(byDay.map(x => ({ label: DAYFULL[+x.k], val: Math.round(x.med), valText: fmt.format(Math.round(x.med)) + ' views typical', sub: plural(x.n, 'post') })), { color: 'var(--up)' }) +
+        (left.length ? '<p class="dnote" style="margin-top:8px">' + leftTxt + (left.length === 1 ? ' is' : ' are') +
+          ' left out — a weekday needs at least 2 scored posts before it gets a figure.</p>' : ''));
+    }
     const byHour = [];
     for (let h = 0; h < 24; h++) {
       const a = rows.filter(r => r.d.getHours() === h && r.pace != null).map(r => r.pace);
       if (!a.length) continue;
-      const avg = Math.round(a.reduce((x, y) => x + y, 0) / a.length);
-      byHour.push({ h, n: a.length, label: hourLabel(h), val: avg,
-        valText: fmt.format(avg) + ' avg · ' + a.length + (a.length === 1 ? ' post' : ' posts') });
+      const m = Math.round(pjMed(a));
+      byHour.push({ h, n: a.length, label: hourLabel(h), val: m,
+        valText: fmt.format(m) + ' views', sub: plural(a.length, 'post') });
     }
     byHour.sort((a, b) => b.val - a.val);
-    // the hours never posted in are stated rather than silently absent, compressed
-    // into ranges so fifteen of them read as one clause instead of a list
-    const posted = new Set(byHour.map(r => r.h)), quiet = [];
+    // the hours with no post at all are stated rather than silently absent, compressed
+    // into ranges so fifteen of them read as one clause instead of a list. Taken from
+    // EVERY post: an hour whose only post is too new to score has still been posted in.
+    const postedAt = new Map();
+    for (const v of videos) {
+      if (!v.create_time) continue;
+      const h = new Date(v.create_time * 1000).getHours();
+      (postedAt.get(h) || postedAt.set(h, []).get(h)).push(v);
+    }
+    const quiet = [];
     for (let h = 0; h < 24; h++) {
-      if (posted.has(h)) continue;
+      if (postedAt.has(h)) continue;
       const start = h;
-      while (h + 1 < 24 && !posted.has(h + 1)) h++;
+      while (h + 1 < 24 && !postedAt.has(h + 1)) h++;
       quiet.push(start === h ? hName(start) : hName(start) + '–' + hName((h + 1) % 24));
     }
+    const scoredHours = new Set(byHour.map(r => r.h));
+    const young = [...postedAt.keys()].filter(h => !scoredHours.has(h)).sort((a, b) => a - b);
+    const youngTxt = young.map(h => {
+      const vs = postedAt.get(h);
+      const tooNew = vs.every(v => Date.now() - v.create_time * 1000 < 2 * 864e5);
+      return hName(h) + (vs.length === 1 ? ' has a post that is ' : ' has posts that are ') + (tooNew ? 'too new to score yet' : 'not scored yet');
+    });
+    const capped = me && (me.video_count || 0) > videos.length;
     if (byHour.length >= 2) html += section('Best time to post — hour by hour',
-      'When your posts go live, by average total views — in <b>your own local time</b>, which is the clock you actually publish by. Your strongest so far is <b>' + esc(byHour[0].label) + '</b>' +
+      'When your posts go live, by typical (middle) total views — in <b>your own local time</b>, which is the clock you actually publish by. Your strongest so far is <b>' + esc(byHour[0].label) + '</b>' +
       (byHour[0].n === 1 ? ' (resting on a single post, so treat it as a lead, not a pattern)' : ' (' + byHour[0].n + ' posts)') +
       '. The count on each row says how much it rests on — an hour with one post is an anecdote.',
       hbarList(byHour, { color: 'var(--accent)' }) +
-      (quiet.length ? '<p class="dnote" style="margin-top:8px">Never posted at ' + quiet.join(', ') + ' — those hours can’t score until something goes out then.</p>' : ''));
+      (quiet.length || youngTxt.length ? '<p class="dnote" style="margin-top:8px">' +
+        (quiet.length ? 'No posts yet at ' + quiet.join(', ') + (capped ? ' among your newest ' + videos.length + ' posts' : '') +
+          ' — those hours can’t score until something goes out then.' : '') +
+        (youngTxt.length ? (quiet.length ? ' ' : '') + youngTxt.join('; ') + '.' : '') + '</p>' : ''));
     /* The hashtag chips used to live here, unranked and unnumbered. They now have a card
        of their own with the figures attached — saying the same thing twice, once without
        the numbers, was the weaker half winning by being higher up the page. */
-    const pubs = rows.map(r => r.d.getTime()).sort((a, b) => a - b), gaps = [];
-    for (let i = 1; i < pubs.length; i++) gaps.push((pubs[i] - pubs[i - 1]) / 864e5);
-    if (gaps.length >= 3) {
-      const g = gaps.slice().sort((a, b) => a - b), med = g[g.length >> 1];
+    const ug = usualGap(10);
+    if (ug && ug.gaps >= 3) {
+      const med = ug.med, hrs = Math.round(med * 24);
       html += '<div class="dsection"><h4>Posting rhythm</h4><p class="explain">You post roughly every <b>' +
-        (med < 1 ? Math.round(med * 24) + ' hours' : med.toFixed(1) + ' days') + '</b>.</p></div>';
+        (med < 1 / 24 ? 'less than an hour' : med < 1 ? hrs + (hrs === 1 ? ' hour' : ' hours') : med.toFixed(1) + ' days') +
+        '</b> — the middle gap between your last ' + ug.posts + ' posts.</p></div>';
     }
     el.innerHTML = html || '<p class="dnote">Not enough spread in your posts yet for clear patterns.</p>';
   }
@@ -4073,10 +4195,9 @@
     if (caps.length) L.push('Recent captions: ' + caps.slice(0, 12).map(c => '"' + c + '"').join('; ') + '.');
     const top = scored().sort((a, b) => scoreOf(b) - scoreOf(a)).slice(0, 8).map(capOf);
     if (top.length) L.push('Best-performing captions (mimic what works): ' + top.map(c => '"' + c + '"').join('; ') + '.');
-    const tagMap = {};
-    for (const v of scored()) for (const t of hashtagsOf(v)) { const e = tagMap[t] || (tagMap[t] = { n: 0, s: 0 }); e.n++; e.s += scoreOf(v); }
-    const tags = Object.entries(tagMap).map(([t, e]) => ({ t, avg: e.s / e.n })).sort((a, b) => b.avg - a.avg).slice(0, 20);
-    if (tags.length) L.push('Best hashtags by average total views: ' + tags.map(x => x.t).join(', ') + '.');
+    // the Coach card's own ranking — only tags with TAG_MIN scored posts, by their typical reach
+    const tags = tagRanks().rated.slice(0, 20);
+    if (tags.length) L.push('Best hashtags by typical total views (each used on at least ' + TAG_MIN + ' posts): ' + tags.map(x => x.tag).join(', ') + '.');
     const avgLen = caps.length ? Math.round(caps.reduce((a, c) => a + c.length, 0) / caps.length) : 0;
     if (avgLen) L.push('Typical caption length: about ' + avgLen + ' characters.');
     return L.join('\n');
@@ -4089,7 +4210,7 @@
     const a = arr('titles').length ? section('Caption ideas', '', list(arr('titles'))) : '';
     const b = arr('onscreenText').length ? section('On-screen text hooks', '', list(arr('onscreenText'))) : '';
     if (a || b) html += '<div class="idea-cols">' + a + b + '</div>';
-    if (arr('tags').length) html += section('Hashtags', '', '<div class="chiprow">' + arr('tags').map(t => '<span class="chip">#' + esc(String(t).replace(/^#/, '')) + '</span>').join('') + '</div>');
+    if (arr('tags').length) html += section('Hashtag ideas', 'AI suggestions, not tested on your account.', '<div class="chiprow">' + arr('tags').map(t => '<span class="chip">#' + esc(String(t).replace(/^#/, '')) + '</span>').join('') + '</div>');
     if (arr('videoIdeas').length) html += section('Next-video ideas', '', listV(arr('videoIdeas')));
     return html;
   }

@@ -375,8 +375,17 @@ console.log('\nwhile you were away');
   check('and it compares a post against its own previous day, not against other posts',
     /ATB\(arr, now - 864e5\), d2 = ATB\(arr, now - 2 \* 864e5\)/.test(accel));
   check('a curve too short to have two days behind it is skipped', /arr\.length < 3/.test(accel));
+  check('the table label says newest N of M only when the list is cut short',
+    /rows\.length >= 60 && me && \(me\.video_count \|\| 0\) > rows\.length/.test(TT) && !/'Posts \\u2014 tracking '/.test(TT));
+  check('the phone card labels say what +tick and +session mean',
+    /data-label="\+Since refresh"/.test(TT) && /data-label="\+This session"/.test(TT));
+  check('the footnote defines both counts and the ⚡',
+    /\+Since refresh = views each post gained since the previous refresh; \+This session = views since this session began/.test(TT) && /⚡ = gaining at least 1\.5× as fast/.test(TT));
+  check('the footnote no longer credits the Research API with retention data',
+    /only TikTok's API for Business carries them, and only for Business accounts/.test(TT) && !/Research and Business APIs/.test(TT));
+  check('and states the 60-post limit as the dashboard\'s own', /Only your newest 60 posts are fetched/.test(TT) && !/TikTok's 60-post window/.test(TT));
   check('the badge is on the table row, with a title that explains it',
-    /accelSet\.has\(v\.id\)/.test(TT) && /title="Accelerating/.test(TT));
+    /accelSet\.has\(v\.id\)/.test(TT) && /title="Speeding up \\u2014 gaining at least/.test(TT));
   check('and it is rebuilt before anything renders from it',
     TT.indexOf('buildAccel();') < TT.indexOf('renderTable(); showSlot(slotIdx);'));
 
@@ -564,7 +573,12 @@ console.log('\nrecorded trends — the charts TikTok never provides');
     /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(rt));
   check('today never joins a week — it is not finished being a day',
     /\.filter\(k => k !== tk\)/.test(rt));
-  check('weeks say how many recorded days they rest on', /recorded day/.test(rt));
+  check('weeks say how many recorded days they rest on', /' of 7 days recorded'/.test(rt));
+  check('weeks are calendar weeks, not the last seven days that happen to have data',
+    /k >= dk\(7\) && k <= dk\(1\)/.test(rt) && /k >= dk\(14\) && k <= dk\(8\)/.test(rt) && !/doneKeys\.slice\(-7\)/.test(rt));
+  check('the views-per-day line breaks across a missing day', /maxGap: 1\.5 \* 864e5/.test(rt));
+  check('a stale follower snapshot is not labelled "now"', /fNowStale\(\) \? fmtAgo\(fNow\[0\]\) : 'now'/.test(rt) && /'last snapshot ' \+ fmtAgo/.test(rt));
+  check('the day chart says whose views it counts and where they are kept', /from the recordings kept on this device/.test(rt));
   check('week-vs-week only speaks with five recorded days on each side',
     /last7\.length >= 5 && prev7\.length >= 5/.test(rt));
   check('the follower delta is exact between snapshots, over its stated span',
@@ -575,27 +589,61 @@ console.log('\nrecorded trends — the charts TikTok never provides');
     /A missing day is a gap in the recording, not a zero/.test(rt));
   check('the arrival clock is the viewer\'s own, and says so',
     /getHours\(\)/.test(rt) && /your own local time/.test(rt));
-  check('and points at the Coach for the when-to-post question, not itself',
-    /the Coach room answers when to post/.test(rt));
+  check('and admits that posting times shape it',
+    /your posting times shape this as much as your audience’s habits/.test(rt) && !/This is when your audience watches/.test(rt));
   check('follower history offers 30 / 90 / All', /\[30, 90, 0\]\.map/.test(rt));
   check('the card renders on the poll chain', /renderBreakdown\(\); renderRecTrends\(\);/.test(TT));
 }
 
+console.log('\naccount breakdown — one median, projections marked');
+for (const [page, src] of [['TikTok', TT], ['YouTube', YT]]) {
+  const i = src.indexOf(page === 'TikTok' ? 'function renderBreakdown()' : 'function renderChannelBreakdown()'), bd = src.slice(i, src.indexOf('\n  }\n', i));
+  check(page + ' — Median views is the true middle of current view counts, or a dash',
+    /mcell\('Median views', vc\.length \? fmt\.format\(Math\.round\((pjMed|med)\(vc\)\)\) : '\\u2014', 'the middle (post|video)'\)/.test(bd));
+  check(page + ' — the median helper is declared before the tile uses it',
+    page === 'TikTok' || bd.indexOf('const med = arr') < bd.indexOf("mcell('Median views'"));
+  check(page + ' — the averages are not called the bar to beat', /Averages get pulled up by your biggest hits/.test(bd) && !/bar any new/.test(bd));
+  check(page + ' — a projected row says so', /\(young \? ' projected' : ' views'\)/.test(bd));
+  check(page + ' — Weakest 5 waits for ten posts, so it never overlaps the Top 5', /length >= 10\) html \+= section\('Weakest 5/.test(bd));
+  check(page + ' — "quiet" posts are strictly above the typical rate', /p\.rate > medRate && p\.x < medViews/.test(bd));
+  const rb = src.slice(src.indexOf('function rateBodyHtml()'), src.indexOf('\n  }\n', src.indexOf('function rateBodyHtml()')));
+  check(page + ' — the ranked list counts what it shows', /Math\.min\(10, s\.pts\.length\)/.test(rb) && !/Your ten highest/.test(rb));
+  check(page + ' — one quiet post is singular', /s\.quiet === 1 \?/.test(rb));
+}
+
 console.log('\nhashtags ranked by what they returned');
 {
-  const body = TT.slice(TT.indexOf('function renderTags()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
+  const body = TT.slice(TT.indexOf('function tagRanks()'), TT.indexOf('\n  }\n', TT.indexOf('function renderTags()')));
   check('the card exists and has a room', /id="tagsCard"/.test(TT) && /id="tagsContent"/.test(TT));
   check('and is revealed at sign-in', /'recTrendsCard', 'tagsCard', 'coachCard'/.test(TT));
   /* Frequency ranks your habits; reach ranks your results. A tag on two hits should beat
      a tag spread across ten quiet ones, which is the whole reason this is not a chip row
      sorted by count. */
-  check('tags are ranked by average reach, not by how often they were used',
-    /avg: e\.s \/ e\.n/.test(body) && /sort\(\(a, b\) => b\.avg - a\.avg\)/.test(body));
+  /* Median, not mean: the line under the bars quotes the account MEDIAN, and a tag's mean
+     against that let any tag that touched one viral post read as "pulling its weight". */
+  check('tags are ranked by typical (median) reach, not by how often they were used',
+    /med: pjMed\(a\)/.test(body) && /sort\(\(a, b\) => b\.med - a\.med\)/.test(body) && !/avg: e\.s \/ e\.n/.test(body));
   check('and reach is the same figure the report card and Top 5 use', /scoreOf\(v\)/.test(body),
     'a tag must not look good here and bad three cards away');
-  check('a tag used once is listed as untested rather than ranked', /e\.n >= TAG_MIN/.test(body),
+  check('a tag used once is listed as untested rather than ranked', /a\.length >= TAG_MIN/.test(body),
     'one lucky post would otherwise top the list with a meaningless average');
-  check('the bar carries how many posts the average rests on', /t\.n \+ ' posts'/.test(body));
+  check('the bar carries how many posts the figure rests on', /sub: t\.n \+ ' posts'/.test(body));
+  check('the header promises only hashtags', /What's working — hashtags</.test(TT) && !/hashtags &amp; keywords/.test(TT));
+  /* Behaviour: uses counted over every post, the scored ones only rank. */
+  {
+    const pm = TT.slice(TT.indexOf('  const pjMed = '), TT.indexOf('\n', TT.indexOf('  const pjMed = ')));
+    const hto = TT.slice(TT.indexOf('  const hashtagsOf = '), TT.indexOf('\n', TT.indexOf('  const hashtagsOf = ')));
+    const tr = TT.slice(TT.indexOf('  const TAG_MIN = 2;'), TT.indexOf('\n  }\n', TT.indexOf('function tagRanks()')) + 5);
+    const run = (vids, scores) => new Function('videos', 'scoreOf', pm + '\n' + hto + '\n' + tr + '\nreturn tagRanks();')(vids, v => scores[v.id] ?? null);
+    const V = (id, cap) => ({ id, title: cap, create_time: 1 });
+    const r = run([V('a', '#x #viral'), V('b', '#x'), V('c', '#x #viral'), V('d', '#once'), V('e', '#reuse'), V('f', '#reuse'), V('g', '#fresh')],
+      { a: 38000, b: 1000, c: 2000, d: 500, e: 900 });
+    const x = r.rated.find(t => t.tag === '#x');
+    check('a tag\'s figure is the middle of its posts, so one hit cannot carry it', x && x.med === 2000 && x.n === 3, JSON.stringify(x));
+    check('two posts: the median is the mean', (r.rated.find(t => t.tag === '#viral') || {}).med === 20000);
+    check('"used once" means used once across every post', r.once.join() === '#fresh,#once', r.once.join());
+    check('a reused tag with one scored post is waiting, not "used once"', r.waiting.join() === '#reuse', r.waiting.join());
+  }
   check('and the typical post is stated so a bar reads as better or worse than usual',
     /typical post reaches/.test(body));
   check('truncation is admitted rather than silent', /rated\.length > 10/.test(body));
@@ -807,13 +855,50 @@ console.log('\nbest time to post is answered in exactly one place');
   for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
     check(page + ' — the day-part bands are gone', !/Midday \(11am–3pm\)/.test(src) && !/HOUR_BANDS|const BANDS/.test(src));
     check(page + ' — it buckets all 24 hours', /for \(let h = 0; h < 24; h\+\+\)/.test(src));
-    check(page + ' — every row carries its evidence count', /' avg · ' \+ a\.length/.test(src));
+    check(page + ' — every row carries its evidence count', page === 'TikTok' ? /sub: plural\(a\.length, 'post'\)/.test(src) : /' avg · ' \+ a\.length/.test(src));
     check(page + ' — a single-' + (page === 'YouTube' ? 'video' : 'post') + ' hour is called an anecdote', /is an anecdote/.test(src));
-    check(page + ' — hours never posted in are stated, not dropped', /Never posted at/.test(src));
+    check(page + ' — hours never posted in are stated, not dropped', /No (posts|uploads) yet at/.test(src) && !/Never posted at/.test(src));
     const hourLabel = new Function(src.slice(src.indexOf('const hName'), src.indexOf('\n', src.indexOf('const hourLabel'))) + '\nreturn hourLabel;')();
     check(page + ' — hour labels read as a clock', hourLabel(0) === '12am–1am' && hourLabel(15) === '3pm–4pm' && hourLabel(23) === '11pm–12am',
       [hourLabel(0), hourLabel(15), hourLabel(23)].join(' / '));
   }
+}
+
+console.log('\nCoach — hours and rhythm from every post, medians for days');
+{
+  const lift = n => { const i = TT.indexOf(n); return TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const line = n => { const i = TT.indexOf(n); return TT.slice(i, TT.indexOf('\n', i)) + '\n'; };
+  const run = (videos, scores, me) => {
+    const out = {};
+    new Function('videos', 'SC', 'me', 'out', `
+      const $ = () => out; const hist = null; const fmt = new Intl.NumberFormat('en-US'); const esc = String;
+      const milestoneHtml = () => '', projectMilestone = () => null, liveFollowers = x => x;
+      ${line('  const DAYFULL = ')}${line('  const hName = ')}${line('  const hourLabel = ')}${line('  const pjMed = ')}
+      ${line('  const hashtagsOf = ')}
+      const scoreOf = v => SC[v.id] ?? null; const scored = () => videos.filter(v => scoreOf(v) != null);
+      ${line('  const section = ')}
+      ${lift('  function hbarList(')}${lift('  function usualGap(')}${lift('  function renderCoaching(')}
+      renderCoaching();`)(videos, scores, me, out);
+    return out.innerHTML;
+  };
+  // six posts at 10am and 2pm local on distinct days, plus the newest at 11pm, unscored
+  const base = new Date(); base.setDate(base.getDate() - 20); base.setHours(10, 0, 0, 0);
+  const vids = [], sc = {};
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(base); d.setDate(d.getDate() + i * 3); d.setHours(i % 2 ? 14 : 10);
+    vids.push({ id: 'v' + i, create_time: d.getTime() / 1000 }); sc['v' + i] = [100, 38000, 200, 300, 400, 500][i];
+  }
+  const nw = new Date(); nw.setHours(nw.getHours() - 2); nw.setMinutes(0);
+  vids.push({ id: 'new', create_time: nw.getTime() / 1000 });
+  const h = run(vids, sc, { video_count: 7 });
+  const hh = nw.getHours(), hn = (hh % 12 || 12) + (hh < 12 ? 'am' : 'pm');
+  check('the unscored newest post\'s hour is not called empty', !new RegExp('No posts yet at[^.]*\\b' + hn + '\\b').test(h.replace(/–\d+(am|pm)/g, '')) || hh === 10 || hh === 14, h);
+  check('it gets its own "too new to score yet" clause', new RegExp(hn + ' has a post that is too new to score yet').test(h) || hh === 10 || hh === 14, h);
+  check('the day and hour rows carry their count on a second line', /<small style="display:block;white-space:nowrap">\d+ posts?<\/small>/.test(h), h.slice(0, 300));
+  check('rhythm names its window of posts', /the middle gap between your last 7 posts/.test(h), h.slice(-300));
+  check('hour rows say "views" and no longer "avg"', !/ avg · /.test(h));
+  const gap = run([0, 0.2, 0.4, 0.6, 0.8].map((m, i) => ({ id: 'g' + i, create_time: Date.now() / 1000 - 86400 + m * 600 })), {}, null);
+  check('a sub-hour rhythm reads "less than an hour", never "0 hours"', /every <b>less than an hour<\/b>/.test(gap) && !/every <b>0 hours/.test(gap), gap);
 }
 
 /* YouTube's away card, run on fixtures shaped like the robot's history.json: one flat map

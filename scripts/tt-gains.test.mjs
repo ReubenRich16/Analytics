@@ -354,5 +354,43 @@ console.log('\nsync status and import');
     /\(used only if this browser has none of its own\)/.test(imp));
 }
 
+/* Recorded trends' days: a watched day with no rise is a real +0, and a day this device
+   cannot vouch for (before the oldest kept post's first two days, or before the latest
+   resume after a hole of more than six hours) is dropped rather than shown short. */
+console.log('\nrecorded days — coverage');
+{
+  const R = hist => new Function('hist', `
+    ${(TT.match(/  const TT_GAP = [^\n]*\n/) || [''])[0]}
+    ${fn('function ttGainBuckets(from)')}
+    ${fn('function recDayGains(days)')}
+    return recDayGains(16);`)(hist);
+  const now = Date.now();
+  const kOf = t => new Date(t).toLocaleDateString('en-CA');
+  const quiet = new Date(now); quiet.setDate(quiet.getDate() - 3); quiet.setHours(0, 0, 0, 0);
+  const qs = quiet.getTime(), qe = qs + DAY;
+  const series = (from, step, gap) => {
+    const s = []; let v = 100;
+    for (let t = from; t <= now; t += step) {
+      if (gap && t > gap[0] && t < gap[1]) continue;
+      if (!(t >= qs && t < qe)) v += 5;
+      s.push([t, v, 0, 0, 0]);
+    }
+    return s;
+  };
+  const a = R({ videos: { p: { create_time: Math.floor((now - 30 * DAY) / 1000), s: series(now - 16 * DAY, 15 * MIN) } } });
+  check('a watched day with no rise is recorded as +0, not missing', a.has(kOf(qs + HOUR * 12)) && a.get(kOf(qs + HOUR * 12)) === 0,
+    String(a.get(kOf(qs + HOUR * 12))));
+  check('with an old post kept and no hole, the fortnight is covered', a.has(kOf(now - 13 * DAY)));
+  const b = R({ videos: { p: { create_time: Math.floor((now - 6 * DAY) / 1000), s: series(now - 6 * DAY, 15 * MIN) } } });
+  const cut = now - 4 * DAY;
+  check('days before the oldest kept post\'s first two days are dropped',
+    [...b.keys()].every(k => new Date(k + 'T00:00:00').getTime() >= cut) && b.notKept === true, [...b.keys()].join(','));
+  const hole = [now - 5 * DAY, now - 5 * DAY + 8 * HOUR];
+  const c = R({ videos: { p: { create_time: Math.floor((now - 30 * DAY) / 1000), s: series(now - 16 * DAY, 15 * MIN, hole) } } });
+  check('nothing before the latest resume after a >6h hole is kept',
+    [...c.keys()].every(k => new Date(k + 'T00:00:00').getTime() >= hole[1]) && c.coverFrom >= hole[1] && c.notKept === false,
+    [...c.keys()].join(','));
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

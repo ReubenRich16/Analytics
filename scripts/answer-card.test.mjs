@@ -486,7 +486,7 @@ for (const [src, page] of [[TT, 'TikTok'], [YT, 'YouTube']]) {
     const pubs = agesH.map(h => NOW - h * H);
     return new Function('videos', 'videoIds', 'meta', 'NOW', `
       const Date = function (s) { return new globalThis.Date(s); }; Date.now = () => NOW;
-      ${pmed}\n${grab('answerNext')}
+      ${pmed}\n${src.includes('function usualGap(') ? grab('usualGap') : ''}\n${grab('answerNext')}
       return answerNext();`)(pubs.map(t => ({ create_time: t / 1000 })), pubs.map((_, i) => 'v' + i),
         Object.fromEntries(pubs.map((t, i) => ['v' + i, { publishedAt: new globalThis.Date(t).toISOString() }])), NOW);
   };

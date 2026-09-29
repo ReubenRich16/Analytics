@@ -43,8 +43,8 @@ data/             recorded history, committed by the robots
 
 **Both platforms**
 
-- Live counters with per-refresh movement, and a sortable table of every post
-  (click any column header; it becomes readable cards on a phone)
+- Live counters with per-refresh movement, and a sortable table of your posts — on
+  TikTok, your newest 60 (click any column header; it becomes readable cards on a phone)
 - **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
   running session total. On TikTok this accumulates each post's own movement rather than
   differencing the account total, because the app fetches at most the 60 newest posts and
@@ -377,14 +377,15 @@ of TikTok. Free, no card.
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/launches`, `/tiktok/launches` | the first **week** of finished launches (48 hours is what makes one *finished*), age-indexed — the projection's reference curves |
-| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour — see below |
+| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, one point an hour — see below. YouTube: publication to day 60. TikTok: from publication until it leaves your 60 newest posts or turns 60 days old |
 | `/tiktok/disconnect` | sign a TikTok account out and stop the cron polling it |
 | `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/stickers`, `/tiktok/ai` | TikTok data (and your stickers) |
 
 **The long tail, and how to see it**
 
 The tracker records every video for 60 days — minute by minute for the first 48 hours,
-every fifteen minutes to day 14, hourly to day 60. For a long time nothing *served* more
+every fifteen minutes to day 14, hourly to day 60 (on TikTok, only while the post is among
+your 20 and then 60 newest — see the cadence note below). For a long time nothing *served* more
 than the last three days of that: both bundles cut on an absolute `KEEP_DAYS` window, the
 YouTube page discarded any video over a week old, and no caller ever passed `?days=`. Days
 3–60 were written, held for two months, pruned, and never read. On TikTok that was the
@@ -431,17 +432,21 @@ months. A tapering cadence now carries it the whole way:
 | 2–14 days | every 15 min | it still moves, but not that fast |
 | 14–60 days | hourly | a month out, minute sampling would record that nothing happened |
 
+TikTok: its list API pages 20 posts at a time, so the 15-minute tier covers your 20 newest
+posts and the hourly tier your 60 newest — about 8 days and 3½ weeks at 2–3 posts a day.
+Older posts are not recorded.
+
 Measured against this account's real publish rate — 2.2 uploads a day on YouTube, ~2.5
-posts a day on TikTok — that is about **19,200 samples a day**. D1 bills a row-write for
+posts a day on TikTok — that is about **20,900 samples a day**. D1 bills a row-write for
 the table row *and* one for every index on it, and `samples` keeps one, so that is
-**~38,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
+**~42,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
 would be **over 400,000 samples a day** — more than 800,000 row-writes, eight times the
 entire allowance — which is why the cadence tapers rather than staying flat. TikTok costs
 nothing extra at all: the cron already fetched the post list on every pass and was
 discarding every row outside the launch window.
 
 One piece of history on that figure: for a long stretch the live database carried a
-second, redundant index on `samples`, which put the real bill at ~58,000 — `schema.sql`
+second, redundant index on `samples`, which put the real bill at ~63,000 — `schema.sql`
 drops it, but the deploy's schema step failed on every run while the API token lacked
 **Account → D1 → Edit**. The token gained the permission and the schema applied on
 31 Aug 2026, so the drop is done and the bill matches the plan.
