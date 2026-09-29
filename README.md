@@ -108,13 +108,26 @@ data/             recorded history, committed by the robots
   already on the page, so it costs no extra quota
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever
-- 14 themes, sound on new likes/subscribers, and a phone-friendly layout
+- 15 themes, sound on new likes/subscribers, and a phone-friendly layout
+- **Motion** (`motion.js`, one small file shared by all three pages) — charts draw themselves
+  in and headline numbers count up from 0 the first time you see them: when the page loads,
+  when you switch room, when you open a post, or after you press something in a card. The
+  automatic refresh never replays them. A count always finishes on exactly the number the
+  page shows, and stops at once if a newer number arrives. Rooms slide in from the side you
+  moved towards, a pill glides under the tabs, and a live total going up flashes a green
+  "▲ +N" (the page's own figure, never one worked out separately). Charts below the fold
+  wait until you scroll to them. `prefers-reduced-motion` turns all of it off, and if the
+  file ever fails to load the pages simply show everything finished
+- **☁️ Cinnamon Cloud** theme — soft and cute: a pale-sky page with slowly drifting clouds,
+  fluffy white cards, cinnamon-brown text, pink blush, and rounded **Fredoka** numbers. An
+  original design (no character art), with every text colour checked for contrast
 
 **Type and motion**
 
 Numbers are set in **Sora**, everything you read in **Figtree**. Eight motions carry the
 moments that matter: headline numbers roll like an odometer, cards arrive staggered, a new
-like sends a ring and hearts off its tile, charts draw with the fill rising underneath,
+like sends a ring and hearts off its tile, charts draw with the fill rising underneath (once
+per look — see **Motion** above — not on every refresh),
 the deep-dive grows out of the row you tapped, loading shimmers in the real shape instead
 of shoving the page, the date range slides in the direction you moved, and milestones get
 the full-screen treatment. Every one of them respects `prefers-reduced-motion`.

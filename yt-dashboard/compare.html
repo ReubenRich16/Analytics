@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Channel Command — Compare</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;600;700;800&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="stylesheet" href="style.css">
 <style>
@@ -104,6 +104,9 @@
     <h1>Channel Command <span class="tt">· Compare</span></h1>
     <div class="status"><span id="statusText">loading…</span></div>
     <select id="themeSel" title="Theme">
+      <optgroup label="Cute ☁️">
+        <option value="cloud">☁️ Cinnamon Cloud</option>
+      </optgroup>
       <optgroup label="Soft &amp; sleek">
         <option value="rose">🌷 Rosé</option><option value="sakura">🌸 Sakura</option><option value="pearl">🤍 Pearl</option>
       </optgroup>
@@ -189,6 +192,7 @@
 
 </div>
 
+<script src="./motion.js" defer></script>
 <script>
 (function () {
   'use strict';

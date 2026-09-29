@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Channel Command — TikTok</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <style>
   /* TikTok-specific accents layered on the shared dashboard styles */
@@ -64,6 +64,9 @@
     <h1>Channel Command <span class="tt-cyan">· TikTok</span></h1>
     <div class="status"><span id="statusText">not signed in</span></div>
     <select id="themeSel" title="Theme">
+      <optgroup label="Cute ☁️">
+        <option value="cloud">☁️ Cinnamon Cloud</option>
+      </optgroup>
       <optgroup label="Soft &amp; sleek">
         <option value="rose">🌷 Rosé</option>
         <option value="sakura">🌸 Sakura</option>
@@ -353,6 +356,7 @@
   </div>
 </div>
 
+<script src="./motion.js" defer></script>
 <script>
 (function () {
   'use strict';
@@ -997,6 +1001,15 @@
   }
 
   const CONFETTI_COLOURS = ['#ff3b30', '#ffcf5a', '#3ddc84', '#5aa9ff', '#ff5c8a', '#b58cff', '#ffffff'];
+  // A theme may hand the confetti its own colours as a comma list in --confetti. Only
+  // Cinnamon Cloud does (pastels); every other theme has none and keeps these exactly.
+  function confettiColours() {
+    try {
+      const v = getComputedStyle(document.body).getPropertyValue('--confetti');
+      const list = v ? v.split(',').map(x => x.trim()).filter(Boolean) : [];
+      return list.length ? list : CONFETTI_COLOURS;
+    } catch (e) { return CONFETTI_COLOURS; }
+  }
   let confRaf = null, confResize = null;
   function confetti(dur) {
     const cv = $('confettiCv'); if (!cv) return;
@@ -1010,13 +1023,14 @@
     // density from area, and seeded across the whole height plus a screen above it,
     // so the page is covered from the first frame rather than filling in slowly
     const N = Math.round(Math.max(120, Math.min(260, (innerWidth * innerHeight) / 3600)));
+    const pal = confettiColours();
     const P = Array.from({ length: N }, (_, i) => ({
       x: Math.random() * innerWidth, y: Math.random() * innerHeight * 1.9 - innerHeight * 0.9,
       w: 6 + Math.random() * 7, h: 9 + Math.random() * 11,
       vy: 2.4 + Math.random() * 3.4, vx: (Math.random() - 0.5) * 1.2,
       rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.24,
       sw: Math.random() * Math.PI * 2, ss: 0.02 + Math.random() * 0.04,
-      c: CONFETTI_COLOURS[i % CONFETTI_COLOURS.length]
+      c: pal[i % pal.length]
     }));
     const t0 = performance.now();
     const frame = now => {
