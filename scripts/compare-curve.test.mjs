@@ -68,7 +68,9 @@ console.log('\n4. "Time to a thousand" only counts crossings somebody watched');
   const firstAt = new Function(firstAtSrc + '\nreturn firstAt;')();
 
   const watched = [[0, 100], [2, 600], [5, 1400], [9, 2200]];
-  check('a crossing that was observed is reported', firstAt(watched, 1000) === 5, firstAt(watched, 1000));
+  /* It returns the bracket [last reading below, first reading at or past], because the
+     crossing happened somewhere between them — on YouTube often hours apart. */
+  check('a crossing that was observed is reported as its bracket', String(firstAt(watched, 1000)) === '2,5', firstAt(watched, 1000));
 
   // the real shape: recording begins months after publication, already well past target
   const backCatalogue = [[4344, 1107], [4368, 1120], [4392, 1131]];
@@ -82,11 +84,11 @@ console.log('\n4. "Time to a thousand" only counts crossings somebody watched');
   check('exactly at the target on the first sample still counts as unobserved',
     firstAt([[3, 1000], [4, 1200]], 1000) === null);
   check('but crossing on the second sample is observed',
-    firstAt([[3, 999], [4, 1200]], 1000) === 4);
+    String(firstAt([[3, 999], [4, 1200]], 1000)) === '3,4');
 
   // the median that drives "Your usual" must not be dragged by the unobserved ones
   const cat = [ [[0,10],[6,1200]], [[0,10],[9,1100]], backCatalogue, [[0,5],[3,1500]] ];
-  const vals = cat.map(s => firstAt(s, 1000)).filter(v => v != null).sort((a, b) => a - b);
+  const vals = cat.map(s => firstAt(s, 1000)).filter(v => v != null).map(b => b[1]).sort((a, b) => a - b);
   check('the back-catalogue video drops out of the median entirely',
     vals.join(',') === '3,6,9', vals.join(','));
   check('so "your usual" stays in hours, not months', vals[vals.length >> 1] === 6, vals[vals.length >> 1]);
@@ -134,7 +136,17 @@ console.log('\n5. Placing best on the channel is not "Top 0%"');
 
   // and the page must consume the two fields for what they are
   check('the bar is filled from the beaten share', /width:' \+ pct\.beat \+ '%/.test(src));
-  check('while the headline prints the placing', /Top ' \+ pct\.top \+ '%/.test(src));
+  check('while the headline prints the place in its pool', /'<div class="big">' \+ placeText\(pct\)/.test(src) && !/Top ' \+ pct\.top \+ '%/.test(src));
+  check('the place carries the pool size', best.rank === 1 && best.n === 5 && worst.rank === 5 && worst.n === 5, JSON.stringify(best));
+  const place = new Function(grab('  const ordinal =', '\n  const VERDICT_MIN') + '\nreturn {placeText, posText, ordinal};')();
+  check('best reads "Best of N"', place.placeText(best) === 'Best of 5', place.placeText(best));
+  check('the worst reads "5th of 5", not "Top 100%"', place.placeText(worst) === '5th of 5', place.placeText(worst));
+  check('ordinals are English', ['1st','2nd','3rd','4th','11th','12th','13th','21st','22nd','101st'].join() ===
+    [1,2,3,4,11,12,13,21,22,101].map(place.ordinal).join(), [1,2,3,4,11,12,13,21,22,101].map(place.ordinal).join());
+  check('the upper half says top X%', place.posText(top1) === 'top 1%', place.posText(top1));
+  check('the lower half says bottom Y%, not "top 96%"', place.posText(percentile(many, many[0])) === 'bottom 1%', place.posText(percentile(many, many[0])));
+  check('a verdict needs 8 posts in each pool', /yp\.n >= VERDICT_MIN && tp\.n >= VERDICT_MIN/.test(src) && /const VERDICT_MIN = 8/.test(src));
+  check('each box names the pool it ranks against', /'Against your newest ' \+ yp\.n \+ ' settled YouTube videos'/.test(src));
   check('nothing still computes 100 - a percentile', !/100 - [ty]p\b/.test(src));
 }
 
@@ -145,7 +157,7 @@ console.log('\n6. One recorded side is not an overlap');
      plotted for six hours, dropping seven eighths of it, under "This pair overlaps for
      6 hours" — an overlap with nothing. */
   const spanOf = (yEnd, tEnd) => {
-    const bothSides = yEnd > 0 && tEnd > 0;
+    const bothSides = yEnd > 0 && tEnd > 0;   // (the page also asks that the two share ages — see 7)
     return { bothSides, span: Math.max(1, bothSides ? Math.min(yEnd, tEnd) : (yEnd || tEnd)) };
   };
   check('two real curves still clip to the shorter one', spanOf(48, 9).span === 9);
@@ -157,8 +169,65 @@ console.log('\n6. One recorded side is not an overlap');
   check('the six-hour invention is gone from the page',
     /const span = Math\.max\(1, bothSides \?/.test(src) &&
     !/const span = Math\.max\(1, Math\.min\(/.test(src));
-  check('and the page only claims an overlap when both sides exist',
-    /bothSides[\s\S]{0,120}This pair overlaps for/.test(src));
+  check('and the page only claims an overlap when both lines were drawn',
+    /series\.length === 2\) \{\s*said = 'This pair overlaps for/.test(src));
+}
+
+console.log('\n7. Both sides must cover the same ages, and the words follow the lines drawn');
+{
+  check('overlap is decided from where each side starts, not only that it exists',
+    /const lo = Math\.max\(ys\.length \? ys\[0\]\[0\] : Infinity, ts\.length \? ts\[0\]\[0\] : Infinity\);/.test(src) &&
+    /const bothSides = ys\.length > 1 && ts\.length > 1 && lo < Math\.min\(yEnd, tEnd\);/.test(src));
+  check('the TikTok "as much as recorded" note only when TikTok is the shorter side', /tEnd < yEnd && tEnd < 47/.test(src));
+  check('two curves that never meet say so', /recorded at different ages and never overlap/.test(src));
+}
+
+console.log('\n8. Time to a thousand claims only what the brackets guarantee');
+{
+  const fmtDurSrc = grab('  const fmtDur =', '\n\n');
+  const bt = new Function(fmtDurSrc + '\n' + grab('  const bracketText =', '\n  };') + '\n  };\nreturn bracketText;')();
+  check('a tight crossing reads "by N"', bt([9.5, 10]) === 'by 10 hrs', bt([9.5, 10]));
+  check('a wide one reads as the bracket', bt([0, 10]) === 'between 0 and 10 hrs', bt([0, 10]));
+  check('and in hours on both ends', bt([3, 10]) === 'between 3 and 10 hrs', bt([3, 10]));
+  check('nothing observed says so', bt(null) === 'not recorded');
+  check('one hour is singular', bt([0.8, 1]) === 'by 1 hr' && bt([1, 10]) === 'between 1 and 10 hrs', bt([0.8, 1]) + ' / ' + bt([1, 10]));
+  check('the ratio is YouTube\'s lower bound over TikTok\'s upper, floored',
+    /Math\.floor\(yb\[0\] \/ tb\[1\]\)/.test(src) && /at least ' \+ x \+ '× faster/.test(src));
+  check('"normal for the format" and "no units problem" are gone',
+    !/normal for the format/.test(src) && !/No units problem/.test(src) && /read this as pace, not a verdict/.test(src));
+}
+
+console.log('\n9. Connection, pairs and the fallback say what is true');
+{
+  check('ttApi carries the HTTP status on its error', /e\.status = r\.status; throw e;/.test(src));
+  check('a 401 shows the TikTok pill as expired', /e\.status === 401\) ttExpired = true/.test(src) && /'sign-in expired'/.test(src));
+  check('and says how to fix it', /Your TikTok sign-in has expired — open the/.test(src));
+  const mp = new Function(grab('  function mergePairs(', '\n  }\n') + '\n  }\nreturn mergePairs;')();
+  const m = mp([{ y: 'a', t: '1' }], [{ y: 'a', t: '1' }, { y: 'b', t: '2' }, { y: 'a', t: '3' }]);
+  check('a dirty local list is merged in without doubling a linked side', m.map(p => p.y + p.t).join() === 'a1,b2', m.map(p => p.y + p.t).join());
+  check('the local list is merged only while it is marked dirty', /if \(isDirty\(\)\) \{/.test(src) && /setDirty\(!pairsSynced\)/.test(src));
+  check('the fallback names the page\'s own window', /older than the newest posts this page loads \(60 TikToks, 200 YouTube uploads\)/.test(src));
+  const gt = new Function(grab('  function gapText(', '\n  }\n') + '\n  }\nreturn gapText;')();
+  check('a pair posted together is "within the hour", not "0 hours"', gt(0.3) === 'Posted within the hour', gt(0.3));
+  check('one hour is singular', gt(1.2) === 'Posted 1 hour apart', gt(1.2));
+  check('and a day is too', gt(30) === 'Posted 30 hours apart' && gt(40) === 'Posted 40 hours apart' && gt(50) === 'Posted 2 days apart', gt(50));
+  check('the TikTok launch comes from /tiktok/launches, /history the fallback',
+    /ttApi\('\/tiktok\/launches'\)/.test(src) && /ttApi\('\/tiktok\/history'\)/.test(src) && !/tiktok\/life/.test(src.replace(/\/\/.*$/gm, '')));
+  // launch ages are minutes; /history timestamps take over after the launch ends
+  const ser = (launch, hist) => new Function('ttLaunch', 'ttHist', 'const HOUR = 3600e3;\n' +
+    grab('  function ttSeries(', '\n  }\n') + '\n  }\nreturn ttSeries;')(launch, hist);
+  const pub = 1e12;
+  const L = { ages: 'exact', step: 5, curves: { p: { s: [[0, 0], [60, 500], [120, 1100]] } } };
+  const H = { videos: { p: { s: [[pub + 30 * 60e3, 200], [pub + 3 * 3600e3, 1500]] } } };
+  const a = ser(L, H)('p', pub);
+  check('launch minutes become hours, and history adds only what comes after',
+    JSON.stringify(a) === JSON.stringify([[0, 0], [1, 500], [2, 1100], [3, 1500]]), JSON.stringify(a));
+  const b = ser(null, H)('p', pub);
+  check('with no launch, /history alone still draws', b.length === 2 && b[0][0] === 0.5, JSON.stringify(b));
+  const old = ser({ step: 5, curves: { p: { s: [[0, 0], [5, 100]] } } }, null)('p', pub);
+  check('an older Worker\'s bucket-start ages are moved to about where the reading was', Math.abs(old[1][0] - (5 * 60e3 + 270e3) / 3600e3) < 1e-9, JSON.stringify(old));
+  const w = fs.readFileSync(new URL('../worker/worker.js', import.meta.url), 'utf8');
+  check('the Worker answers 502, not [], when the pairs read fails', /catch \(e\) \{ return json\(\{ error: 'pairs read failed' \}, 502\); \}/.test(w));
 }
 
 console.log('\n' + (fail?'✗ '+fail+' FAILED, ':'') + pass + ' passed');

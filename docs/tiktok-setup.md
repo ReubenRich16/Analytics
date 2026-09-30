@@ -179,7 +179,7 @@ can sign in, so it stays private to the two of you.
 | `/tiktok/callback` | exchanges the code for tokens, mints an opaque session id |
 | `/tiktok/me` | profile + follower/like/post counts |
 | `/tiktok/videos` | posts with views / likes / comments / shares |
-| `/tiktok/history` | the Worker's own minute-by-minute recordings |
+| `/tiktok/history` | the last 3 days of the Worker's recordings, plus follower history |
 | `/tiktok/sync` | cross-device store, locked to the signed-in account |
 | `/tiktok/ai` | Idea Studio, using the existing Gemini key |
 | `/tiktok/launches` | the recorded launches, age-indexed — the projection's reference curves |

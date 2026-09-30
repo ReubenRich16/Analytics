@@ -147,14 +147,27 @@ function world(targetAgeMin) {
   check('the rank is the post\'s real place in the field', rank === 3, 'got #' + rank);
 }
 {
+  // a clear lead over every rival is a genuine record: marked for motion.js to celebrate.
+  // A tie for first, or any lower place, is not.
+  const w = world(360);
+  const lead = build('latest').run({ ...w.target, view_count: 9000 }, w.hist, w.videos);
+  check('a post out in front of every rival wears the win mark', /<b class="cc-win">#1 of 5<\/b>/.test(lead), (lead.match(/#\d+ of \d+/) || [])[0]);
+  const third = build('latest').run(w.target, w.hist, w.videos);
+  check('a post in 3rd place is not celebrated', !/cc-win/.test(third));
+  const tie = build('latest').run({ ...w.target, view_count: Math.round(3000 * 360 / 600) }, w.hist, w.videos);
+  check('a post tied for first is not celebrated', !/cc-win/.test(tie), (tie.match(/#\d+ of \d+/) || [])[0]);
+}
+{
   // modes pick different sets: newest four vs highest four at that age
   const w = world(360);
   w.hist.videos.late = { create_time: Math.floor((NOW - 400 * 60000) / 1000), title: 'newest rival',
                          cover: '', s: curve(NOW - 400 * 60000, 40) };
   const latest = build('latest').run(w.target, w.hist, w.videos);
   const best = build('best').run(w.target, w.hist, w.videos);
-  check('latest mode names itself', /most recent recorded posts/.test(latest));
-  check('best mode names itself', /best recorded openings/.test(best));
+  check('latest mode names itself', /newest other posts/.test(latest));
+  check('best mode names itself', /other posts with the most views/.test(best));
+  check('and both count the rows really shown, not a flat ten',
+    /your <b>5 newest other posts<\/b> at the same age/.test(latest) && /your <b>5 other posts with the most views<\/b> at the same age/.test(best));
   check('the newest, weakest rival appears in latest mode', /newest rival/.test(latest));
   check('both modes list every rival when there are fewer than ten',
     (latest.match(/class="hbar-row"/g) || []).length === (best.match(/class="hbar-row"/g) || []).length);
@@ -201,7 +214,7 @@ function world(targetAgeMin) {
   // retirement, empty, and the no-op guards
   const w = world(9 * 1440);
   const retired = build('latest').run(w.target, w.hist, w.videos);
-  check('past a week the race retires', /minute race has retired/.test(retired));
+  check('past a week the race retires, saying it is a page limit', /This post is over a week old, and the race only compares posts in their first week\./.test(retired) && !/retired/.test(retired));
   check('and still says where the post got to', /views<\/b> at/.test(retired));
   check('with no bars under it', !/hbar-row/.test(retired));
 
@@ -302,7 +315,7 @@ console.log('\nreading a curve for the overlay');
 console.log('\ndrawing several lines at once');
 {
   const ML = new Function('esc', 'fmt', 'chartPush', `
-    ${fn('function niceScale(lo, hi, target)')}
+    ${fn('function niceScale(lo, hi, target, int)')}
     const axisNum = n => String(Math.round(n));
     const legendHtml = items => '<div class="legend">' + items.map(i => '<span class="lg-item">' + esc(i.name) + '</span>').join('') + '</div>';
     ${fn('function multiLineHtml(series, tips, opts)')}
@@ -435,11 +448,64 @@ console.log('\nthe per-post drawer');
 
   // hashtags: the one panel the drawer adds
   const tags = TT.slice(TT.indexOf('function ttdHashtagsHtml(v)'), TT.indexOf('\n  }\n', TT.indexOf('function ttdHashtagsHtml(v)')));
-  check('a tag used once gets no figure attached to it', /e\.n >= 2/.test(tags),
+  check('a tag on fewer than two OTHER posts gets no figure attached to it', /e\.length >= 2/.test(tags) && /x\.id !== v\.id/.test(tags),
     'one post is not a record of anything');
   check('and no figure at all without a median to compare against', /med > 0/.test(tags));
   check('captions cannot inject markup through a tag', /esc\(t\)/.test(tags));
 }
+
+/* The report card and the metric grid (A15, A16, A28): no letter for a post that has no
+   reach figure yet, the real reason on screen, an estimate marked as one, engagement
+   judged against the ONE typical like rate and coloured by itself. */
+console.log('\nreport card — honest reasons, one typical like rate');
+{
+  const NOW = 1786000000000, H = 3600e3;
+  const grab = n => { const i = TT.indexOf('function ' + n + '('); return TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const pmed = TT.slice(TT.indexOf('  const pjMed = '), TT.indexOf('\n', TT.indexOf('  const pjMed = ')));
+  const tl = TT.slice(TT.indexOf('  const typicalLikeRate = '), TT.indexOf('\n  };\n', TT.indexOf('  const typicalLikeRate = ')) + 5);
+  const card = (v, videos, scores) => new Function('videos', 'scores', 'v', 'NOW', `
+    const Date = { now: () => NOW };
+    const fmt = new Intl.NumberFormat('en-US');
+    const PJ_MIN_AGE = 300, PJ_HORIZON = 2880;
+    const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
+    const scoreOf = v => scores[v.id] == null ? null : scores[v.id];
+    const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
+    ${pmed}\n${tl}\n${grab('ttReportCardHtml')}
+    return ttReportCardHtml(v);`)(videos, scores, v, NOW).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  const others = [];
+  const sc = {};
+  for (let i = 0; i < 28; i++) { others.push({ id: 'o' + i, create_time: (NOW - (10 + i) * 864e5) / 1000, view_count: 1000 + i * 100, like_count: 80 + i }); sc['o' + i] = 1000 + i * 100; }
+  const young = { id: 'n', create_time: (NOW - 3 * H) / 1000, view_count: 93, like_count: 7 };
+  const a = card(young, [young, ...others], sc);
+  check('a 3-hour-old post with 28 scored others gets no letter', /— Not graded yet/.test(a) && !/ (A\+|A-|A|B\+|B|C|D|F) Beats/.test(a), a);
+  check('and the reason is its age, not a lack of posts',
+    /Reach is graded once this post is 5 hours old and its first 48 hours can be estimated/.test(a) && !/4 other posts/.test(a), a);
+  const b = card({ ...young, create_time: (NOW - 8 * H) / 1000 }, [young, ...others], sc);
+  check('past 5 hours the reason drops the age', /Reach is graded once this post’s first 48 hours can be estimated/.test(b), b);
+  const small = card(young, [young, ...others.slice(0, 3)], sc);
+  check('a genuinely small pool keeps the four-posts reason', /A reach grade needs at least 4 other posts to compare with/.test(small), small);
+  // 93 views is under the Like rate chip's 200-view floor, so the card prints no % either
+  check('under 200 views the like rate is "too few views to judge yet", as the chip says',
+    /Like rate too few views to judge yet/.test(small) && !/% of your usual/.test(small) && /— Not graded yet/.test(small), small);
+  const small2 = card({ ...young, view_count: 300, like_count: 24 }, [young, ...others.slice(0, 3)], sc);
+  check('and grades on engagement with the band in the headline', /Beats \d+% of your other posts on like rate — (about|above|below) your usual \(\d+%\)/.test(small2), small2);
+  const ranked = { id: 'r', create_time: (NOW - 10 * H) / 1000, view_count: 2725, like_count: 260 };
+  const r = card(ranked, [ranked, ...others], { ...sc, r: 5393 });
+  check('the headline says the percentile is reach', /Beats (\d+% of your 28 other posts|all 28 of your other posts) on reach/.test(r) && !/Beats 100%/.test(r), r);
+  check('a launching post’s reach reads as an estimate by 48h, not as views', /~5,393 by 48h/.test(r) && !/5,393 views/.test(r), r);
+  check('the reach explainer admits older posts carry a longer tail', /Older posts have had longer to pick up late views/.test(r), r);
+  const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };
+  const zc = card(zero, [zero, ...others], sc);
+  check('a 0-view post gets no engagement bar and no F', !/Like rate \S+ \d+% of your usual/.test(zc) && !/ F /.test(zc), zc);
+  const src = grab('ttReportCardHtml');
+  check('the engagement bar is coloured from its own index when reach is graded',
+    /idx >= 100 \? 'var\(--up\)' : idx >= 85 \? 'var\(--accent\)' : 'var\(--gold\)'/.test(src));
+  check('no "|| 1" fallback that turns a 0 median into a ratio', !/\|\| 1;/.test(src));
+  check('and "typical" is the shared helper', /typicalLikeRate\(v\.id\)/.test(src));
+  const grid = grab('ttMetricGridHtml');
+  check('the grid shows — for engagement on a 0-view post', /view_count \|\| 0\) > 0 \? engOf\(v\)\.toFixed\(1\) \+ '%' : '—'/.test(grid));
+}
+
 
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

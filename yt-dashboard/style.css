@@ -70,9 +70,28 @@
     --text:#e9e7f2; --muted:#9896ad; --live:#d67ba4; --up:#5ecb9d; --down:#e07293;
     --accent:#b39ce0; --purple:#c3a8e6; --gold:#e3c082;
   }
+  /* ☁️ Cinnamoroll — cute and soft, tuned to the character: a sky-blue ground with faint
+     stars, fluffy white panels, type in his cinnamon-brown outline colour (darkened until it
+     reads at 7:1), his baby-blue eyes as the accent and his pink cheeks for anything live or
+     celebrating. Colours only — no character art is drawn here; real Cinnamoroll pictures
+     come from official GIPHY stickers or your own uploads (stickers.js). Contrast (WCAG):
+       --text  8.3:1 on --panel · 7.2:1 on --ink        --muted 6.4:1 panel · 5.6:1 ink
+       --up    5.5:1 on --panel                         --down  5.4:1 on --panel
+       --accent 5.7:1 on --panel · 5.0:1 on --ink · 4.6:1 on the header sky; --ink on an --accent pill (a selected tab) 5.0:1
+       --gold 5.3:1 on --panel · --live 4.8:1 on --panel (small chart labels stay legible)
+     --confetti is read by the party confetti; themes without it keep the classic colours. */
+  body[data-theme="cloud"] {
+    --ink:#e2f1fe; --panel:#ffffff; --panel-2:#f1f8ff; --line:#d2e6f8;
+    --text:#6e4429; --muted:#785843; --live:#c93a7a; --up:#16784d; --down:#c0355e;
+    --accent:#2f68a8; --purple:#8165cc; --gold:#94600f;
+    --cream:#fff9ef; --blush:#ffd6e6;
+    --confetti:#ffb8d2, #a8d8ff, #fff1c1, #ffffff, #d9c9ff, #bff0da, #7fb8ec, #ff94bd;
+    --f-num:'Fredoka','Sora',system-ui,sans-serif;
+  }
   /* light themes get a softer, on-palette error banner (dark themes keep the default red) */
   body[data-theme="blush"] .error, body[data-theme="lavender"] .error, body[data-theme="honey"] .error,
-  body[data-theme="rose"] .error, body[data-theme="sakura"] .error, body[data-theme="pearl"] .error {
+  body[data-theme="rose"] .error, body[data-theme="sakura"] .error, body[data-theme="pearl"] .error,
+  body[data-theme="cloud"] .error {
     background:rgba(192,80,106,.08); border-color:rgba(192,80,106,.35); color:#a83553;
   }
   /* Type: Figtree for everything you read, Sora for every number. Mono is kept only
@@ -302,6 +321,7 @@
     line-height:1.45; padding:7px 11px; border-radius:7px; box-shadow:0 6px 20px rgba(0,0,0,.32); max-width:250px; }
   .stat .delta { font-family:var(--f-sans); font-weight:600; font-size:11.5px; margin-top:5px; color:var(--muted); min-height:15px; }
   .stat .delta.up { color:var(--up); }
+  .stat .delta.down { color:var(--down); }
 
   .velocity { display:none; }
   .vhead { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
@@ -379,8 +399,15 @@
 
   svg.chart { width:100%; height:auto; display:block; background:var(--ink); border:1px solid var(--line); border-radius:10px; }
   svg.chart path.line { stroke-linejoin:round; stroke-linecap:round; }
-  @keyframes drawLine { to { stroke-dashoffset:0; } }
-  svg.chart path.line.anim { stroke-dasharray:1; stroke-dashoffset:1; animation:drawLine 1s ease forwards; }
+  /* The line draws itself in ONLY under .cc-draw, which motion.js adds the first time a
+     chart is seen (load, room switch, drawer, a press inside the card). It used to run on
+     every path.line.anim unconditionally, so each poll's repaint redrew every line once a
+     minute. Without motion.js a line is simply drawn. Dash values live in the keyframes,
+     with fill-mode backwards, so a finished line carries no dasharray at all. */
+  @keyframes drawLine { from { stroke-dasharray:var(--cc-len, 1); stroke-dashoffset:var(--cc-len, 1); }
+                        to { stroke-dasharray:var(--cc-len, 1); stroke-dashoffset:0; } }
+  svg.chart.cc-draw path.line.anim, svg.chart.cc-draw path.cc-line, svg.spark.cc-draw path.cc-line {
+    animation:drawLine .85s cubic-bezier(.45,.05,.25,1) calc(var(--cc-base, 0ms) + var(--cc-d, 0ms)) backwards; }
   /* grid and axes are solid hairlines one step off the surface — recessive, never dashed */
   svg.chart .grid-line { stroke:var(--line); stroke-width:1; }
   svg.chart .axis-line { stroke:var(--line); stroke-width:1; }
@@ -411,8 +438,9 @@
   svg.chart text.ax.vnum { font-size:11px; }
   svg.chart .rowhit { fill:transparent; }
   svg.chart .rowhit.near { fill:var(--text); opacity:.05; }
-  svg.chart .end-dot { animation:dotIn .5s .5s ease both; }
-  @keyframes dotIn { from { opacity:0; r:0; } to { opacity:1; } }
+  /* the end dot pops in once the line has arrived — gated like the line, see motion.js */
+  svg.chart.cc-draw .end-dot { animation:dotIn .45s cubic-bezier(.3,1.5,.5,1) calc(var(--cc-base, 0ms) + 780ms) backwards; }
+  @keyframes dotIn { from { opacity:0; r:0; } }
   /* legend — always present once a chart carries more than one series */
   .legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:8px; font-size:11px; color:var(--muted); }
   .legend .lg-item { display:inline-flex; align-items:center; gap:6px; }
@@ -569,9 +597,10 @@
     .thead-bar select { padding:9px 10px; }
   }
 
-  /* the area wash rises under the line (translate in user units, so it scales with the chart) */
-  svg.chart clipPath rect.wipe { transform:translateY(200px); animation:wipeUp .9s .25s cubic-bezier(.22,1,.3,1) both; }
-  @keyframes wipeUp { to { transform:none; } }
+  /* the area wash rises under the line (translate in user units, so it scales with the chart).
+     Gated under .cc-draw like the line itself, so a poll repaint no longer replays it. */
+  svg.chart.cc-draw clipPath rect.wipe { animation:wipeUp .9s cubic-bezier(.22,1,.3,1) calc(var(--cc-base, 0ms) + 250ms) backwards; }
+  @keyframes wipeUp { from { transform:translateY(200px); } }
   @media (prefers-reduced-motion:reduce){ svg.chart clipPath rect.wipe { transform:none; animation:none; } }
 
   /* the deep-dive grows out of whatever you tapped rather than sliding in from the edge */
@@ -596,8 +625,331 @@
     font:inherit; font-size:11px; color:var(--text); }
   #awayContent .chip.chipv img { width:29px; height:16px; border-radius:3px; object-fit:cover; }
   #awayContent .chip.chipv:hover { border-color:var(--muted); }
-  #awayContent .alert.seen { opacity:.55; }
+  #awayContent .alert.seen { opacity:.7; }
   #awayContent .alert .dot { width:6px; height:6px; border-radius:50%; background:var(--accent);
     flex:none; align-self:center; }
   #awayContent .alert.moment .txt { color:var(--text); }
   #awayContent .awayhead { margin-bottom:10px; }
+
+  /* ==========================================================================================
+     motion.js — draw-ins, count-ups, room slides, the tab glider, little rewards.
+     Every rule below hangs off a class that motion.js adds (.cc-draw, .cc-roomin, .cc-glide,
+     .cc-intro, .cc-chip…), so without the script none of it applies and every chart is simply
+     drawn. Animations are from-only keyframes with fill-mode `backwards`: when one ends the
+     element is back on its own styles exactly (a series faded to .35 stays .35), and nothing
+     is ever left half-way. Only transform, opacity and stroke-dashoffset move.
+     ========================================================================================== */
+  @keyframes ccFade { from { opacity:0; } }
+  @keyframes ccRise { from { opacity:0; transform:translateY(10px); } }
+  @keyframes ccPop { from { opacity:0; transform:scale(.2); } 60% { transform:scale(1.2); } }
+  @keyframes ccGrowY { from { transform:scaleY(0); } }
+  @keyframes ccGrowX { from { transform:scaleX(0); } }
+
+  /* charts — the line draws (see drawLine above), then the wash rises, then the end marks pop */
+  svg.chart.cc-draw path[fill^="url"]:not([clip-path]) {
+    animation:ccRise .7s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + 250ms) backwards; }
+  svg.chart.cc-draw .cc-bar { transform-box:fill-box; transform-origin:50% 100%;
+    animation:ccGrowY .6s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + 60ms + var(--cc-d, 0ms)) backwards; }
+  svg.chart.cc-draw .cc-bar.cc-down { transform-origin:50% 0; }
+  svg.chart.cc-draw circle.pt { transform-box:fill-box; transform-origin:center;
+    animation:ccPop .45s cubic-bezier(.3,1.4,.5,1) calc(var(--cc-base, 0ms) + 150ms + var(--cc-d, 0ms)) backwards; }
+  svg.chart.cc-draw .cc-end, svg.spark.cc-draw circle { transform-box:fill-box; transform-origin:center;
+    animation:ccPop .45s cubic-bezier(.3,1.4,.5,1) calc(var(--cc-base, 0ms) + 780ms) backwards; }
+  svg.chart.cc-draw line.rowtrack { transform-box:fill-box; transform-origin:0 50%;
+    animation:ccGrowX .6s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + var(--cc-d, 0ms)) backwards; }
+  svg.chart.cc-draw .refline, svg.chart.cc-draw .lead, svg.chart.cc-draw text.reft, svg.chart.cc-draw .cc-extra {
+    animation:ccFade .6s ease calc(var(--cc-base, 0ms) + 320ms) backwards; }
+  svg.chart.cc-draw text.val { animation:ccFade .45s ease calc(var(--cc-base, 0ms) + 760ms) backwards; }
+
+  /* bars built from divs: the velocity strip grows up, every horizontal bar grows from its baseline */
+  .bars.cc-draw .bar { transform-origin:50% 100%;
+    animation:ccGrowY .55s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + var(--cc-d, 0ms)) backwards; }
+  .hbar-row.cc-draw .hfill, .gbar.cc-draw .gf, .t1krow.cc-draw .bar > div,
+  .pctbox .track.cc-draw .fill, .pjtrack.cc-draw .pjfill { transform-origin:0 50%;
+    animation:ccGrowX .75s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + var(--cc-d, 0ms)) backwards; }
+  .pjtrack.cc-draw .pjband, .pjtrack.cc-draw .pjtick { animation:ccFade .6s ease calc(var(--cc-base, 0ms) + 450ms) backwards; }
+  .metric-grid.cc-draw > .mcell, .bignums.cc-draw > .mcell {
+    animation:ccRise .5s cubic-bezier(.2,.9,.3,1) calc(var(--cc-base, 0ms) + var(--cc-d, 0ms)) backwards; }
+  /* below the fold: armed but held on its first frame until it scrolls into view */
+  .cc-draw.cc-wait, .cc-draw.cc-wait * { animation-play-state:paused !important; }
+
+  /* a number mid-count keeps its width steady */
+  .cc-counting { font-variant-numeric:tabular-nums; }
+
+  /* rooms slide in from the side you moved towards; .wrap clips sideways only while they do,
+     so the 18px of travel never gives a phone a horizontal scrollbar */
+  body[data-roomdir="fwd"] .room-pane.on.cc-roomin { animation:ccRoomFwd .32s cubic-bezier(.2,.9,.3,1) backwards; }
+  body[data-roomdir="back"] .room-pane.on.cc-roomin { animation:ccRoomBack .32s cubic-bezier(.2,.9,.3,1) backwards; }
+  @keyframes ccRoomFwd { from { opacity:0; transform:translateX(18px); } }
+  @keyframes ccRoomBack { from { opacity:0; transform:translateX(-18px); } }
+  body.cc-rooming .wrap { overflow-x:clip; }
+
+  /* the pill that glides under the selected tab. Only once motion.js has measured and placed
+     it (.cc-glide) does the selected button hand its background over — without the script,
+     or while the bar is hidden, the button keeps its own pill exactly as before. */
+  .tabs { position:relative; }
+  .tabs .cc-glider { position:absolute; left:0; top:0; width:0; height:0; border-radius:999px;
+    background:var(--accent); pointer-events:none; z-index:0;
+    transition:transform .5s cubic-bezier(.34,1.4,.5,1), width .5s cubic-bezier(.34,1.4,.5,1), height .25s ease; }
+  .tabs .cc-glider.cc-noanim { transition:none; }
+  .tabs.cc-glide button { position:relative; z-index:1; }
+  /* the text turns a beat late, so it changes colour as the pill arrives under it */
+  .tabs.cc-glide button[aria-selected="true"] { background:transparent; transition:color .22s ease .14s; }
+
+  /* first load: the header settles, the live dot pops, the title catches the light once */
+  body.cc-intro header { animation:ccHeadIn .55s cubic-bezier(.2,.9,.3,1) backwards; }
+  @keyframes ccHeadIn { from { opacity:0; transform:translateY(-10px); } }
+  body.cc-intro .live-dot { animation:ccDotIntro .8s cubic-bezier(.3,1.6,.5,1) .15s backwards; }
+  @keyframes ccDotIntro { from { transform:scale(0); } 55% { transform:scale(1.8); } }
+  @supports ((-webkit-background-clip:text) or (background-clip:text)) {
+    body.cc-intro header h1 { color:transparent; -webkit-background-clip:text; background-clip:text;
+      background-image:linear-gradient(100deg, var(--text) 42%, var(--accent) 49%, var(--live) 53%, var(--text) 60%);
+      background-size:250% 100%; background-repeat:no-repeat; background-position:0 0;
+      animation:ccTitleShine 1.25s ease .25s backwards; }
+  }
+  @keyframes ccTitleShine { from { background-position:100% 0; } }
+
+  /* a live total went up: a green glow round the tile and the page's own "+N" floating off it */
+  .stat .cc-chip { position:absolute; right:10px; top:10px; z-index:2; pointer-events:none; white-space:nowrap;
+    font-family:var(--f-num); font-weight:700; font-size:11px; line-height:1; padding:4px 8px; border-radius:999px;
+    color:var(--up); background:color-mix(in srgb, var(--up) 14%, var(--panel));
+    border:1px solid color-mix(in srgb, var(--up) 40%, transparent);
+    animation:ccChip 1.6s cubic-bezier(.2,.9,.3,1) both; }
+  @keyframes ccChip { 0% { opacity:0; transform:translateY(8px) scale(.7); } 16% { opacity:1; transform:translateY(0) scale(1.08); }
+    28% { transform:none; } 72% { opacity:1; transform:translateY(-3px); } 100% { opacity:0; transform:translateY(-14px); } }
+  .stat .cc-glow { position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:1;
+    box-shadow:inset 0 0 0 1.5px var(--up), inset 0 0 26px color-mix(in srgb, var(--up) 30%, transparent);
+    animation:ccGlow 1.4s ease both; }
+  @keyframes ccGlow { 0% { opacity:0; } 20% { opacity:1; } 100% { opacity:0; } }
+
+  /* .cc-win — a genuine record, marked by the page. A sparkle burst and one shine, first time shown. */
+  .cc-sparks { position:fixed; left:0; top:0; width:0; height:0; z-index:60; pointer-events:none; }
+  .cc-sparks i { position:absolute; left:0; top:0; margin:-7px 0 0 -6px; font-style:normal; font-size:13px; line-height:1;
+    color:var(--gold); opacity:0; animation:ccSpark .95s cubic-bezier(.2,.8,.3,1) var(--d, 0ms) both; }
+  .cc-sparks i:nth-child(3n+1) { color:var(--live); }
+  .cc-sparks i:nth-child(3n+2) { color:var(--accent); }
+  @keyframes ccSpark { 0% { opacity:0; transform:translate(0,0) scale(.3) rotate(0deg); } 25% { opacity:1; }
+    100% { opacity:0; transform:translate(var(--dx, 0px), var(--dy, 0px)) scale(1) rotate(150deg); } }
+  .cc-win.cc-win-go { background-image:linear-gradient(110deg, transparent 32%, rgba(255,255,255,.6) 50%, transparent 68%);
+    background-size:250% 100%; background-repeat:no-repeat; background-position:0 0;
+    animation:ccWinPop .6s cubic-bezier(.3,1.5,.5,1) backwards, ccWinShine 1.1s ease-out .15s backwards; }
+  @keyframes ccWinPop { from { transform:scale(.9); } 55% { transform:scale(1.05); } }
+  @keyframes ccWinShine { from { background-position:100% 0; } }
+
+  @media (prefers-reduced-motion:reduce) {
+    .cc-draw, .cc-draw *, .room-pane.cc-roomin, .cc-win.cc-win-go,
+    body.cc-intro header, body.cc-intro header h1, body.cc-intro .live-dot { animation:none !important; }
+    body.cc-intro header h1 { color:inherit !important; background:none !important; }
+    .stat .cc-chip, .stat .cc-glow, .cc-sparks { display:none !important; }
+    .tabs .cc-glider { transition:none !important; }
+  }
+  @media print { .cc-draw, .cc-draw * { animation:none !important; } }
+
+  /* ==========================================================================================
+     ☁️ Cinnamoroll — decoration. Tokens are at the top with the other themes; this is
+     only the fluff: drifting clouds, rounder corners, soft sky shadows, a rounded display
+     face (Fredoka, via --f-num) and a few tiny ☁ / ✦ touches. Charts keep reading their
+     colours from the tokens, so they need nothing here.
+     ========================================================================================== */
+  /* the sky: a deeper blue at the top, and a scatter of faint white stars over the ground */
+  body[data-theme="cloud"] { background:
+    linear-gradient(180deg, #d2e9fc 0, rgba(226,241,254,0) 460px) no-repeat,
+    radial-gradient(circle at 18px 22px, rgba(255,255,255,.95) 0 1.4px, transparent 2.2px) 0 0 / 97px 83px,
+    radial-gradient(circle at 60px 50px, rgba(255,255,255,.8) 0 1px, transparent 1.8px) 0 0 / 131px 109px,
+    var(--ink); }
+  /* the clouds: two tiles (near and far) on ONE fixed layer that sways gently, so a phone
+     composites a single viewport-sized layer rather than two */
+  body[data-theme="cloud"]::before {
+    content:""; position:fixed; inset:-40px; z-index:0; pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1000' height='760' viewBox='0 0 1000 760'%3E%3Cdefs%3E%3Cg id='c'%3E%3Ccircle cx='62' cy='66' r='34'/%3E%3Ccircle cx='112' cy='48' r='46'/%3E%3Ccircle cx='164' cy='64' r='32'/%3E%3Ccircle cx='196' cy='82' r='22'/%3E%3Crect x='30' y='66' width='188' height='40' rx='20'/%3E%3C/g%3E%3Cpath id='s' d='M0-8C1.2-1.2 1.2-1.2 8 0C1.2 1.2 1.2 1.2 0 8C-1.2 1.2-1.2 1.2-8 0C-1.2-1.2-1.2-1.2 0-8Z'/%3E%3Cfilter id='b' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='2.2'/%3E%3C/filter%3E%3C/defs%3E%3Cg fill='%23fff' filter='url(%23b)'%3E%3Cuse href='%23c' x='40' y='50' opacity='.95'/%3E%3Cuse href='%23c' transform='translate(640 150) scale(.7)' opacity='.8'/%3E%3Cuse href='%23c' transform='translate(290 460) scale(1.1)' opacity='.9'/%3E%3Cuse href='%23c' transform='translate(800 560) scale(.55)' opacity='.75'/%3E%3C/g%3E%3Cuse href='%23s' transform='translate(530 96)' fill='%23ffc2d9'/%3E%3Cuse href='%23s' transform='translate(170 390) scale(.8)' fill='%23ffe79a'/%3E%3Cuse href='%23s' transform='translate(905 420) scale(.9)' fill='%23fff'/%3E%3Cuse href='%23s' transform='translate(700 700) scale(.7)' fill='%23ffc2d9'/%3E%3Cuse href='%23s' transform='translate(80 650) scale(.75)' fill='%23bfe0ff'/%3E%3C/svg%3E"),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1500' height='1140' viewBox='0 0 1500 1140'%3E%3Cdefs%3E%3Cg id='c'%3E%3Ccircle cx='62' cy='66' r='34'/%3E%3Ccircle cx='112' cy='48' r='46'/%3E%3Ccircle cx='164' cy='64' r='32'/%3E%3Ccircle cx='196' cy='82' r='22'/%3E%3Crect x='30' y='66' width='188' height='40' rx='20'/%3E%3C/g%3E%3Cpath id='s' d='M0-8C1.2-1.2 1.2-1.2 8 0C1.2 1.2 1.2 1.2 0 8C-1.2 1.2-1.2 1.2-8 0C-1.2-1.2-1.2-1.2 0-8Z'/%3E%3Cfilter id='b' x='-10%25' y='-10%25' width='120%25' height='120%25'%3E%3CfeGaussianBlur stdDeviation='3'/%3E%3C/filter%3E%3C/defs%3E%3Cg opacity='.55'%3E%3Cg fill='%23fff' filter='url(%23b)'%3E%3Cuse href='%23c' transform='translate(1020 80) scale(1.5)'/%3E%3Cuse href='%23c' transform='translate(140 700) scale(1.3)'/%3E%3Cuse href='%23c' transform='translate(700 900) scale(.9)'/%3E%3C/g%3E%3Cuse href='%23s' transform='translate(420 300) scale(1.1)' fill='%23ffc2d9'/%3E%3Cuse href='%23s' transform='translate(1300 640)' fill='%23ffe79a'/%3E%3Cuse href='%23s' transform='translate(900 1060) scale(.8)' fill='%23bfe0ff'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat:repeat, repeat; background-size:1000px 760px, 1500px 1140px;
+    background-position:0 0, 520px 330px;
+    will-change:transform; animation:ccDrift 46s ease-in-out infinite alternate; }
+  @keyframes ccDrift { from { transform:translate3d(-34px, 0, 0); } to { transform:translate3d(34px, -12px, 0); } }
+  body[data-theme="cloud"] #bgBalls { display:none; }   /* the clouds take the floating thumbnails' place */
+
+  /* fluffy panels: rounder, with a soft sky-blue shadow instead of a hard edge */
+  body[data-theme="cloud"] .card { border-radius:22px; border-color:#d6e8f7;
+    box-shadow:0 12px 30px -16px rgba(42,109,176,.32), 0 2px 6px rgba(42,109,176,.06); }
+  body[data-theme="cloud"] .answer-card { background:linear-gradient(160deg, var(--panel) 30%, var(--cream) 100%); }
+  body[data-theme="cloud"] .stat, body[data-theme="cloud"] .tile { border-radius:20px; border-color:#d6e8f7;
+    background:radial-gradient(110px 64px at 100% 0%, rgba(255,179,207,.28), transparent 70%), var(--panel);
+    box-shadow:0 10px 24px -14px rgba(42,109,176,.36); }
+  body[data-theme="cloud"] .stat:hover { box-shadow:0 12px 26px -12px rgba(42,109,176,.42); }
+  body[data-theme="cloud"] .mcell { border-radius:14px; }
+  body[data-theme="cloud"] svg.chart { border-radius:16px; }
+  body[data-theme="cloud"] .reportcard, body[data-theme="cloud"] .pjwait, body[data-theme="cloud"] .idea-list li,
+  body[data-theme="cloud"] .tips li { border-radius:14px; }
+  body[data-theme="cloud"] input, body[data-theme="cloud"] select, body[data-theme="cloud"] textarea,
+  body[data-theme="cloud"] button.ghost { border-radius:12px; }
+  /* outline buttons and pills sitting on the sky get a white fill, so a drifting cloud or
+     sparkle never shows through behind their label */
+  body[data-theme="cloud"] button.ghost:not(.on):not(.active), body[data-theme="cloud"] .onepage { background:var(--panel); }
+  body[data-theme="cloud"] button.primary { border-radius:999px; box-shadow:0 8px 18px -8px rgba(224,85,142,.6); }
+  body[data-theme="cloud"] .tabs { box-shadow:0 8px 20px -14px rgba(42,109,176,.45); }
+  body[data-theme="cloud"] .tabs .cc-glider,
+  body[data-theme="cloud"] .tabs:not(.cc-glide) button[aria-selected="true"] { box-shadow:0 4px 12px -4px rgba(42,109,176,.6); }
+  body[data-theme="cloud"] .drawer { border-radius:22px 0 0 22px; box-shadow:-14px 0 44px rgba(42,109,176,.22); }
+  body[data-theme="cloud"] #party .scrim { background:rgba(44,78,122,.55); }
+  body[data-theme="cloud"] #party .pclose { color:var(--text); }
+  body[data-theme="cloud"] ::selection { background:var(--blush); color:var(--text); }
+
+  /* the rounded display face on headings, labels and every number (--f-num is Fredoka here) */
+  body[data-theme="cloud"] header h1, body[data-theme="cloud"] .dsection h4, body[data-theme="cloud"] .room-divider span,
+  body[data-theme="cloud"] .label, body[data-theme="cloud"] .card div[style*="text-transform:uppercase"],
+  body[data-theme="cloud"] .channel-banner .ct { font-family:var(--f-num); }
+  body[data-theme="cloud"] header h1 { font-weight:600; }
+  body[data-theme="cloud"] .abody .af { letter-spacing:-.02em; }
+  /* TikTok's cyan wordmark is built for a dark header; on a pale sky it borrows the accent */
+  body[data-theme="cloud"] .tt-cyan { color:var(--accent); }
+
+  /* tiny touches — decoration only, so they carry empty alt text for screen readers */
+  body[data-theme="cloud"] header h1::after { content:" ☁"; content:" ☁" / ""; color:var(--accent); letter-spacing:0; }
+  body[data-theme="cloud"] .card div[style*="text-transform:uppercase"]::before,
+  body[data-theme="cloud"] .vhead .label::before, body[data-theme="cloud"] .thead-bar .label::before,
+  body[data-theme="cloud"] .room-divider span::before { content:"☁ "; content:"☁ " / ""; color:var(--accent); letter-spacing:0; }
+  body[data-theme="cloud"] .stat .label::after { content:" ✦"; content:" ✦" / ""; color:var(--live); letter-spacing:0; }
+  @media (prefers-reduced-motion:no-preference) {
+    body[data-theme="cloud"] .live-dot.on { animation-name:ccPulsePink; }
+  }
+  @keyframes ccPulsePink { 0%,100% { box-shadow:0 0 0 0 rgba(224,85,142,.55); } 50% { box-shadow:0 0 0 7px rgba(224,85,142,0); } }
+  @media (prefers-reduced-motion:reduce) {
+    body[data-theme="cloud"]::before { animation:none !important; }
+  }
+
+  /* ==========================================================================================
+     ☁️ Cinnamoroll — stickers (stickers.js). Nothing here exists outside the cloud theme:
+     stickers.js only builds these elements while body[data-theme="cloud"] is set. Every layer
+     is pointer-events:none except the peeking sticker's own picture and the drawer itself, so
+     a sticker never steals a tap from the data. Only transform and opacity move.
+     ========================================================================================== */
+  .cc-peek-host { position:relative; }
+  .cc-peek { position:absolute; right:18px; top:calc(-1 * var(--cc-rise, 48px)); width:var(--cc-size, 64px); height:var(--cc-size, 64px); z-index:3;
+    pointer-events:none; transform-origin:50% 100%; }
+  .cc-peek .cc-bob { display:block; width:100%; height:100%; transform-origin:50% 100%;
+    animation:ccBob 2.8s ease-in-out infinite alternate; }
+  .cc-peek img { display:block; width:100%; height:100%; object-fit:contain; pointer-events:auto; cursor:pointer;
+    filter:drop-shadow(0 4px 6px rgba(54,115,185,.22)); -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  @keyframes ccBob { from { transform:translateY(0) rotate(-1.5deg); } to { transform:translateY(-5px) rotate(1.5deg); } }
+  /* a new room: pop up from behind the card's edge, then wave */
+  .cc-peek.cc-in { animation:ccPeekIn .9s cubic-bezier(.3,1.5,.5,1) backwards; }
+  @keyframes ccPeekIn { 0% { opacity:0; transform:translateY(34px) scale(.4); } 45% { opacity:1; transform:translateY(-6px) scale(1.08) rotate(-9deg); }
+    62% { transform:rotate(8deg); } 78% { transform:rotate(-5deg); } 100% { transform:none; } }
+  .cc-peek.cc-wiggle { animation:ccWiggle 1.1s ease-in-out; }
+  @keyframes ccWiggle { 0%,100% { transform:none; } 15% { transform:rotate(-9deg); } 30% { transform:rotate(8deg); }
+    45% { transform:rotate(-6deg); } 60% { transform:rotate(4deg); } 75% { transform:rotate(-2deg); } }
+  .cc-peek.cc-jump, .cc-stk-prev.cc-jump img { animation:ccJump .8s cubic-bezier(.3,1.4,.5,1); }
+  @keyframes ccJump { 0% { transform:none; } 18% { transform:scale(1.12,.86); } 45% { transform:translateY(-28px) scale(.94,1.08) rotate(-6deg); }
+    70% { transform:translateY(0) scale(1.1,.9); } 85% { transform:scale(.97,1.03); } 100% { transform:none; } }
+  .cc-peek .cc-heart { position:absolute; left:50%; top:4px; margin-left:-5px; font-style:normal; font-size:13px; line-height:1;
+    color:var(--live); pointer-events:none; opacity:0; animation:ccHeart 1.1s ease-out var(--hd, 0ms) forwards; }
+  @keyframes ccHeart { 0% { opacity:0; transform:translate(0, 6px) scale(.4); } 25% { opacity:1; }
+    100% { opacity:0; transform:translate(var(--hx, 0px), -36px) scale(1.1); } }
+
+  /* hops beside a tile, pops at a chart's end: one fixed layer, never in the way */
+  .cc-stk-layer { position:fixed; inset:0; z-index:70; pointer-events:none; overflow:hidden; }
+  .cc-fly { position:absolute; pointer-events:none; }
+  .cc-fly img { display:block; width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 3px 5px rgba(54,115,185,.25)); }
+  .cc-fly.cc-hop { animation:ccHop 1.5s cubic-bezier(.3,1.2,.5,1) both; }
+  @keyframes ccHop { 0% { opacity:0; transform:translateY(16px) scale(.3); } 16% { opacity:1; transform:translateY(0) scale(1.05); }
+    34% { transform:translateY(-14px) scale(.95,1.06); } 50% { transform:translateY(0) scale(1.06,.94); }
+    66% { transform:translateY(-8px); } 80% { opacity:1; transform:none; } 100% { opacity:0; transform:translateY(-6px) scale(.9); } }
+  .cc-fly.cc-pop { animation:ccStkPop 1.8s cubic-bezier(.3,1.5,.5,1) both; }
+  @keyframes ccStkPop { 0% { opacity:0; transform:scale(0) rotate(-20deg); } 22% { opacity:1; transform:scale(1.15) rotate(6deg); }
+    34% { transform:scale(1) rotate(0); } 78% { opacity:1; transform:none; } 100% { opacity:0; transform:translateY(-10px) scale(.8); } }
+
+  /* the milestone party: a few float up with the confetti, behind the big number */
+  .cc-party-stk { position:absolute; inset:0; overflow:hidden; pointer-events:none; }
+  .cc-fly.cc-rise { animation:ccStkRise 5s cubic-bezier(.35,.1,.45,1) var(--rd, 0ms) both; }
+  @keyframes ccStkRise { 0% { opacity:0; transform:translate(0, 0) rotate(-8deg); } 8% { opacity:1; }
+    30% { transform:translate(var(--rs, 16px), calc(-30vh - 40px)) rotate(8deg); }
+    55% { transform:translate(calc(var(--rs, 16px) * -1), calc(-58vh - 70px)) rotate(-7deg); }
+    82% { opacity:1; transform:translate(var(--rs, 16px), calc(-86vh - 100px)) rotate(6deg); }
+    100% { opacity:0; transform:translate(0, calc(-100vh - 130px)) rotate(0); } }
+  .cc-fly.cc-rise.cc-still { animation:none; }
+  .cc-party-credit { position:absolute; left:0; right:0; bottom:calc(10px + env(safe-area-inset-bottom, 0px)); text-align:center;
+    font-family:var(--f-sans); font-size:10.5px; letter-spacing:.02em; color:rgba(255,255,255,.78); }
+
+  /* the ☁ button: a little cloud tab on the bottom-right edge. 24px wide, so on a 390px phone
+     it sits in the 14px page gutter plus a card's own side padding and never over content */
+  /* z-index 45: above the page, but under the detail drawer (50), the thumbnail zoom and the
+     party, so it never sits over any of them */
+  .cc-stk-fab { position:fixed; z-index:45; right:0; bottom:calc(84px + env(safe-area-inset-bottom, 0px));
+    width:calc(24px + env(safe-area-inset-right, 0px)); height:56px; padding:0 env(safe-area-inset-right, 0px) 0 0;
+    border-radius:18px 0 0 18px; border:1.5px solid #ffd6e6; border-right:0; background:var(--panel); color:var(--accent);
+    font-size:15px; line-height:1; cursor:pointer; display:grid; place-items:center;
+    box-shadow:-4px 6px 16px -6px rgba(54,115,185,.5); -webkit-tap-highlight-color:transparent;
+    transform-origin:100% 50%; transition:transform .2s cubic-bezier(.3,1.5,.5,1), background .2s ease; }
+  .cc-stk-fab:hover { transform:scaleX(1.12); }
+  /* room under the last row of the page, so the ☁ tab never sits over the footer's buttons */
+  body[data-theme="cloud"] .wrap { padding-bottom:calc(88px + env(safe-area-inset-bottom, 0px)); }
+  .cc-stk-fab:focus-visible { outline:3px solid var(--accent); outline-offset:-3px; }
+  .cc-stk-fab[aria-expanded="true"] { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  /* the drawer: a bottom sheet on a phone, a floating card on a wide screen */
+  .cc-stk-sheet { position:fixed; inset:0; z-index:250; }
+  .cc-stk-sheet[hidden] { display:none; }
+  .cc-stk-scrim { position:absolute; inset:0; background:rgba(44,78,122,.32); }
+  .cc-stk-panel { position:absolute; left:0; right:0; bottom:0; max-height:min(88vh, 720px); overflow:auto; overscroll-behavior:contain;
+    background:var(--panel); color:var(--text); border-radius:24px 24px 0 0; border:1px solid var(--line); border-bottom:0;
+    padding:16px 16px calc(18px + env(safe-area-inset-bottom, 0px)); box-shadow:0 -18px 44px -12px rgba(54,115,185,.35);
+    animation:ccSheetIn .34s cubic-bezier(.2,.9,.3,1) backwards; }
+  @keyframes ccSheetIn { from { transform:translateY(40px); opacity:0; } }
+  @media (min-width:700px) {
+    .cc-stk-panel { left:auto; right:18px; bottom:74px; width:400px; border-radius:24px; border-bottom:1px solid var(--line); }
+  }
+  .cc-stk-head { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+  .cc-stk-head h2 { font-family:var(--f-num); font-size:17px; font-weight:600; color:var(--text); }
+  .cc-stk-head h2::first-letter { color:var(--accent); }
+  .cc-stk-x { margin-left:auto; width:36px; height:36px; border-radius:50%; border:1px solid var(--line); background:var(--panel-2);
+    color:var(--text); font-size:20px; line-height:1; cursor:pointer; }
+  .cc-stk-note, .cc-stk-limits { font-size:12px; line-height:1.5; color:var(--muted); }
+  .cc-stk-note { margin-bottom:12px; }
+  .cc-stk-grid { list-style:none; display:grid; grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); gap:12px; margin:4px 0 10px; }
+  .cc-stk-item { position:relative; background:var(--panel-2); border:1px solid var(--line); border-radius:18px; padding:10px 6px 6px;
+    display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .cc-stk-prev { position:relative; width:64px; height:64px; border:0; background:none; padding:0; cursor:pointer; border-radius:12px; }
+  .cc-stk-prev img { position:relative; display:block; width:64px; height:64px; object-fit:contain; transform-origin:50% 100%; }
+  .cc-stk-miss { position:absolute; inset:0; display:grid; place-items:center; font-size:30px; color:var(--line); }
+  .cc-stk-prev:not(.missing) .cc-stk-miss { visibility:hidden; }
+  .cc-stk-prev:focus-visible, .cc-stk-mv button:focus-visible, .cc-stk-rm:focus-visible, .cc-stk-x:focus-visible, .cc-stk-undo:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* touch targets: × is 32px with an invisible ring to 44px, pushed off the corner so it is not
+     right beside the preview; ◀ ▶ are 44×36 */
+  .cc-stk-rm { position:absolute; top:-10px; right:-10px; width:32px; height:32px; border-radius:50%; border:1px solid var(--line);
+    background:var(--panel); color:var(--down); font-size:18px; line-height:1; cursor:pointer; box-shadow:0 2px 6px rgba(54,115,185,.18); }
+  .cc-stk-rm::before { content:""; position:absolute; inset:-6px; border-radius:50%; }
+  .cc-stk-mv { display:flex; gap:6px; }
+  .cc-stk-mv button { width:44px; height:36px; border-radius:999px; border:1px solid var(--line); background:var(--panel);
+    color:var(--accent); font-size:11px; line-height:1; cursor:pointer; }
+  .cc-stk-mv button:disabled { opacity:.35; cursor:default; }
+  .cc-stk-empty { grid-column:1 / -1; font-size:13px; color:var(--muted); padding:10px 4px; }
+  .cc-stk-msg { min-height:18px; font-size:12.5px; color:var(--up); margin:0 0 4px; }
+  .cc-stk-msg:empty { display:none; }
+  .cc-stk-undo { margin-left:8px; min-height:32px; padding:0 14px; border-radius:999px; border:1px solid var(--line);
+    background:var(--panel-2); color:var(--accent); font-size:12.5px; font-weight:600; cursor:pointer; }
+  .cc-stk-msg.bad, .cc-stk-sync.bad { color:var(--down); }
+  .cc-stk-add { display:grid; gap:10px; margin-bottom:10px; }
+  .cc-stk-add > button { width:100%; min-height:42px; }
+  .cc-stk-add label { margin-bottom:5px; }
+  .cc-stk-row { display:flex; gap:8px; }
+  .cc-stk-row input { flex:1; min-width:0; background:var(--panel-2); }
+  .cc-stk-row button { flex:none; min-height:40px; padding:0 16px; }
+  .cc-stk-limits::after { content:" · " attr(data-used); color:var(--accent); }
+  .cc-stk-sync { font-size:12px; color:var(--up); margin:0 0 4px; font-weight:600; }
+  .cc-stk-sync:empty { display:none; }
+  .cc-stk-starter { width:100%; min-height:42px; margin-bottom:10px; }
+  /* credit and a thumb-reachable Done, stuck to the bottom of the sheet */
+  .cc-stk-foot { position:sticky; bottom:calc(-18px - env(safe-area-inset-bottom, 0px)); display:flex; align-items:center; gap:10px;
+    margin:10px -16px calc(-18px - env(safe-area-inset-bottom, 0px)); padding:10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    background:var(--panel); border-top:1px solid var(--line); }
+  .cc-stk-foot .cc-stk-credit { flex:1; font-size:10.5px; color:var(--muted); margin:0; }
+  .cc-stk-done { flex:none; min-height:44px; min-width:96px; }
+  body.cc-stk-open { overflow:hidden; }
+
+  @media (prefers-reduced-motion:reduce) {
+    .cc-peek, .cc-peek .cc-bob, .cc-peek.cc-in, .cc-peek.cc-wiggle, .cc-peek.cc-jump, .cc-stk-prev.cc-jump img,
+    .cc-fly, .cc-fly.cc-rise, .cc-stk-panel, .cc-stk-fab { animation:none !important; transition:none !important; }
+    .cc-peek .cc-heart, .cc-fly.cc-hop, .cc-fly.cc-pop { display:none !important; }
+  }
+  @media print { .cc-peek, .cc-stk-layer, .cc-stk-fab, .cc-stk-sheet, .cc-party-stk { display:none !important; } }

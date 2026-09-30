@@ -223,5 +223,43 @@ console.log('\n12. ?reauth=1 asks TikTok not to auto-authorise');
     loc(forced).searchParams.get('client_key') === 'ck' && !!loc(forced).searchParams.get('state'));
 }
 
+console.log('\n13. a failed follower read is not an empty follower history');
+{
+  // `failOn` makes get() throw for one key, the way a KV read fails in production
+  const kv = (store, failOn) => {
+    const k = mockKV(store);
+    const get = k.get;
+    k.get = async (key, t) => { if (key === failOn) throw new Error('KV GET failed'); return get(key, t); };
+    return k;
+  };
+  const base = { 'tt:sess:S': 'open-1', 'tt:tok:open-1': JSON.stringify({ access_token: 'A', expires_at: NOW + 36e5 }) };
+  const hist = async (KV, q = '') => {
+    const r = await W.HANDLER.fetch(new Request('https://w.dev/tiktok/history' + q, { headers: { Authorization: 'Bearer S' } }),
+      { MINUTE: KV, DB: mockD1(D1_EMPTY), TIKTOK_CLIENT_KEY: 'ck', TIKTOK_CLIENT_SECRET: 's' });
+    return r.json();
+  };
+  const ok = await hist(kv({ ...base, 'tt:followers:open-1': JSON.stringify([[NOW - 36e5, 300, 9, 4]]) }));
+  check('a good read sends the follower history', Array.isArray(ok.followers) && ok.followers.length === 1, JSON.stringify(ok.followers));
+  const none = await hist(kv(base));
+  check('an account with no history yet gets an empty list', Array.isArray(none.followers) && none.followers.length === 0);
+  const bad = await hist(kv({ ...base, 'tt:followers:open-1': '[[1,2,3,4]]' }, 'tt:followers:open-1'));
+  check('a read that threw leaves followers out, so the page keeps what it has', !('followers' in bad), JSON.stringify(bad).slice(0, 120));
+  const badKv = await hist(kv({ ...base }, 'tt:followers:open-1'), '?src=kv');
+  check('on the KV path too', !('followers' in badKv), JSON.stringify(badKv).slice(0, 120));
+}
+
+console.log('\n14. a sync save that fails says so');
+{
+  const KV = mockKV({ 'tt:sess:S': 'open-1', 'tt:tok:open-1': JSON.stringify({ access_token: 'A', expires_at: NOW + 36e5 }) });
+  const post = () => W.HANDLER.fetch(new Request('https://w.dev/tiktok/sync', {
+    method: 'POST', headers: { Authorization: 'Bearer S', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bundle: { v: 1, prefs: {} } }) }), { MINUTE: KV, DB: mockD1(D1_EMPTY), TIKTOK_CLIENT_KEY: 'ck', TIKTOK_CLIENT_SECRET: 's' });
+  const good = await post();
+  check('a save that lands answers ok', good.status === 200 && KV.store.has('tt:sync:open-1'), good.status);
+  KV.put = async () => { throw new Error('KV put() limit exceeded for the day'); };
+  const r = await post();
+  check('a put that throws answers 502, not a success the page would believe', r.status === 502, r.status);
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);

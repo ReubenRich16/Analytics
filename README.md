@@ -43,8 +43,8 @@ data/             recorded history, committed by the robots
 
 **Both platforms**
 
-- Live counters with per-refresh movement, and a sortable table of every post
-  (click any column header; it becomes readable cards on a phone)
+- Live counters with per-refresh movement, and a sortable table of your posts — on
+  TikTok, your newest 60 (click any column header; it becomes readable cards on a phone)
 - **View velocity** — what arrived since the last refresh, as a sixty-slot strip plus a
   running session total. On TikTok this accumulates each post's own movement rather than
   differencing the account total, because the app fetches at most the 60 newest posts and
@@ -108,13 +108,40 @@ data/             recorded history, committed by the robots
   already on the page, so it costs no extra quota
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever
-- 14 themes, sound on new likes/subscribers, and a phone-friendly layout
+- 15 themes, sound on new likes/subscribers, and a phone-friendly layout
+- **Motion** (`motion.js`, one small file shared by all three pages) — charts draw themselves
+  in and headline numbers count up from 0 the first time you see them: when the page loads,
+  when you switch room, when you open a post, or after you press something in a card. The
+  automatic refresh never replays them. A count always finishes on exactly the number the
+  page shows, and stops at once if a newer number arrives. Rooms slide in from the side you
+  moved towards, a pill glides under the tabs, and a live total going up flashes a green
+  "▲ +N" (the page's own figure, never one worked out separately). Charts below the fold
+  wait until you scroll to them. `prefers-reduced-motion` turns all of it off, and if the
+  file ever fails to load the pages simply show everything finished
+- **☁️ Cinnamoroll** theme — Sanrio's fluffy white puppy's colours: a sky-blue page with faint
+  stars and slowly drifting clouds, fluffy white cards, text in his cinnamon-brown outline
+  colour, his baby-blue eyes as the accent, pink-cheek blush for anything live, and rounded
+  **Fredoka** numbers. Every text colour is checked for contrast
+- **Stickers** (`stickers.js`, Cinnamoroll theme only) — a sticker peeks over the answer card
+  and bobs, changes (with a little pop) when you switch room, hops next to a live total when
+  it goes up, pops at the end of a freshly drawn chart, floats up with the milestone
+  confetti, and does a happy jump if you tap it. The ☁ button (bottom-right) opens your
+  sticker drawer: upload pictures from your phone (shrunk to 320px), paste a GIPHY link,
+  reorder, remove, or restore the starter pack. Up to 24 stickers / about 3 MB. They are
+  saved to your account through your own Worker (`/stickers` for YouTube, `/tiktok/stickers`
+  for TikTok, owner-locked like `/sync`); nothing is sent until your account has answered,
+  so a bad connection can never overwrite it. The device keeps a small copy (GIPHY stickers
+  plus about 512 KB of your pictures) per account. An older Worker without the route is
+  detected and the drawer says "on this device only". The starter pack is
+  official Sanrio stickers hotlinked from GIPHY (credited "Stickers via GIPHY · © Sanrio");
+  no character artwork is stored in this repo. A personal, non-commercial dashboard
 
 **Type and motion**
 
 Numbers are set in **Sora**, everything you read in **Figtree**. Eight motions carry the
 moments that matter: headline numbers roll like an odometer, cards arrive staggered, a new
-like sends a ring and hearts off its tile, charts draw with the fill rising underneath,
+like sends a ring and hearts off its tile, charts draw with the fill rising underneath (once
+per look — see **Motion** above — not on every refresh),
 the deep-dive grows out of the row you tapped, loading shimmers in the real shape instead
 of shoving the page, the date range slides in the direction you moved, and milestones get
 the full-screen treatment. Every one of them respects `prefers-reduced-motion`.
@@ -234,9 +261,10 @@ Idea Studio prompt, which was previously handing the AI a recency-sorted tag lis
 Percentiles count ties as half, so an account whose posts all sit at the same rate reads as
 typical rather than as the bottom of its own catalogue.
 
-**Views/day still exists** on the table column, its sort, and the per-post metric cell. It
-is a pace — the right answer to "what is moving right now" and the wrong answer to "which
-of these was better" — and nothing labels it as anything else any more.
+**Avg views/day still exists** on the table column, its sort, and the per-post metric cell.
+It is a lifetime average (total ÷ age); the +tick / +session columns and the Mover chip
+answer what is moving now. A post under a day old has no daily figure: its cell shows the
+real count and age ('93 in 3h') and it sorts last.
 
 **Compare** (the third page)
 
@@ -345,18 +373,19 @@ of TikTok. Free, no card.
 | `/run` | run both trackers now (handy for testing). Rate limited to once a minute — it is unauthenticated and each call runs the trackers (API calls, D1 writes, and sometimes a KV write), so a crawler hitting it in a loop would spend real allowances for nothing. A 429 is not a fault: the cron runs every minute anyway |
 | `/d1diff` | compares the D1 and KV copies field by field (expect disagreement now: KV is deliberately coarser since the write gate — this was the phase-2 verification tool) |
 | `/models` | which Gemini models your key can actually call |
-| `/ai`, `/sync` | AI ideas and cross-device sync, locked to your channels |
+| `/ai`, `/sync`, `/stickers` | AI ideas, cross-device sync and your Cinnamoroll stickers, locked to your channels |
 | `/pairs` | confirmed YouTube↔TikTok video pairings (owner-locked) |
 | `/tiktok/login`, `/tiktok/callback` | TikTok sign-in |
 | `/launches`, `/tiktok/launches` | the first **week** of finished launches (48 hours is what makes one *finished*), age-indexed — the projection's reference curves |
-| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, publication to day 60, one point an hour — see below |
+| `/life?id=`, `/tiktok/life?id=` | **one video's whole recorded life**, one point an hour — see below. YouTube: publication to day 60. TikTok: from publication until it leaves your 60 newest posts or turns 60 days old |
 | `/tiktok/disconnect` | sign a TikTok account out and stop the cron polling it |
-| `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/ai` | TikTok data |
+| `/tiktok/me`, `/tiktok/videos`, `/tiktok/history`, `/tiktok/sync`, `/tiktok/stickers`, `/tiktok/ai` | TikTok data (and your stickers) |
 
 **The long tail, and how to see it**
 
 The tracker records every video for 60 days — minute by minute for the first 48 hours,
-every fifteen minutes to day 14, hourly to day 60. For a long time nothing *served* more
+every fifteen minutes to day 14, hourly to day 60 (on TikTok, only while the post is among
+your 20 and then 60 newest — see the cadence note below). For a long time nothing *served* more
 than the last three days of that: both bundles cut on an absolute `KEEP_DAYS` window, the
 YouTube page discarded any video over a week old, and no caller ever passed `?days=`. Days
 3–60 were written, held for two months, pruned, and never read. On TikTok that was the
@@ -373,8 +402,11 @@ memory rather than re-asking D1.
 
 Every point on it is measured. Nothing is interpolated between samples and nothing is
 extended past the last one — a gap in the recording is drawn as a gap in the line. And a
-missing recording says so on the page — a post that predates the account being connected
-has no history to draw, which is different from the feature not working.
+missing recording says so on the page — a post older than 60 days (or outside the 60
+newest) has no history to draw, which is different from the feature not working. Each
+point is the count at the end of its hour (the Worker sends the age of the hour's last
+reading), and a recording that started late says where it starts rather than "from
+posting".
 
 **Where the minute samples live**
 
@@ -400,17 +432,21 @@ months. A tapering cadence now carries it the whole way:
 | 2–14 days | every 15 min | it still moves, but not that fast |
 | 14–60 days | hourly | a month out, minute sampling would record that nothing happened |
 
+TikTok: its list API pages 20 posts at a time, so the 15-minute tier covers your 20 newest
+posts and the hourly tier your 60 newest — about 8 days and 3½ weeks at 2–3 posts a day.
+Older posts are not recorded.
+
 Measured against this account's real publish rate — 2.2 uploads a day on YouTube, ~2.5
-posts a day on TikTok — that is about **19,200 samples a day**. D1 bills a row-write for
+posts a day on TikTok — that is about **20,900 samples a day**. D1 bills a row-write for
 the table row *and* one for every index on it, and `samples` keeps one, so that is
-**~38,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
+**~42,000 of the 100,000/day allowance**. Flat minute sampling across the full 60 days
 would be **over 400,000 samples a day** — more than 800,000 row-writes, eight times the
 entire allowance — which is why the cadence tapers rather than staying flat. TikTok costs
 nothing extra at all: the cron already fetched the post list on every pass and was
 discarding every row outside the launch window.
 
 One piece of history on that figure: for a long stretch the live database carried a
-second, redundant index on `samples`, which put the real bill at ~58,000 — `schema.sql`
+second, redundant index on `samples`, which put the real bill at ~63,000 — `schema.sql`
 drops it, but the deploy's schema step failed on every run while the API token lacked
 **Account → D1 → Edit**. The token gained the permission and the schema applied on
 31 Aug 2026, so the drop is done and the bill matches the plan.
@@ -531,7 +567,7 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ## Repo layout
 
 ```
-yt-dashboard/   index.html · tiktok.html · compare.html · style.css · privacy.html · terms.html · publish.sh
+yt-dashboard/   index.html · tiktok.html · compare.html · style.css · motion.js · stickers.js · privacy.html · terms.html · publish.sh
 worker/         worker.js · wrangler.toml · schema.sql · *.test.mjs
 scripts/        snapshot.mjs · rank.mjs · test-all.mjs · *.test.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json

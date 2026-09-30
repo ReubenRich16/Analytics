@@ -62,13 +62,13 @@ const HOT_HOURS   = 48;
               warm   2–14d   every 15 min     26 videos     2,534
               cool  14–60d   every hour      101 videos     2,429
      TikTok   hot    0–48h   every minute      5 posts      7,200
-              tail   2–60d   15 min / hour   ≤15 posts        720
+              tail   2–60d   15 min / hour   ~55 posts      2,400   (~15 × 96 + ~40 × 24)
                                                            ─────────
-                                                            ~19,200 samples/day
+                                                            ~20,900 samples/day
 
    D1 bills a row-write for the table row AND one for every index on it, so the cost per
    sample is 1 + (indexes on samples). schema.sql keeps exactly one, which puts this at
-   about 38,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
+   about 42,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
    alone.
 
    Two caveats worth knowing. This comment said a flat "two row-writes" while samples
@@ -76,9 +76,9 @@ const HOT_HOURS   = 48;
    checked against schema.sql in cold-tail.test.mjs now rather than trusted here. And for
    a long stretch the live database still carried that second index, because the deploy's
    schema step failed on every run (the API token lacked the D1 permission — see
-   deploy-worker.yml), leaving the real bill at ~58,000. The token gained the permission
+   deploy-worker.yml), leaving the real bill at ~63,000. The token gained the permission
    and the schema applied on 31 Aug 2026, dropping the index — the bill now matches the
-   ~38,000 plan.
+   ~42,000 plan.
 
    Reading the roster to decide who is due costs under 200 rows every 15 minutes. The
    extra YouTube calls come to about 144 quota units a day out of 10,000, and TikTok costs
@@ -87,8 +87,9 @@ const HOT_HOURS   = 48;
 
    TikTok's tail is capped by its own API rather than by this cadence — the list call
    returns 20 posts a page, so the hourly pass asks for 60 and the minute passes ask for
-   20. At her rate 60 posts is about three and a half weeks, so the far end of the cool
-   tier is thinner there than on YouTube.
+   20. So on TikTok the 15-minute tier covers only the 20 newest posts (about 8 days at her
+   rate) and the hourly tier the 60 newest (about three and a half weeks); an older post is
+   not recorded at all.
 
    A tapering cadence used to be rejected here on the grounds that it "makes the gap
    between consecutive samples vary, which silently breaks any chart that plots by array
@@ -361,7 +362,9 @@ const PJ_MEMO   = 60e3;          // per-isolate breather, so a burst costs nothi
 // the old answer from cache after the deploy — which is exactly what the floating-point
 // bucket bug would have done, silently, on the way out. v3 adds the roster fingerprint;
 // v4 widens each curve from PJ_WINDOW to PJ_SPAN, so every cached body is the wrong shape.
-const PJ_CACHE  = 4;
+// v5 stamps each point at the real age of the reading that holds its bucket's max, not at
+// the bucket's start, so every cached body carries the old, early ages.
+const PJ_CACHE  = 5;
 
 // /run's cooldown — see the route. Module-level, so it lives as long as the isolate does.
 const RUN_COOLDOWN = 60e3;
@@ -416,15 +419,22 @@ async function d1Life(env, platform, id) {
   const bucketOf = '(CAST((ts - ?) / ? AS INTEGER))';
   const sres = await env.DB.prepare(
     'SELECT ' + bucketOf + ' AS b, MAX(views) AS views, MAX(likes) AS likes,' +
-    ' MAX(comments) AS comments, MAX(shares) AS shares' +
+    ' MAX(comments) AS comments, MAX(shares) AS shares, MAX(ts) AS t' +
     ' FROM samples WHERE platform = ? AND video_id = ? AND ts >= ?' +
     ' GROUP BY ' + bucketOf + ' ORDER BY b'
   ).bind(v.published_at, LIFE_STEP, platform, String(id), v.published_at, v.published_at, LIFE_STEP).all();
 
-  // [ageMs, views, likes, comments, shares] — same column order the bundles use
-  const s = (sres.results || []).map(r => [r.b * LIFE_STEP, r.views, r.likes, r.comments, r.shares]);
+  /* [ageMs, views, likes, comments, shares] — same column order the bundles use.
+     The age is that of the LAST reading in the hour (MAX(ts) − published_at), not the
+     hour's start: a point stamped at its start carried a count from up to an hour later,
+     so every tooltip read an hour early ('0 min old' for the first hour's views). With
+     `age: 'reading'` the page knows the ages are real; an older Worker's bucket starts
+     are shifted to the hour's end on the page instead. */
+  const rows = sres.results || [];
+  const real = rows.length > 0 && rows.every(r => r.t != null);
+  const s = rows.map(r => [real ? r.t - v.published_at : r.b * LIFE_STEP, r.views, r.likes, r.comments, r.shares]);
   return {
-    found: true, id: v.video_id, step: LIFE_STEP, title: v.title || '',
+    found: true, id: v.video_id, step: LIFE_STEP, title: v.title || '', ...(real ? { age: 'reading' } : {}),
     ...(isTt(platform) ? { create_time: Math.round(v.published_at / 1000), cover: v.cover || '' }
                        : { pub: isoOf(v.published_at) }),
     s
@@ -449,8 +459,21 @@ async function d1Launches(env, platform, vids) {
   // worker/d1-launches.test.mjs could not catch it, because a mock only ever reproduces
   // the SQL semantics its author believed in; the live peek is what caught it.
   const bucketOf = '(CAST((s.ts - v.published_at) / ? AS INTEGER))';
+  /* Launch points carry the real age of the reading that holds each bucket's max, so they
+     coincide with raw samples and cannot interleave with them.
+
+     The point used to be stamped at the bucket's START while carrying its MAX, which is
+     normally the bucket's last reading, about four minutes later. The pages turn an age
+     back into a timestamp, so each point landed a few minutes before the readings it came
+     from. On TikTok, mergeHist unions by timestamp, so a post's store read high, lower,
+     higher again every five minutes, and every climb back was counted as new views (about
+     1.8x over a launch). Early race rivals were read four minutes ahead of their age.
+
+     `s.ts` is a bare column beside the single MAX() aggregate. SQLite (and so D1) fills a
+     bare column from the row that holds the max, so `t` is that reading's own timestamp,
+     not some other row's. */
   const sres = await env.DB.prepare(
-    'SELECT s.video_id AS id, ' + bucketOf + ' AS b, MAX(s.views) AS views' +
+    'SELECT s.video_id AS id, ' + bucketOf + ' AS b, MAX(s.views) AS views, s.ts AS t' +
     ' FROM samples s JOIN videos v ON v.platform = s.platform AND v.video_id = s.video_id' +
     ' WHERE s.platform = ? AND s.video_id IN (' + marks + ')' +
     ' AND s.ts >= v.published_at AND s.ts <= v.published_at + ?' +
@@ -458,8 +481,15 @@ async function d1Launches(env, platform, vids) {
     ' ORDER BY s.video_id, b'
   ).bind(bucket, platform, ...vids.map(v => v.video_id), PJ_SPAN, bucket).all();
 
+  // The age in minutes, to six decimals: exact to well under a millisecond, so the page can
+  // turn it back into the sample's own timestamp with Math.round(t0 + age * 60000).
+  const pubOf = new Map(vids.map(v => [v.video_id, v.published_at]));
   const byId = {};
-  for (const r of (sres.results || [])) (byId[r.id] = byId[r.id] || []).push([r.b * PJ_STEP, r.views]);
+  for (const r of (sres.results || [])) {
+    const pub = pubOf.get(r.id);
+    const age = r.t != null && pub != null ? Math.round((r.t - pub) / 60000 * 1e6) / 1e6 : r.b * PJ_STEP;
+    (byId[r.id] = byId[r.id] || []).push([age, r.views]);
+  }
   const curves = {};
   for (const v of vids) {
     const s = byId[v.video_id];
@@ -513,7 +543,9 @@ async function launchBody(env, platform) {
   }
   if (!vids) { vids = await d1Finished(env, platform); ids = vids.map(v => v.video_id).join(','); }
 
-  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, span: PJ_SPAN, ids,
+  // `ages: 'exact'` tells the pages each age is a real reading's, not a bucket start —
+  // an older Worker's answer lacks it, and the pages then correct for the lag themselves
+  const body = { v: 1, at: now, step: PJ_STEP, window: PJ_WINDOW, span: PJ_SPAN, ages: 'exact', ids,
                  ...(await d1Launches(env, platform, vids)) };
   // a write only when the answer actually changed, so this stays at one or two KV writes
   // a day per partition against a 1,000/day cap currently running at about 220
@@ -987,8 +1019,11 @@ async function pairsHandler(request, env) {
     catch (e) { return json({ error: 'store failed' }, 502); }
     return json({ ok: true, n: Math.min(400, body.pairs.length) });
   }
+  // a failed read is an error, not an empty list: answering [] made the page treat "no
+  // pairs" as the truth and overwrite the device's own copy with it
   let stored = '[]';
-  try { stored = (await env.MINUTE.get(key)) || '[]'; } catch (e) {}
+  try { stored = (await env.MINUTE.get(key)) || '[]'; }
+  catch (e) { return json({ error: 'pairs read failed' }, 502); }
   return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
 }
 
@@ -1009,6 +1044,77 @@ async function syncHandler(request, env) {
   let stored = '{}';
   try { stored = (await env.MINUTE.get(key)) || '{}'; } catch (e) {}
   return new Response(stored, { headers: { 'Content-Type': 'application/json', ...CORS } });
+}
+
+/* ---------- stickers (the Cinnamoroll theme's sticker drawer) ----------
+   One small JSON list per account: [{ id, kind:'giphy'|'upload', src, name, added }].
+   A GIPHY sticker's src is only its media id (the page builds the media.giphy.com URL), and
+   an upload's is a data: URL the page has already shrunk to 320px. Validated field by field
+   so nothing but those two shapes can be stored — no URLs to anywhere else, no markup. */
+const STICKER_MAX = 24;
+const STICKER_BYTES = 3.5 * 1024 * 1024;   // the whole stored list, as JSON
+const STICKER_GIPHY = /^[A-Za-z0-9]{8,40}$/;
+const STICKER_UPLOAD = /^data:image\/(?:webp|png|jpeg|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
+const STICKER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+// one upload: the page shrinks pictures to 320px and refuses anything over 1.5 MB decoded,
+// which is at most ~2 MB of base64 — so anything longer did not come from the page
+const STICKER_ONE = Math.ceil(1.5 * 1024 * 1024 * 4 / 3) + 64;
+// names are plain words: no control characters or angle brackets (the page's cleanName)
+const STICKER_NAME_BAD = /[\u0000-\u001f<>]/g;
+// → { list } or { status, error }
+function checkStickers(list) {
+  if (!Array.isArray(list)) return { status: 400, error: 'list must be an array' };
+  if (list.length > STICKER_MAX) return { status: 400, error: 'at most ' + STICKER_MAX + ' stickers' };
+  const out = [], ids = new Set();
+  for (const it of list) {
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return { status: 400, error: 'each sticker must be an object' };
+    const { id, kind, src, name, added } = it;
+    if (typeof id !== 'string' || !STICKER_ID.test(id) || ids.has(id)) return { status: 400, error: 'bad sticker id' };
+    if (kind !== 'giphy' && kind !== 'upload') return { status: 400, error: 'kind must be giphy or upload' };
+    if (typeof src !== 'string') return { status: 400, error: 'bad sticker src' };
+    if (kind === 'giphy' && !STICKER_GIPHY.test(src)) return { status: 400, error: 'bad GIPHY id' };
+    if (kind === 'upload' && src.length > STICKER_ONE) return { status: 413, error: 'one picture is over 1.5 MB — shrink it first' };
+    if (kind === 'upload' && !STICKER_UPLOAD.test(src)) return { status: 400, error: 'uploads must be a base64 webp/png/jpeg/gif data URL' };
+    if (name !== undefined && (typeof name !== 'string' || name.length > 80)) return { status: 400, error: 'bad sticker name' };
+    if (added !== undefined && (typeof added !== 'number' || !isFinite(added))) return { status: 400, error: 'bad sticker date' };
+    ids.add(id);
+    out.push({ id, kind, src, name: (name || '').replace(STICKER_NAME_BAD, '').trim(), added: added || 0 });
+  }
+  if (JSON.stringify(out).length > STICKER_BYTES) return { status: 413, error: 'stickers are too big — about 3 MB in total' };
+  return { list: out };
+}
+// GET → the stored list ('[]' when none). GET ?meta=1 → { list, saved }, where saved says
+// whether this account has ever stored a list — so a list you emptied on purpose stays empty
+// instead of being re-seeded with the starter pack on a new device.
+// POST { list } → validated, then stored under `key`
+async function stickersRoute(request, env, key) {
+  if (request.method === 'POST') {
+    let raw = '';
+    try { raw = await request.text(); } catch (e) {}
+    if (raw.length > STICKER_BYTES + 4096) return json({ error: 'stickers are too big — about 3 MB in total' }, 413);
+    let b = null; try { b = JSON.parse(raw); } catch (e) {}
+    if (!b || typeof b !== 'object') return json({ error: 'no list' }, 400);
+    const c = checkStickers(b.list);
+    if (c.error) return json({ error: c.error }, c.status);
+    try { await env.MINUTE.put(key, JSON.stringify(c.list)); } catch (e) { return json({ error: 'store failed' }, 502); }
+    return json({ ok: true, n: c.list.length });
+  }
+  if (request.method !== 'GET') return json({ error: 'GET/POST only' }, 405);
+  let stored = null;
+  // a failed read is an error, never an empty list: the page would take '[]' as "no stickers
+  // yet" and could save the starter pack over the real list
+  try { stored = await env.MINUTE.get(key); } catch (e) { return json({ error: 'store read failed' }, 502); }
+  const meta = new URL(request.url).searchParams.get('meta') === '1';
+  const out = meta ? '{"list":' + (stored || '[]') + ',"saved":' + (stored != null) + '}' : (stored || '[]');
+  return new Response(out, { headers: { 'Content-Type': 'application/json', ...CORS } });
+}
+// the YouTube side: the same owner lock as /sync (verifyOwner on the Bearer token), keyed by channel
+async function stickersHandler(request, env) {
+  const channels = (env.CHANNEL_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+  const auth = request.headers.get('Authorization') || '';
+  const owner = await verifyOwner(auth.startsWith('Bearer ') ? auth.slice(7) : '', channels);
+  if (!owner) return json({ error: 'Not authorised — sign in with one of the tracked channels.' }, 401);
+  return stickersRoute(request, env, 'stickers:' + owner);
 }
 
 /* ================= TikTok =================
@@ -1260,6 +1366,10 @@ async function ttHandler(request, env, url) {
   const openId = await ttSession(env, request);
   if (!openId) return json({ error: 'Not signed in to TikTok.' }, 401);
 
+  // the sticker drawer's list — it needs the session, not a TikTok token, so it sits before
+  // the token fetch (a slow or failed refresh never costs you your stickers)
+  if (p === '/tiktok/stickers') return stickersRoute(request, env, 'tt:stickers:' + openId);
+
   // Genuinely disconnect the account, as opposed to the page forgetting its session id.
   // Clearing localStorage left the stored refresh token and the tt:accounts entry in
   // place, so the cron kept polling an account the user believed they had removed, and a
@@ -1302,7 +1412,11 @@ async function ttHandler(request, env, url) {
   if (p === '/tiktok/history') {
     let snap = {}, followers = [];
     try { snap = JSON.parse(await env.MINUTE.get('tt:snap:' + openId) || '{}'); } catch (e) {}
-    try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+    // An absent key is a new account and really is []. A read that THREW is not: sending []
+    // then told the page to replace up to 400 days of stored follower history with nothing.
+    // So a failed read leaves `followers` out of the answer, and the page keeps what it has.
+    try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { followers = undefined; }
+    const fpart = followers === undefined ? {} : { followers };
     // phase 3: D1 answers by default, KV falls back. followers stays on KV either way —
     // it's eight writes a day, so there is nothing to gain by migrating it.
     const src = url.searchParams.get('src');
@@ -1312,12 +1426,12 @@ async function ttHandler(request, env, url) {
         const b = await d1TtBundle(env, openId, +url.searchParams.get('days') || 0, since);
         // see the note on the YouTube route: an empty incremental read is a normal answer
         if (since || hasVideos(b) || src === 'd1' || !hasVideos(snap))
-          return json({ ...snap, videos: b.videos, followers }, 200, { 'X-CC-Source': 'd1' });
+          return json({ ...snap, videos: b.videos, ...fpart }, 200, { 'X-CC-Source': 'd1' });
       } catch (e) {
         if (src === 'd1') return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502);
       }
     }
-    return json({ ...snap, followers }, 200, { 'X-CC-Source': 'kv' });
+    return json({ ...snap, ...fpart }, 200, { 'X-CC-Source': 'kv' });
   }
   // same slice as /launches, scoped to this account's partition
   if (p === '/tiktok/launches') {
@@ -1339,7 +1453,10 @@ async function ttHandler(request, env, url) {
     if (request.method === 'POST') {
       let b = null; try { b = await request.json(); } catch (e) {}
       if (!b || b.bundle === undefined) return json({ error: 'no bundle' }, 400);
-      await env.MINUTE.put(key, JSON.stringify(b.bundle));
+      // a failed put (the daily KV write limit, say) must reach the page as a failure, so
+      // its footer does not say "synced" over a save that never happened
+      try { await env.MINUTE.put(key, JSON.stringify(b.bundle)); }
+      catch (e) { return json({ error: 'sync save failed: ' + String((e && e.message) || e) }, 502); }
       return json({ ok: true });
     }
     let stored = '{}';
@@ -1403,10 +1520,13 @@ async function ttTick(env) {
     // Follower history, for the milestone projection. TikTok exposes no history of its own,
     // so we sample every ~3h — 8 writes a day per account, negligible against the KV budget.
     try {
-      let fh = [];
-      try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) {}
+      // A read that throws is not an empty history. Treating it as one appended a single
+      // snapshot to [] and wrote that back, wiping up to 400 days of follower history for
+      // good, so a failed read skips this tick's snapshot instead.
+      let fh = [], fhFailed = false;
+      try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { fhFailed = true; }
       const lastAt = fh.length ? fh[fh.length - 1][0] : 0;
-      if (now - lastAt > 3 * 3600e3) {
+      if (!fhFailed && now - lastAt > 3 * 3600e3) {
         const { ok, body } = await ttGet('user/info/?fields=follower_count,likes_count,video_count', token);
         const u = ok && body && body.data && body.data.user;
         if (u) {
@@ -1562,6 +1682,11 @@ async function route(request, env) {
     if (url.pathname === '/sync') {
       if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
       return syncHandler(request, env);
+    }
+    // the Cinnamoroll sticker drawer (owner-locked, same auth as /sync)
+    if (url.pathname === '/stickers') {
+      if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'GET/POST only' }, 405);
+      return stickersHandler(request, env);
     }
     // confirmed YouTube↔TikTok video pairings (owner-locked, same auth as /sync)
     if (url.pathname === '/pairs') {

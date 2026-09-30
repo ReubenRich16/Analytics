@@ -8,7 +8,7 @@ const src = fs.readFileSync(new URL('../yt-dashboard/index.html', import.meta.ur
 const cut=(a,b)=>{const i=src.indexOf(a);return src.slice(i,src.indexOf(b,i));};
 const F = new Function('reducedMotion','fmt',
   'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-  cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+  cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
   cut('const LINE_GEO','  // A column chart.') +
   '\nreturn {lineChartHtml, axisNum, niceScale, chartFrame, CH};')(true, new Intl.NumberFormat('en-US'));
 let pass=0,fail=0; const check=(n,c,x='')=>{c?(pass++,console.log('  ✓',n)):(fail++,console.log('  ✗',n,x));};
@@ -91,7 +91,7 @@ console.log('\nsmall bars');
      most of the job of a sparse daily chart. */
   const B = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('const LINE_GEO','  // several lines on one chart') +
     '\nreturn {barChartHtml, CH};')(new Intl.NumberFormat('en-US'));
   const bars = h => (h.match(/<path d="M/g) || []).length;
@@ -210,7 +210,7 @@ console.log('\nscatter, corrected');
 {
   const P = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
     cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
     '\nreturn {ratePlotHtml, rankListHtml, CH};')(new Intl.NumberFormat('en-US'));
@@ -269,7 +269,7 @@ console.log('\nranked view');
 {
   const P = new Function('fmt',
     'const esc=s=>String(s); let CH=[]; const chartPush=o=>CH.push(o)-1;\n' +
-    cut('function niceScale(lo, hi, target)','  // legend keys mirror the mark') +
+    cut('function niceScale(lo, hi, target, int)','  // legend keys mirror the mark') +
     cut('  function ratePlotHtml(points, tips, opts)','  /* The same question, answered by reading') +
     cut('  function rankListHtml(points, tips, opts)','  // 12-point trend line') +
     '\nreturn {rankListHtml, CH};')(new Intl.NumberFormat('en-US'));
@@ -317,6 +317,22 @@ console.log('\nthe two views are a toggle');
     /closest\('button\[data-rv\]'\)[\s\S]{0,220}rateBodyHtml\(\)/.test(src));
   check('moveTip knows about the ranked view', /if \(d\.rows\)/.test(src));
   check('and maps the hovered row back through rowIdx', /d\.tips\[d\.rowIdx\[n\]\]/.test(src));
+}
+
+// TikTok's lineChart: a caller with one point a day says what a gap is outright, so the
+// views-per-day line is never drawn straight across a missing day
+console.log('\nTikTok lineChart maxGap');
+{
+  const TT = fs.readFileSync(new URL('../yt-dashboard/tiktok.html', import.meta.url), 'utf8');
+  const lift = n => { const i = TT.indexOf(n); return TT.slice(i, TT.indexOf('\n  }\n', i)) + '\n  }\n'; };
+  const LC = new Function('fmt', 'const esc=s=>String(s); const chartPush=()=>0;\n' +
+    lift('  function niceScale(') + lift('  function axisNum(') + lift('  function lineChart(') + '\nreturn lineChart;')(new Intl.NumberFormat('en-US'));
+  const D = 864e5, at = [0, 1, 2, 3, 5, 6, 7].map(d => d * D), pts = [5, 6, 7, 8, 9, 10, 11];
+  const paths = h => [...h.matchAll(/ d="([^"]+)"/g)].map(m => m[1]);
+  const lineD = h => paths(h).find(d => !/Z/.test(d)) || '';
+  const withGap = LC(pts, 'red', 'x', { at, maxGap: 1.5 * D }), without = LC(pts, 'red', 'x', { at });
+  check('with maxGap, a missing day splits the line in two', (lineD(withGap).match(/M/g) || []).length === 2, lineD(withGap));
+  check('without it, four times the median spacing lets the line run straight across', (lineD(without).match(/M/g) || []).length === 1, lineD(without));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

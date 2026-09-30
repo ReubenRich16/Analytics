@@ -65,7 +65,8 @@ function mockD1(vids, rows) {
         // SQLite integer division, which is what the CAST in the query buys
         const b = Math.trunc((r.ts - pub) / step);
         const cur = g.get(b);
-        if (!cur || r.views > cur.views) g.set(b, { b, views: r.views, likes: r.likes, comments: r.comments, shares: r.shares });
+        if (!cur || r.views > cur.views) g.set(b, { b, views: r.views, likes: r.likes, comments: r.comments, shares: r.shares, t: Math.max(r.ts, cur ? cur.t : 0) });
+        else cur.t = Math.max(cur.t, r.ts);
       }
       return { results: [...g.values()].sort((a, x) => a.b - x.b) };
     }
@@ -88,7 +89,11 @@ console.log('\n1. the full 60 days come back, at an hour\'s resolution');
   check('the step is an hour', out.step === W.LIFE_STEP && out.step === HOUR, out.step);
   check('it reaches day 60, not day 3', out.s[out.s.length - 1][0] >= 59 * DAY,
     (out.s[out.s.length - 1][0] / DAY).toFixed(1) + ' days');
-  check('and starts at publication', out.s[0][0] === 0, out.s[0][0]);
+  check('and starts at publication', out.s[0][0] < HOUR && out.s[0][0] >= 0, out.s[0][0]);
+  /* Each point's age is the age of the last reading in its hour, not the hour's start —
+     the start carried a count from up to an hour later, so tooltips read an hour early. */
+  check('each hour is stamped at its last reading, and says so',
+    out.age === 'reading' && out.s[0][0] === HOUR - 60e3 && out.s[5][0] === 6 * HOUR - 60e3, out.age + ' ' + out.s[0][0] + ' ' + out.s[5][0]);
   check('one point per hour of life, give or take the ends',
     Math.abs(out.s.length - 60 * 24) <= 2, out.s.length + ' points');
 
@@ -135,10 +140,12 @@ console.log('\n3. the CAST, which has shipped broken before');
     (DB.lastSql.match(/CAST/g) || []).length + ' casts');
 
   const out = await W.d1Life({ DB }, 'yt', 'v1');
-  check('every age is a whole number of hours',
-    out.s.every(p => p[0] % HOUR === 0), JSON.stringify(out.s.slice(0, 3)));
-  check('and no two points share a bucket',
-    new Set(out.s.map(p => p[0])).size === out.s.length, out.s.length);
+  // ages are the last reading's own, so they are not whole hours — but each one still
+  // sits in an hour of its own, one point per hour
+  check('every point sits inside a distinct hour of life',
+    new Set(out.s.map(p => Math.floor(p[0] / HOUR))).size === out.s.length, JSON.stringify(out.s.slice(0, 3)));
+  check('and there is one point per recorded hour, not one per sample',
+    out.s.length <= 3 * 24 + 1, out.s.length);
 }
 
 console.log('\n4. views only ever go up');
