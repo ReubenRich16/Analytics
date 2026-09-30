@@ -28,16 +28,18 @@ function contract(src, page, chips) {
   }
 }
 contract(YT, 'YouTube', ['answerToday','answerSubs','answerMover','answerNewest','answerHitRate','answerAudience','answerMilestone','answerNext']);
-contract(TT, 'TikTok',  ['answerToday','answerMover','answerNewest','answerHitRate','answerEngagement','answerMilestone','answerNext']);
+// TikTok's Today chip is gone: the Today so far card (scripts/tt-today.test.mjs) answers it
+// on the calendar day instead of a rolling 24 hours
+contract(TT, 'TikTok',  ['answerMover','answerNewest','answerHitRate','answerEngagement','answerMilestone','answerNext']);
 
 console.log('\nboth cards are wired the same way');
 // the dispatcher array and ANSWER_CHIPS must agree, chip for chip — a mismatch paints
 // one chip's answer under another chip's name
 const WIRING = {
   YouTube: '[answerToday, answerSubs, answerMover, answerNewest, answerHitRate, answerAudience, answerMilestone, answerNext][answerChip]',
-  TikTok:  '[answerToday, answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip]'
+  TikTok:  '[answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip]'
 };
-const CHIP_COUNT = { YouTube: 8, TikTok: 7 };
+const CHIP_COUNT = { YouTube: 8, TikTok: 6 };
 for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
   check(page + ' has the card markup', /id="answerCard"/.test(src) && /id="answerChips"/.test(src) && /id="answerBody"/.test(src));
   check(page + ' paints through one dispatcher, in chip order', src.includes(WIRING[page]));
@@ -94,8 +96,21 @@ console.log('\nboth pages cycle the same number of recent uploads');
 
    So the rule is: normalise every bucket to a 24-hour rate, and refuse to compare a bucket
    whose span is badly off a day or whose gain went backwards. */
-console.log('\nToday — yesterday and the week');
-for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'followers']]) {
+console.log('\nTikTok — no rolling-24h Today chip; Top mover leads');
+{
+  const chips = (TT.match(/const ANSWER_CHIPS = \[([^\]]+)\]/) || [])[1] || '';
+  check('the chip row starts with Top mover', /^'Top mover'/.test(chips.trim()), chips);
+  check('and has no Today chip', !/'Today'/.test(chips), chips);
+  check('its builder and the rolling-window helper it alone used are gone', !/function answerToday\(/.test(TT) && !/function weekPlace\(/.test(TT));
+  check('no "in 24h" follower headline is left on the page', !/followers in 24h|such 24-hour stretches|Your usual 24 hours lately/.test(TT));
+  check('dayBuckets stays: the milestone\'s typical day is built on it', /function dayBuckets\(series, vi, n, allowNeg\)/.test(TT) && /dayBuckets\(series, 1, 14, true\)/.test(TT));
+  check('the Today so far card sits in the Now room, above the answer card',
+    TT.indexOf('id="todayCard"') > TT.indexOf('data-pane="now"') && TT.indexOf('id="todayCard"') < TT.indexOf('id="answerCard"') &&
+    TT.indexOf('id="answerCard"') < TT.indexOf('data-pane="posts"'));
+}
+
+console.log('\nToday — yesterday and the week (YouTube; TikTok\'s is the Today so far card)');
+for (const [src, page, unit] of [[YT, 'YouTube', 'views']]) {
   const grab = n => { const i = src.indexOf('function ' + n + '('); return i < 0 ? null : src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
   const db = grab('dayBuckets'), wp = grab('weekPlace');
   check(page + ' carries dayBuckets and weekPlace', !!db && !!wp);

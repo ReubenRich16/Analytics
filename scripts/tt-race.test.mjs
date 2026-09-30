@@ -470,7 +470,7 @@ console.log('\nreport card — honest reasons, one typical like rate');
     const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
     const scoreOf = v => scores[v.id] == null ? null : scores[v.id];
     const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
-    ${pmed}\n${tl}\n${grab('ttReportCardHtml')}
+    ${pmed}\n${tl}\n${grab('ttGradeOf')}${grab('ttReportCardHtml')}
     return ttReportCardHtml(v);`)(videos, scores, v, NOW).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
   const others = [];
   const sc = {};
@@ -497,7 +497,9 @@ console.log('\nreport card — honest reasons, one typical like rate');
   const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };
   const zc = card(zero, [zero, ...others], sc);
   check('a 0-view post gets no engagement bar and no F', !/Like rate \S+ \d+% of your usual/.test(zc) && !/ F /.test(zc), zc);
-  const src = grab('ttReportCardHtml');
+  // the grade is worked out once (ttGradeOf) for the card and the Today card's newest-post
+  // row, so the checks below read both halves
+  const src = grab('ttGradeOf') + grab('ttReportCardHtml');
   check('the engagement bar is coloured from its own index when reach is graded',
     /idx >= 100 \? 'var\(--up\)' : idx >= 85 \? 'var\(--accent\)' : 'var\(--gold\)'/.test(src));
   check('no "|| 1" fallback that turns a 0 median into a ratio', !/\|\| 1;/.test(src));

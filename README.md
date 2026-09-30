@@ -106,6 +106,20 @@ data/             recorded history, committed by the robots
   yesterday and against where it places across the week — how the newest upload landed,
   who's watching and when you're next due. Computed from numbers
   already on the page, so it costs no extra quota
+- On TikTok the first card is **Today so far** — the calendar day on your own clock, from
+  midnight, not a rolling 24 hours: views (the same figure as Trends' "Today so far"),
+  followers and likes since midnight, each with a comparison; "ahead of / behind / level
+  with yesterday", which compares the same whole hours of each day (hours against hours on
+  the 23- and 25-hour daylight-saving days, and it says so); the newest post with its grade
+  or "Too early"; and the next milestone. **More about today** folds away yesterday's whole
+  day, a typical day (the milestone's own pace), and where today already places. The
+  question chips sit under it, led by **Top mover**. Followers and likes are measured from
+  the Worker's follower check that starts the day: it now takes one on its first tick after
+  midnight in Australia/Melbourne (as well as every ~3 hours); a check up to 15 minutes
+  after midnight counts as midnight, otherwise the last one before midnight (within 3½
+  hours) is used and named ("since last night's 10:40 pm check"), otherwise the tile says
+  there is none. The page's controls (theme, refresh rate, sound, Refresh, Pause, One page,
+  Sign out and the links to the other dashboards) live behind the **⋯** button
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever
 - 15 themes, sound on new likes/subscribers, and a phone-friendly layout

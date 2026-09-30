@@ -87,7 +87,9 @@ function homeless(src, page, chrome) {
     spans.filter(s => !cards.some(c => c.at > s.from && c.at < s.to)).map(s => s.k).join(',') || '');
 }
 homeless(YT, 'YouTube', ['setupPanel', 'channelBanner', 'answerCard', 'drawer']);
-homeless(TT, 'TikTok', ['setupPanel', 'profileBanner', 'answerCard']);
+// TikTok's answer card is not chrome any more: it sits in the Now room under Today so far,
+// so it has to live in exactly one room like every other card
+homeless(TT, 'TikTok', ['setupPanel', 'profileBanner']);
 
 console.log('\nthe tab bar copes with six of them');
 {

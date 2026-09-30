@@ -54,47 +54,173 @@
     #tbody td.covercell .cover { width:96px; }
     #tbody td.covercell:empty { display:none; }
   }
+
+  /* ---- the compact header: brand, live status and one ⋯ button ---- */
+  header.tt-top { position:relative; display:grid; grid-template-columns:auto minmax(0,1fr) auto;
+    grid-template-areas:"dot title more" ". status more"; column-gap:10px; row-gap:1px; align-items:center;
+    padding-bottom:12px; margin-bottom:12px; }
+  header.tt-top .live-dot { grid-area:dot; }
+  header.tt-top h1 { grid-area:title; font-size:12.5px; letter-spacing:.13em; min-width:0; }
+  header.tt-top .status { grid-area:status; margin-left:0; text-align:left; font-size:10.5px; }
+  header.tt-top #moreBtn { grid-area:more; width:42px; height:42px; min-height:0; padding:0; display:grid; place-items:center;
+    font-size:21px; line-height:1; letter-spacing:.05em; border-radius:12px; }
+  header.tt-top #moreBtn[aria-expanded="true"] { color:var(--text); border-color:var(--accent); }
+  @media (min-width:720px) {
+    header.tt-top { grid-template-columns:auto auto minmax(0,1fr) auto; grid-template-areas:"dot title status more"; }
+    header.tt-top .status { text-align:right; }
+  }
+  @media (pointer:coarse) { header.tt-top #moreBtn { width:44px; height:44px; } }
+  /* the menu: every control the header and profile row used to show, none of them gone */
+  .tt-menu { position:absolute; right:0; top:calc(100% - 6px); z-index:60; width:min(340px, calc(100vw - 28px));
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;
+    box-shadow:0 18px 44px rgba(0,0,0,.38); display:flex; flex-direction:column; gap:12px; }
+  .tt-menu[hidden] { display:none; }
+  .tt-menu .tt-mrow { display:flex; flex-direction:column; gap:0; }
+  .tt-menu .tt-mlabel { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:5px; }
+  .tt-menu select { width:100%; padding:9px 10px; font-size:13px; }
+  .tt-menu .tt-macct { display:flex; flex-direction:column; gap:12px; }
+  .tt-menu .tt-mbtns { display:flex; gap:8px; flex-wrap:wrap; }
+  .tt-menu .tt-mbtns button { flex:1 1 auto; }
+  .tt-menu .switcher { margin:0; gap:6px; }
+  .tt-menu .switcher button { padding:8px 11px; }
+  .tt-menu .onepage { align-self:flex-start; }
+  .tt-menu #signOutBtn { align-self:flex-start; }
+  body:not(.signed-in) .tt-menu .tt-macct { display:none; }
+  @media (pointer:coarse) { .tt-menu select { font-size:16px; } }
+  body[data-theme="cloud"] .tt-menu { border-radius:20px; border-color:#d6e8f7; box-shadow:0 18px 40px -14px rgba(42,109,176,.45); }
+  /* One page hides the tabs, and One page itself now lives in the menu: no empty bar left behind */
+  body.onepage-on #roomBar { display:none !important; }
+  /* who is signed in: one row, no controls */
+  #profileBanner.tt-profile { padding:0 2px; margin:0 0 12px; gap:12px; flex-wrap:nowrap; }
+  #profileBanner.tt-profile .avatar { width:44px; height:44px; }
+
+  /* ---- Today so far ---- */
+  .today-card { padding:16px 16px 12px; }
+  .today-head { display:flex; align-items:center; justify-content:space-between; gap:8px 10px; flex-wrap:wrap; }
+  .today-lbl { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .today-date { font-size:12px; color:var(--muted); margin-top:2px; }
+  .today-pill { display:inline-flex; align-items:center; font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px;
+    white-space:nowrap; font-family:var(--f-sans); background:color-mix(in srgb, var(--accent) 15%, transparent); color:var(--accent); }
+  .today-pill.up { background:color-mix(in srgb, var(--up) 15%, transparent); color:var(--up); }
+  .today-pill.warn { background:color-mix(in srgb, var(--gold) 16%, transparent); color:var(--gold); }
+  .today-pill.mute { background:color-mix(in srgb, var(--muted) 14%, transparent); color:var(--muted); }
+  .today-pill.down { background:color-mix(in srgb, var(--down) 14%, transparent); color:var(--down); }
+  .today-tiles { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; margin-top:10px; }
+  .today-tiles .tile { background:var(--panel-2); border:1px solid var(--line); border-radius:12px; padding:10px 9px; min-width:0; }
+  .today-tiles .tile .v { font-family:var(--f-num); font-size:21px; font-weight:700; letter-spacing:-.02em; line-height:1.15;
+    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .today-tiles .tile .v.up { color:var(--up); }
+  .today-tiles .tile .v.down { color:var(--down); }
+  .today-tiles .tile .v.none { color:var(--muted); }
+  .today-tiles .tile .k { font-size:11.5px; font-weight:600; margin-top:2px; line-height:1.3; }
+  .today-tiles .tile .c { font-size:11px; color:var(--muted); margin-top:4px; line-height:1.35; }
+  .today-say { font-size:13px; line-height:1.55; margin-top:10px; }
+  .today-say .cc-win { font-weight:700; color:var(--up); }
+  .today-sec { border-top:1px solid var(--line); margin-top:12px; padding-top:12px; }
+  .today-sec .today-lbl { display:block; margin-bottom:8px; }
+  .today-post { display:flex; gap:10px; align-items:center; cursor:pointer; border-radius:10px; }
+  .today-post:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  .today-post img { width:40px; height:56px; border-radius:7px; object-fit:cover; flex:none; background:var(--panel-2); border:1px solid var(--line); }
+  .today-post .pt { font-weight:700; font-size:14px; line-height:1.3; overflow-wrap:anywhere; }
+  .today-post .pm { font-size:12px; color:var(--muted); margin-top:2px; }
+  .today-note { font-size:12.5px; color:var(--muted); margin-top:8px; line-height:1.5; }
+  .today-msh { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }
+  .today-msh .today-lbl { margin:0; }
+  .today-msh .togo { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .today-mst { font-size:13px; color:var(--muted); margin-bottom:8px; line-height:1.4; }
+  .today-mst b { display:block; font-family:var(--f-num); font-size:17px; font-weight:700; color:var(--text); }
+  .today-more h4 { font-size:12px; font-weight:700; margin:0 0 4px; }
+  .today-more p { font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:6px; }
+  .today-more p b { color:var(--text); }
+  .today-more .today-block { margin-bottom:12px; }
+  .today-more .today-block:last-child { margin-bottom:2px; }
+  body[data-theme="cloud"] .today-tiles .tile { border-radius:16px; }
+  /* the peeking sticker sits over the answer card, just under this card's fold: when the
+     fold is open, its last line keeps clear of it */
+  body[data-theme="cloud"] #todayMore[open] .cc-more-body { padding-bottom:26px; }
+  /* in the Posts room the table card is the first card, so the sticker peeks over it, and
+     its overflow:hidden (for the table's corners) would cut the sticker in half */
+  body[data-theme="cloud"] #tableCard.cc-peek-host { overflow:visible; }
+  body[data-theme="cloud"] .today-post img { border-radius:10px; }
+  @media (max-width:380px) { .today-tiles .tile .v { font-size:18px; } .today-tiles { gap:6px; } }
+  /* the question chips sit under Today so far now, a size smaller */
+  #answerCard .achips { gap:5px; margin-bottom:10px; }
+  #answerCard .achips button { font-size:11.5px; padding:6px 11px; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <header>
+  <!-- The header is one line of chrome and a ⋯ button. Everything that used to sit here
+       and in the profile row — the theme, the refresh rate, sound, Refresh, Pause, One page,
+       Sign out and the links to the other dashboards — is inside the ⋯ menu, one tap away,
+       with every id unchanged so the code that drives them did not have to move. -->
+  <header class="tt-top">
     <span class="live-dot" id="liveDot"></span>
     <h1>Channel Command <span class="tt-cyan">· TikTok</span></h1>
     <div class="status"><span id="statusText">not signed in</span></div>
-    <select id="themeSel" title="Theme">
-      <optgroup label="Cute ☁️">
-        <option value="cloud">☁️ Cinnamoroll</option>
-      </optgroup>
-      <optgroup label="Soft &amp; sleek">
-        <option value="rose">🌷 Rosé</option>
-        <option value="sakura">🌸 Sakura</option>
-        <option value="pearl">🤍 Pearl</option>
-      </optgroup>
-      <optgroup label="Dark &amp; dreamy 🌙">
-        <option value="mauve">💗 Mauve</option>
-        <option value="twilight">🌌 Twilight</option>
-        <option value="berry">🍇 Berry</option>
-        <option value="rosenight">🌹 Midnight Rose</option>
-        <option value="dusk">🌆 Dusk</option>
-      </optgroup>
-      <optgroup label="Original">
-        <option value="midnight">🌙 Midnight</option>
-        <option value="noir">🖤 Noir</option>
-        <option value="ocean">🌊 Ocean</option>
-        <option value="blush">🌺 Blush</option>
-        <option value="lavender">💜 Lavender</option>
-        <option value="honey">🍯 Honey</option>
-      </optgroup>
-    </select>
+    <button type="button" class="ghost" id="moreBtn" aria-expanded="false" aria-controls="ttMenu"
+      aria-label="Menu: theme, refresh, sound, sign out and the other dashboards" title="Theme, refresh, sound, sign out and the other dashboards">⋯</button>
+    <div class="tt-menu" id="ttMenu" role="group" aria-label="Page settings" hidden>
+      <div class="tt-mrow">
+        <label for="themeSel">Theme</label>
+        <select id="themeSel" title="Theme">
+          <optgroup label="Cute ☁️">
+            <option value="cloud">☁️ Cinnamoroll</option>
+          </optgroup>
+          <optgroup label="Soft &amp; sleek">
+            <option value="rose">🌷 Rosé</option>
+            <option value="sakura">🌸 Sakura</option>
+            <option value="pearl">🤍 Pearl</option>
+          </optgroup>
+          <optgroup label="Dark &amp; dreamy 🌙">
+            <option value="mauve">💗 Mauve</option>
+            <option value="twilight">🌌 Twilight</option>
+            <option value="berry">🍇 Berry</option>
+            <option value="rosenight">🌹 Midnight Rose</option>
+            <option value="dusk">🌆 Dusk</option>
+          </optgroup>
+          <optgroup label="Original">
+            <option value="midnight">🌙 Midnight</option>
+            <option value="noir">🖤 Noir</option>
+            <option value="ocean">🌊 Ocean</option>
+            <option value="blush">🌺 Blush</option>
+            <option value="lavender">💜 Lavender</option>
+            <option value="honey">🍯 Honey</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="tt-macct">
+        <div class="tt-mrow">
+          <label for="interval">Refresh rate</label>
+          <select id="interval" title="Refresh rate">
+            <option value="30000">30s refresh</option>
+            <option value="60000" selected>60s refresh</option>
+            <option value="120000">2m refresh</option>
+          </select>
+        </div>
+        <div class="tt-mbtns">
+          <button class="ghost" id="soundBtn" title="Sound when a milestone lands" aria-pressed="true">🔊</button>
+          <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
+          <button class="ghost" id="pauseBtn">Pause</button>
+        </div>
+        <label class="onepage" title="Show every card on one long page instead of tabs">
+          <input type="checkbox" id="onePage"> One page
+        </label>
+      </div>
+      <div class="tt-mrow">
+        <span class="tt-mlabel">Dashboards</span>
+        <div class="switcher">
+          <a href="./"><button class="ghost">▶ YouTube</button></a>
+          <a href="./tiktok.html"><button class="ghost on">♪ TikTok</button></a>
+          <a href="./compare.html"><button class="ghost">⇄ Compare</button></a>
+        </div>
+      </div>
+      <div class="tt-macct">
+        <button class="ghost" id="signOutBtn">Sign out</button>
+      </div>
+    </div>
   </header>
-
-  <div class="switcher">
-    <a href="./"><button class="ghost">▶ YouTube</button></a>
-    <a href="./tiktok.html"><button class="ghost on">♪ TikTok</button></a>
-    <a href="./compare.html"><button class="ghost">⇄ Compare</button></a>
-  </div>
 
   <div class="error" id="errorBox"></div>
 
@@ -121,32 +247,13 @@
     </p>
   </div>
 
-  <!-- PROFILE -->
-  <div class="channel-banner" id="profileBanner" style="display:none">
+  <!-- PROFILE — who is signed in, in one compact row; its controls live in the ⋯ menu -->
+  <div class="channel-banner tt-profile" id="profileBanner" style="display:none">
     <img id="ttAvatar" class="avatar" alt="" src="">
-    <div>
+    <div style="min-width:0">
       <div id="ttName" style="font-weight:700;font-size:15px"></div>
       <div id="ttMeta" class="explain" style="margin:0"></div>
     </div>
-    <div class="controls">
-      <select id="interval" title="Refresh rate">
-        <option value="30000">30s refresh</option>
-        <option value="60000" selected>60s refresh</option>
-        <option value="120000">2m refresh</option>
-      </select>
-      <button class="ghost" id="soundBtn" title="Sound when a milestone lands" aria-pressed="true">🔊</button>
-      <button class="ghost" id="refreshBtn" title="Refresh right now">↻ Refresh</button>
-      <button class="ghost" id="pauseBtn">Pause</button>
-      <button class="ghost" id="signOutBtn">Sign out</button>
-    </div>
-  </div>
-
-  <!-- The answer card, same shape as the YouTube page: four chips, each a sentence about
-       one question. Styling comes from the shared stylesheet, so there is nothing new here
-       but the markup. -->
-  <div class="card answer-card" id="answerCard" style="display:none">
-    <div class="achips" id="answerChips"></div>
-    <div class="abody" id="answerBody"></div>
   </div>
 
   <!-- ROOMS — the same cards, sorted into five, and the same mechanism as the YouTube
@@ -166,13 +273,28 @@
       <button role="tab" id="tab-coach" aria-controls="pane-coach" aria-selected="false" tabindex="-1" data-room="coach">Coach</button>
       <button role="tab" id="tab-ideas" aria-controls="pane-ideas" aria-selected="false" tabindex="-1" data-room="ideas">Ideas</button>
     </div>
-    <label class="onepage" title="Show every card on one long page instead of tabs">
-      <input type="checkbox" id="onePage"> One page
-    </label>
   </div>
 
   <div class="room-pane on" data-pane="now" id="pane-now" role="tabpanel" aria-labelledby="tab-now" tabindex="0">
   <div class="room-divider"><span>Now</span><hr></div>
+
+  <!-- TODAY SO FAR — the calendar day on your own clock: views, followers and likes since
+       midnight, the newest post and the next milestone. The fold keeps the detail (the day
+       before, a typical day, where today places) one tap away. -->
+  <div class="card today-card" id="todayCard" style="display:none">
+    <div id="todayMain"><p class="dnote">checking…</p></div>
+    <details class="cc-more" id="todayMore">
+      <summary>More about today</summary>
+      <div class="cc-more-body" id="todayMoreBody"></div>
+    </details>
+  </div>
+
+  <!-- The answer card, same shape as the YouTube page: one chip per question, each a
+       sentence. It used to sit above the room bar; it now sits under Today so far. -->
+  <div class="card answer-card" id="answerCard" style="display:none">
+    <div class="achips" id="answerChips"></div>
+    <div class="abody" id="answerBody"></div>
+  </div>
 
   <!-- LIVE TOTALS -->
   <div class="grid" id="statsGrid" style="display:none">
@@ -1421,7 +1543,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'todayCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1679,6 +1801,7 @@
       pullLaunches();   // self-throttled to once every LAUNCH_EVERY
       buildScores();
       buildAccel();
+      renderToday();
       renderTable(); showSlot(slotIdx); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
@@ -2926,9 +3049,10 @@
     return html;
   }
 
-  // the grade against the account's own posts
-  function ttReportCardHtml(v) {
-    let html = '';
+  /* The grade against the account's own posts, worked out once. The report card draws it,
+     and the Today card's newest-post row wears its letter, so the two can never disagree.
+     Null when there are fewer than three other posts — the card then shows no grade at all. */
+  function ttGradeOf(v) {
     /* How it compares to the account's own posts.
 
        This was the worst instance of the views-per-day problem on either dashboard: the
@@ -2945,27 +3069,34 @@
        one like rate on a handful of views — the Newest chip calls that "too early", and the
        card must not contradict it. */
     const others = videos.filter(x => x.id !== v.id);
-    if (others.length >= 3) {
-      const mine = scoreOf(v);
-      // rank against the OTHER posts only — the answer card already does this, and a pool
-      // that includes the graded post itself shifts every percentage by the self-tie
-      const pool = others.map(scoreOf).filter(x => x != null);
-      const rank = pool.length >= 4 ? pjRank(pool, mine) : null;
-      const waiting = pool.length >= 4 && mine == null;
-      const ageM = (Date.now() - (v.create_time || 0) * 1000) / 60000;
-      // like rates only from posts that have views — a 0-view post has no rate, not 0%
-      const engPool = others.filter(x => (x.view_count || 0) > 0).map(engOf);
-      const medEng = typicalLikeRate(v.id);
-      // the same 200-view floor as the Like rate chip: under it a like rate is too noisy
-      // to judge, and the card must not print a % the chip beside it refuses to
-      const thinEng = (v.view_count || 0) > 0 && (v.view_count || 0) < 200;
-      const hasEng = (v.view_count || 0) >= 200 && medEng > 0;
-      const idx = hasEng ? Math.round(engOf(v) / medEng * 100) : null;
-      const engRank = hasEng ? pjRank(engPool, engOf(v)) : null;
-      const engBeats = engRank ? Math.round(engRank.pct) : null;
-      const beats = rank ? Math.round(rank.pct) : waiting ? null : engBeats;
-      const grade = beats == null ? '—' : beats >= 95 ? 'A+' : beats >= 85 ? 'A' : beats >= 72 ? 'A-' : beats >= 58 ? 'B+' : beats >= 45 ? 'B' : beats >= 30 ? 'C' : beats >= 15 ? 'D' : 'F';
-      const col = grade[0] === 'A' ? 'var(--up)' : grade[0] === 'B' ? 'var(--accent)' : grade[0] === 'C' ? 'var(--gold)' : grade === '—' ? 'var(--muted)' : 'var(--down)';
+    if (others.length < 3) return null;
+    const mine = scoreOf(v);
+    // rank against the OTHER posts only — the answer card already does this, and a pool
+    // that includes the graded post itself shifts every percentage by the self-tie
+    const pool = others.map(scoreOf).filter(x => x != null);
+    const rank = pool.length >= 4 ? pjRank(pool, mine) : null;
+    const waiting = pool.length >= 4 && mine == null;
+    const ageM = (Date.now() - (v.create_time || 0) * 1000) / 60000;
+    // like rates only from posts that have views — a 0-view post has no rate, not 0%
+    const engPool = others.filter(x => (x.view_count || 0) > 0).map(engOf);
+    const medEng = typicalLikeRate(v.id);
+    // the same 200-view floor as the Like rate chip: under it a like rate is too noisy
+    // to judge, and the card must not print a % the chip beside it refuses to
+    const thinEng = (v.view_count || 0) > 0 && (v.view_count || 0) < 200;
+    const hasEng = (v.view_count || 0) >= 200 && medEng > 0;
+    const idx = hasEng ? Math.round(engOf(v) / medEng * 100) : null;
+    const engRank = hasEng ? pjRank(engPool, engOf(v)) : null;
+    const engBeats = engRank ? Math.round(engRank.pct) : null;
+    const beats = rank ? Math.round(rank.pct) : waiting ? null : engBeats;
+    const grade = beats == null ? '—' : beats >= 95 ? 'A+' : beats >= 85 ? 'A' : beats >= 72 ? 'A-' : beats >= 58 ? 'B+' : beats >= 45 ? 'B' : beats >= 30 ? 'C' : beats >= 15 ? 'D' : 'F';
+    const col = grade[0] === 'A' ? 'var(--up)' : grade[0] === 'B' ? 'var(--accent)' : grade[0] === 'C' ? 'var(--gold)' : grade === '—' ? 'var(--muted)' : 'var(--down)';
+    return { mine, rank, waiting, ageM, thinEng, idx, engBeats, beats, grade, col };
+  }
+  function ttReportCardHtml(v) {
+    let html = '';
+    const g = ttGradeOf(v);
+    if (g) {
+      const { mine, rank, waiting, ageM, thinEng, idx, engBeats, beats, grade, col } = g;
       // the engagement bar is coloured by engagement, not by the reach grade beside it
       const engCol = !rank ? col : idx >= 100 ? 'var(--up)' : idx >= 85 ? 'var(--accent)' : 'var(--gold)';
       const band = idx == null ? '' : idx > 115 ? 'above your usual' : idx < 85 ? 'below your usual' : 'about your usual';
@@ -3006,7 +3137,11 @@
      reads those fields OUTSIDE its try/catch, so a builder that returned null would throw
      uncaught and freeze the whole card rather than one chip — that exact bug shipped on the
      YouTube side once, and scripts/answer-card.test.mjs exists because of it. */
-  const ANSWER_CHIPS = ['Today', 'Top mover', 'Newest', 'Last 5', 'Like rate', 'Milestone', 'Next post'];
+  /* No "Today" chip here any more. It measured a rolling 24 hours, and at 2 am those were
+     mostly yesterday; the Today so far card above now answers that question on the calendar
+     day, and carries everything the chip said (the usual day, the day before, and where
+     today places among recent days). Top mover leads instead. */
+  const ANSWER_CHIPS = ['Top mover', 'Newest', 'Last 5', 'Like rate', 'Milestone', 'Next post'];
   let answerChip = 0;
 
   // the follower history the Worker records every ~3h: [ts, followers, likes, videoCount]
@@ -3049,98 +3184,6 @@
     return out;
   }
   const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
-  // Where today sits among the days behind it, and how it compares with the one before —
-  // the two questions the chip was asked for. Shared by both dashboards verbatim.
-  function weekPlace(b, unit, unitOne) {
-    const today = b[0], week = b.slice(1).filter(x => x.ok);
-    const y = b[1];
-    // everything is ranked on the rounded figures the reader sees: 7.5 a day samples as 7
-    // and 8 alternately, and ranking the unrounded rates made identical +1s "quietest"
-    const R = x => Math.round(x.rate);
-    const u = n => Math.round(Math.abs(n)) === 1 ? (unitOne || unit) : unit;
-    const signed = n => (n < 0 ? '−' : '+') + fmt.format(Math.abs(n));
-    const t = R(today);
-    const rank = week.filter(x => R(x) > t).length + 1;
-    const ties = week.filter(x => R(x) === t).length;
-    const sorted = week.map(x => x.rate).sort((p, q) => p - q);
-    const med = sorted.length ? (sorted.length % 2 ? sorted[sorted.length >> 1]
-      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : 0;
-    // a difference smaller than the counter's own wobble is not a difference
-    const noise = Math.max(2, Math.sqrt(Math.max(1, med)));
-    const N = week.length + 1;
-    const span = week.length >= 5 ? 'of the week' : 'of the last ' + N;
-    const verdict = !week.length ? 'Nothing to compare with yet.'
-      : t < 0 ? 'Down over the last 24 hours.'
-      : t === 0 ? 'A quiet 24 hours — nothing new.'
-      : week.length >= 3 && week.every(x => R(x) < t) ? 'Best 24 hours ' + span + '.'
-      : week.length >= 3 && week.every(x => R(x) > t) ? 'Quietest 24 hours ' + span + '.'
-      : Math.abs(t - med) <= noise ? 'About usual.'
-      : t > med ? 'Busier than usual.' : 'Quieter than usual.';
-    // the verdict is against the usual, so the usual is printed first — otherwise
-    // "quieter than usual" sits next to "above the 24 hours before" with no way to square them
-    // a loss or a flat 24 hours has no sensible percentage against a positive usual —
-    // "130% below" is not a thing — so the figures are printed and the % is left out
-    const pct = t > 0 && med >= 5 && Math.abs(t - med) > noise ? Math.round((t / med - 1) * 100) : null;
-    const usual = !week.length ? ''
-      : 'Your usual 24 hours lately: ' + fmt.format(Math.round(med)) + ' ' + u(med) +
-        (pct != null ? ' — this one is ' + Math.abs(pct) + '% ' + (pct > 0 ? 'above' : 'below') + ' that' : '') + '. ';
-    const yv = y && y.ok ? R(y) : null;
-    const vs = yv == null
-      ? (y && y.why === 'fall'
-        ? 'The 24 hours before came back lower on the counter, so there is nothing to hold it against.'
-        : 'The 24 hours before weren’t fully recorded, so there is nothing to hold it against.')
-      : Math.abs(t - yv) <= Math.max(2, Math.sqrt(Math.abs(yv)))
-        ? 'About the same as the 24 hours before (' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ').'
-        : yv < 5 || t <= 0
-          ? 'The 24 hours before came to ' + (yv < 0 ? signed(yv) : fmt.format(yv)) + ' ' + u(yv) + '.'
-          : (() => {
-              const d = Math.round((t / yv - 1) * 100);
-              return 'The 24 hours before came to ' + fmt.format(yv) + ' ' + u(yv) + ' — this one is ' +
-                Math.abs(d) + '% ' + (d > 0 ? 'higher' : 'lower') + '.';
-            })();
-    const wk = !week.length ? ''
-      // the pool is those stretches PLUS this one, so say so — rank can be week.length + 1
-      : ' ' + (N === b.length ? 'Of the last ' + N + ' such 24-hour stretches'
-          : 'Of the ' + N + ' fully recorded 24-hour stretches in the last ' + b.length + ' days') + ', this one ' +
-        (ties ? 'is joint ' + ordinal(rank) : rank === 1 ? 'ranks first' : 'ranks ' + ordinal(rank)) + '.';
-    // stated, not hidden: a window that was not 24 hours long has been scaled to one
-    const note = Math.abs(today.spanH - 24) > 2
-      ? ' Based on ' + Math.round(today.spanH) + ' hours of counts, scaled to 24.'
-      : '';
-    return { h: verdict, f: signed(t) + ' ' + u(t) + ' in 24h', p: usual + vs + wk + note };
-  }
-
-  function answerToday() {
-    const f = fseries();
-    const followers = (me && me.follower_count) || 0;
-    /* Followers and account likes, NOT summed post views. The view total on this page is a
-       sum over the posts TikTok will return — at most 60 — so it FALLS as older posts scroll
-       out of that window, and a falling number is not something to report as a day's result.
-
-       Every window here is a rolling 24 hours ending at the latest reading, not a calendar
-       day, so the words say "24 hours" — Trends and the away card use calendar days, and
-       the same word meaning two things one scroll apart is a riddle. */
-    if (f.length < 3) return { h: 'Not enough data yet.', f: fmt.format(followers) + ' followers',
-      p: 'Your follower count is checked every few hours. After a couple of days of that, this compares the last 24 hours with your usual.' };
-    // unfollows are real, so a fall in followers is a result to report, not a flap to hide
-    const b = dayBuckets(f, 1, 8, true);
-    const latest = f[f.length - 1];
-    if (!b[0] || !b[0].ok) {
-      // three different reasons, and only one of them fills in by itself
-      if (Date.now() - latest[0] > 6 * 3600e3) return { h: 'No recent count.', f: fmt.format(latest[1] || 0) + ' followers',
-        p: 'No follower count since ' + fmtAgo(latest[0]) + '. Your tracker may have stopped checking.' };
-      // no 'fall' case: followers are bucketed with allowNeg, so a loss is an ok bucket and
-      // is reported through weekPlace ('Down over the last 24 hours.')
-      return { h: 'Still counting.', f: fmt.format(latest[1] || 0) + ' followers',
-        p: 'The last 24 hours aren’t fully tracked yet, so there is nothing fair to compare. It fills in after the next follower check.' };
-    }
-    const ans = weekPlace(b, 'followers', 'follower');
-    /* Likes ride along because the account total for those IS cumulative. A count that
-       came back lower than it was is left out rather than printed as a loss. */
-    const lk = dayBuckets(f, 2, 2)[0];
-    if (lk && lk.ok) ans.p += ' Account likes: +' + fmt.format(Math.round(lk.rate)) + ' over the same 24 hours.';
-    return ans;
-  }
 
   function answerNewest() {
     if (!videos.length) return { h: 'No posts tracked yet.', f: '—', p: 'Once your tracker has seen a post, this says how it did against the rest.' };
@@ -3343,7 +3386,7 @@
   function paintAnswer() {
     const el = $('answerBody'); if (!el) return;
     let a;
-    try { a = [answerToday, answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip](); }
+    try { a = [answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip](); }
     catch (e) { a = { h: 'Couldn’t work that one out.', f: '—', p: 'The numbers behind this chip aren’t loaded yet.' }; }
     el.innerHTML = '<div class="ah">' + esc(a.h) + '</div><div class="af">' + esc(a.f) + '</div><p class="ap">' + esc(a.p) + '</p>';
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
@@ -3510,8 +3553,10 @@
     const typical = d.length >= 5;
     const perDay = typical ? pjMed(d) : mean;
     const target = nextMilestone(cur), need = target - cur;
-    if (perDay <= 0 && mean > 0) return { cur, target, text: 'Growth comes in bursts rather than daily, so there’s no steady date to give.' };
-    if (perDay <= 0) return { cur, target, text: 'Your followers have been flat or falling lately, so there’s no date to give yet.' };
+    // what "a typical day" is, so the Today card can quote the very same pace
+    const basis = typical ? (d.length >= 14 ? 'the last 14 days' : 'the last ' + d.length + ' days tracked') : null;
+    if (perDay <= 0 && mean > 0) return { cur, target, perDay, typical, basis, text: 'Growth comes in bursts rather than daily, so there’s no steady date to give.' };
+    if (perDay <= 0) return { cur, target, perDay, typical, basis, text: 'Your followers have been flat or falling lately, so there’s no date to give yet.' };
     const daysOut = need / perDay, eta = now + daysOut * 864e5;
     // calendar days, not rolling ones — at 10pm an ETA at 10am is tomorrow. Math.round
     // absorbs the 23- and 25-hour days either side of a daylight-saving change.
@@ -3522,7 +3567,8 @@
     const unit = rate === '1.0' ? (labelOne || label) : label;
     // daysOut travels with it, matching the YouTube page's shape — the answer chip
     // uses it to tell a dated projection apart from the flat-growth sentence above
-    return { cur, target, daysOut, text: 'At ' + (typical ? 'your typical ' : '') + '<b>+' + rate + ' ' + unit + ' a day</b> (' +
+    return { cur, target, daysOut, perDay, typical, basis, rate, when: when.replace(/<[^>]*>/g, ''),
+      text: 'At ' + (typical ? 'your typical ' : '') + '<b>+' + rate + ' ' + unit + ' a day</b> (' +
       (typical ? 'a typical day of the last ' + (d.length >= 14 ? '14' : d.length + ' days tracked') : 'the average over the last ' + Math.max(1, Math.round(days)) + ' day' + (Math.round(days) === 1 ? '' : 's')) +
       ') you should reach <b>' + fmt.format(target) + '</b> ' + when + '.' };
   }
@@ -3609,6 +3655,7 @@
     const now = Date.now();
     const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
     const incomplete = new Set();  // local days (en-CA) a hole in some post's recording touches
+    const holes = [];              // [from, to] of each hole a gain crossed, for hour-level checks
     let total = 0;
     for (const [id, rec] of Object.entries(vids)) {
       const arr = (rec && rec.s) || [];
@@ -3627,18 +3674,24 @@
         if (prev < from) continue;
         total += d;
         if (arr[i][0] - prev > TT_GAP) {
+          holes.push([prev, arr[i][0]]);
           const day = new Date(prev); day.setHours(0, 0, 0, 0);
           for (; day.getTime() < arr[i][0]; day.setDate(day.getDate() + 1)) incomplete.add(day.toLocaleDateString('en-CA'));
           continue;
         }
-        const h = new Date(arr[i][0] - 1); h.setMinutes(0, 0, 0);
-        const b = hours.get(h.getTime()) || { gain: 0, byPost: new Map() };
+        // the start of that local hour as an instant: the minutes are taken off the instant
+        // itself rather than set on the clock, because when the clocks go back 2 am happens
+        // twice, and setting 2:00 picks the first one — which filed the second 2 am hour's
+        // views under the first and gave that hour two hours of views
+        const h0 = new Date(arr[i][0] - 1);
+        const hk = h0.getTime() - (h0.getMinutes() * 60e3 + h0.getSeconds() * 1e3 + h0.getMilliseconds());
+        const b = hours.get(hk) || { gain: 0, byPost: new Map() };
         b.gain += d;
         b.byPost.set(id, (b.byPost.get(id) || 0) + d);
-        hours.set(h.getTime(), b);
+        hours.set(hk, b);
       }
     }
-    return { total, hours, incomplete };
+    return { total, hours, incomplete, holes };
   }
 
   /* Accelerating: gaining meaningfully faster than it was a day ago. The absolute floor
@@ -3921,6 +3974,10 @@
     }
     out.gaps = gaps;
     out.coverFrom = coverFrom;
+    // the hours and holes behind the days, so "Today so far" can compare part of a day with
+    // the same part of yesterday from this very pass rather than a second one
+    out.hours = g.hours;
+    out.holes = g.holes;
     out.notKept = oldKept >= resume;   // the older days are missing because they aren't kept here
     return out;
   }
@@ -4035,6 +4092,309 @@
       recTrendsRange = +b2.dataset.rec;
       renderRecTrends();
     });
+  }
+
+  /* ---------- Today so far ----------
+     The calendar day on the viewer's own clock, from local midnight to now. The Today chip
+     this replaces measured a rolling 24 hours, and at 2 am those were mostly yesterday.
+
+       · Views are the recorded view gains since midnight: recDayGains, the very call and the
+         very rules (high-water marks; a hole in the recording goes in no hour) behind Trends'
+         "Today so far" tile, so the two can never show different numbers.
+       · Followers and likes are the live profile counts minus the snapshot in the follower log
+         that marks the start of the day. The Worker takes one on its first tick after local
+         midnight; a check up to 15 minutes after midnight counts as midnight. Failing that,
+         the last check before midnight is used if it was within 3½ hours, and the tile names
+         it ("since the 10:40 pm check"). Failing that, followers and likes abstain.
+       · "Yesterday by this time" is views only: the same whole hours of each day counted from
+         each local midnight, up to the last hour boundary the page has readings past. On a
+         daylight-saving day that is still hours against hours, and the sentence says so.
+       · The verdict needs a real gap — at least 20 views and more than 10% — or it is Level.
+     Every day boundary is a real local midnight from calendar arithmetic, never now − 24h. */
+  const TODAY_EXACT = 15 * 60e3;              // a check this soon after midnight is midnight's
+  const TODAY_NEAR = 3.5 * 3600e3;            // else the last check before it, if this recent
+  const TODAY_NOISE = 0.10, TODAY_NOISE_MIN = 20;
+  // local midnight `back` calendar days before the day holding t (negative: after it)
+  const localMidnight = (t, back) => {
+    const d = new Date(t); d.setHours(0, 0, 0, 0);
+    if (back) { d.setDate(d.getDate() - back); d.setHours(0, 0, 0, 0); }
+    return d.getTime();
+  };
+  // '8 am', '10:40 pm' — the viewer's own clock, with minutes only when there are some
+  const clockTxt = t => {
+    const d = new Date(t), h = d.getHours(), m = d.getMinutes();
+    return (h % 12 || 12) + (m ? ':' + String(m).padStart(2, '0') : '') + (h < 12 ? ' am' : ' pm');
+  };
+  // the snapshot that starts the day beginning at `mid`, from [ts, followers, likes, videos] rows
+  function ttDayBase(f, mid) {
+    let before = null, after = null;
+    for (const s of f) { if (s[0] < mid) before = s; else { after = s; break; } }
+    if (after && after[0] - mid <= TODAY_EXACT) return { s: after, exact: true };
+    if (before && mid - before[0] <= TODAY_NEAR) return { s: before, exact: false };
+    return null;
+  }
+  const signedN = n => (n < 0 ? '−' : '+') + fmt.format(Math.abs(n));
+  // a typical day's pace, rounded the way the milestone rounds it (+7.5, +12)
+  const paceTxt = x => (x < 0 ? '−' : '+') + (Math.abs(x) >= 10 ? fmt.format(Math.round(Math.abs(x))) : Math.abs(x).toFixed(1));
+  function ttTodayModel() {
+    const now = Date.now(), H = 3600e3;
+    const tMid = localMidnight(now), yMid = localMidnight(now, 1), nMid = localMidnight(now, -1);
+    const kOf = t => new Date(t).toLocaleDateString('en-CA');
+    const tk = kOf(tMid), yk = kOf(yMid);
+    const day = recDayGains(16);             // Trends' own call — its "Today so far" reads this map
+    const stored = Object.keys((hist && hist.videos) || {}).length;
+    const m = { now, tMid, yMid, tk, yk, todayH: (nMid - tMid) / H, yH: (tMid - yMid) / H,
+      stored: stored < videos.length ? stored : 0 };
+    m.views = day.has(tk) ? day.get(tk) : null;
+    m.viewsPartial = day.gaps.has(tk);
+    m.yViews = day.has(yk) ? day.get(yk) : null;
+
+    // yesterday by this time: the first n whole hours of each day, n set by the newest reading
+    // the page holds rather than the clock, so a pull still on its way never reads as quiet
+    const cmp = { n: Math.floor((Math.min(now, newestTs(hist)) - tMid) / H) };
+    if (now - tMid < H) cmp.why = 'early';
+    else if (cmp.n < 1) cmp.why = 'stale';
+    else {
+      const tB = tMid + cmp.n * H, yB = yMid + cmp.n * H;
+      cmp.tB = tB; cmp.yB = yB;
+      const sum = (a, b) => { let x = 0; for (const [at, g] of day.hours) if (at >= a && at < b) x += g.gain; return x; };
+      const hole = (a, b) => (day.holes || []).some(([p, q]) => p < b && q > a);
+      if (yB > tMid || yMid < day.coverFrom || hole(yMid, yB)) cmp.why = 'yesterday';
+      else if (tMid < day.coverFrom || hole(tMid, tB)) cmp.why = 'today';
+      else {
+        cmp.today = sum(tMid, tB); cmp.yday = sum(yMid, yB);
+        const d = cmp.today - cmp.yday;
+        cmp.diff = d;
+        cmp.verdict = Math.abs(d) < TODAY_NOISE_MIN || Math.abs(d) <= cmp.yday * TODAY_NOISE ? 'level' : d > 0 ? 'ahead' : 'behind';
+      }
+    }
+    m.cmp = cmp;
+
+    // where today so far already sits among the full days behind it — a floor, since today
+    // can only add views
+    const done = [...day.keys()].filter(k => k !== tk).sort().slice(-14);
+    m.rankN = done.length;
+    m.rankAhead = m.views != null ? done.filter(k => day.get(k) < m.views).length : null;
+    m.typViews = done.length >= 5 ? pjMed(done.map(k => day.get(k))) : null;
+
+    // followers and likes, from the snapshot that starts each day
+    const f = fseries();
+    const col = (s, i) => s && s.length > i && s[i] != null ? +s[i] : null;
+    const tb = ttDayBase(f, tMid), yb = ttDayBase(f, yMid);
+    m.hasLog = f.length > 0;
+    m.base = tb; m.yBase = yb;
+    m.liveF = me && me.follower_count != null ? +me.follower_count : null;
+    m.liveL = me && me.likes_count != null ? +me.likes_count : null;
+    m.followers = tb && m.liveF != null && col(tb.s, 1) != null ? m.liveF - col(tb.s, 1) : null;
+    m.likes = tb && m.liveL != null && col(tb.s, 2) != null ? m.liveL - col(tb.s, 2) : null;
+    m.yFollowers = tb && yb && col(tb.s, 1) != null && col(yb.s, 1) != null ? col(tb.s, 1) - col(yb.s, 1) : null;
+    m.yLikes = tb && yb && col(tb.s, 2) != null && col(yb.s, 2) != null ? col(tb.s, 2) - col(yb.s, 2) : null;
+
+    // a typical day of followers is the milestone's own pace, so the two always agree
+    const p = f.length > 3 ? projectMilestone(liveFollowers(f), 'followers', 'follower') : null;
+    m.ms = p;
+    m.typFollowers = p && p.typical ? p.perDay : null;
+    m.typBasis = p && p.typical ? p.basis : null;
+    // and likes, by the same method on the likes column: the middle of the last 14 days
+    const ls = f.filter(x => col(x, 2) != null).map(x => [x[0], col(x, 2)]);
+    if (m.liveL != null && m.liveL > 0 && ls.length && now - ls[ls.length - 1][0] > 60e3) ls.push([now, m.liveL]);
+    const lr = ls.length >= 4 ? dayBuckets(ls, 1, 14).filter(b => b.ok).map(b => b.rate) : [];
+    m.typLikes = lr.length >= 5 ? pjMed(lr) : null;
+    m.typLikesBasis = lr.length >= 14 ? 'the last 14 days' : 'the last ' + lr.length + ' days tracked';
+
+    // followers ranked only against days with a midnight check at both ends
+    const fd = [];
+    for (let k = 1; k <= 14; k++) {
+      const a = ttDayBase(f, localMidnight(now, k)), b = ttDayBase(f, localMidnight(now, k - 1));
+      if (a && b && a.exact && b.exact && col(a.s, 1) != null && col(b.s, 1) != null) fd.push(col(b.s, 1) - col(a.s, 1));
+    }
+    m.fDays = fd.length;
+    m.fAhead = tb && tb.exact && m.followers != null && fd.length >= 3 ? fd.filter(g => g < m.followers).length : null;
+
+    m.newest = videos.length ? videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0))[0] : null;
+    return m;
+  }
+
+  // the calendar-day sentences, kept apart from the markup so the tests can read them
+  function ttTodayWords(m) {
+    const c = m.cmp, w = {};
+    const same = c.tB != null && clockTxt(c.tB) === clockTxt(c.yB);
+    const clocks = m.todayH !== 24 ? 'the clocks went ' + (m.todayH < 24 ? 'forward' : 'back') + ' an hour today'
+      : m.yH !== 24 ? 'the clocks went ' + (m.yH < 24 ? 'forward' : 'back') + ' an hour yesterday' : '';
+    w.pill = c.verdict === 'ahead' ? ['Ahead of yesterday', 'up'] : c.verdict === 'behind' ? ['Behind yesterday', 'warn']
+      : c.verdict === 'level' ? ['Level with yesterday', ''] : c.why === 'early' ? ['Still early', 'mute'] : ['No comparison yet', 'mute'];
+    if (c.verdict) {
+      const d = c.diff, a = Math.abs(d);
+      const pct = c.yday > 0 ? Math.round(a / c.yday * 100) : null;
+      const tail = c.verdict === 'level'
+        ? (d === 0 ? ' — exactly level.' : a < TODAY_NOISE_MIN ? ' — only ' + fmt.format(a) + ' apart, so level.' : ' — within 10%, so level.')
+        : c.yday === 0 ? ' — yesterday had none by then.'
+        : ' — ' + (pct <= 10 ? 'just over 10%' : pct + '%') + (d > 0 ? ' more.' : ' fewer.');
+      w.cmpTile = (same ? 'yesterday by ' + clockTxt(c.yB) : 'yesterday’s first ' + c.n + ' hours') + ': ' + fmt.format(c.yday);
+      w.say = (same
+        ? 'By ' + clockTxt(c.tB) + ': <b>' + fmt.format(c.today) + '</b> views today, <b>' + fmt.format(c.yday) + '</b> yesterday'
+        : 'In the first ' + c.n + ' hours of each day: <b>' + fmt.format(c.today) + '</b> views today (to ' + clockTxt(c.tB) + '), <b>' +
+          fmt.format(c.yday) + '</b> yesterday (to ' + clockTxt(c.yB) + ')') + tail +
+        (!same && clocks ? ' Hours are compared with hours because ' + clocks + '.' : '');
+    } else {
+      w.cmpTile = c.why === 'early' ? 'compared with yesterday from 1 am' : c.why === 'stale' ? 'no reading since midnight yet'
+        : c.why === 'yesterday' ? 'yesterday wasn’t fully tracked' : 'part of today wasn’t recorded';
+      w.say = c.why === 'early' ? 'It’s just after midnight. Today is compared with yesterday from 1 am.'
+        : c.why === 'stale' ? 'Your tracker hasn’t sent a reading since midnight yet, so there’s nothing to compare.'
+        : c.why === 'yesterday' ? 'Yesterday wasn’t fully tracked up to ' + clockTxt(c.yB) + ', so there’s nothing fair to compare today with.'
+        : 'Part of today wasn’t recorded, so today’s count up to ' + clockTxt(c.tB) + ' would be short and isn’t compared.';
+    }
+    if (m.stored) w.say += ' Views are counted on your ' + m.stored + ' newest posts.';
+    // since when followers and likes are counted
+    w.since = !m.base ? null : m.base.exact ? 'since midnight' : 'since last night’s ' + clockTxt(m.base.s[0]) + ' check';
+    w.noBase = !m.hasLog ? 'no follower checks yet' : 'no check near midnight';
+    // a record only when it is exactly one: ahead of every full day, with a few to beat
+    w.record = m.views > 0 && m.rankN >= 3 && m.rankAhead === m.rankN
+      ? 'Already your best day of the last ' + m.rankN + ' full days tracked.' : null;
+    w.rank = m.rankN < 3 || m.rankAhead == null ? null
+      : m.rankAhead === m.rankN ? w.record
+      : m.rankAhead === 0 ? 'Not ahead of any of the last ' + m.rankN + ' full days tracked yet — the day isn’t over.'
+      : 'Already ahead of ' + m.rankAhead + ' of the last ' + m.rankN + ' full days tracked.';
+    w.clocks = clocks;
+    return w;
+  }
+
+  function renderToday() {
+    const card = $('todayCard'), main = $('todayMain'), more = $('todayMoreBody');
+    if (!card || !main || !more || !videos.length) return;
+    card.style.display = 'block';
+    // this runs first in the poll's render chain, so a fault here must not stop the rest
+    try { paintToday(main, more); }
+    catch (e) { main.innerHTML = '<p class="dnote">Today’s figures couldn’t be worked out on this refresh.</p>'; more.innerHTML = ''; }
+  }
+  function paintToday(main, more) {
+    const m = ttTodayModel(), w = ttTodayWords(m);
+    // "8 am" never breaks between its number and its am
+    const nb = x => String(x).replace(/(\d) (am|pm)\b/g, '$1\u00a0$2');
+    const tile = (v, cls, k, c1, c2) => '<div class="tile"><div class="v' + (cls ? ' ' + cls : '') + '">' + v + '</div><div class="k">' + k + '</div>' +
+      (c1 ? '<div class="c">' + nb(c1) + '</div>' : '') + (c2 ? '<div class="c">' + nb(c2) + '</div>' : '') + '</div>';
+    const num = x => x == null ? '—' : signedN(x);
+    const tone = x => x == null ? 'none' : x > 0 ? 'up' : x < 0 ? 'down' : '';
+    let html = '<div class="today-head"><div><span class="today-lbl">Today so far</span><div class="today-date">' +
+      esc(new Date(m.now).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })) + '</div></div>' +
+      '<span class="today-pill' + (w.pill[1] ? ' ' + w.pill[1] : '') + '">' + w.pill[0] + '</span></div>';
+    html += '<div class="today-tiles">' +
+      tile(m.views == null ? '—' : '+' + fmt.format(m.views), tone(m.views), 'views',
+        m.views == null ? 'nothing recorded yet' : m.viewsPartial ? 'part of today wasn’t recorded' : '', esc(w.cmpTile)) +
+      tile(num(m.followers), tone(m.followers), 'followers', m.followers == null ? w.noBase : w.since,
+        m.typFollowers != null ? 'a typical day: ' + paceTxt(m.typFollowers) : m.yFollowers != null ? 'yesterday: ' + signedN(m.yFollowers) : '') +
+      tile(num(m.likes), tone(m.likes), 'likes', m.likes == null ? w.noBase : w.since,
+        m.typLikes != null ? 'a typical day: ' + paceTxt(m.typLikes) : m.yLikes != null ? 'yesterday: ' + signedN(m.yLikes) : '') +
+      '</div>';
+    html += '<p class="today-say">' + nb(w.say) + '</p>';
+    if (w.record) html += '<p class="today-say"><span class="cc-win">' + w.record + '</span></p>';
+
+    // the newest post, graded by the report card's own rules
+    const nv = m.newest;
+    if (nv) {
+      const views = nv.view_count || 0, ageH = (m.now - (nv.create_time || 0) * 1000) / 3600e3;
+      const raw = capOf(nv), bare = raw.replace(/#[\p{L}\p{N}_]+/gu, ' ').replace(/\s+/g, ' ').trim();
+      const cap = bare && /[\p{L}\p{N}]/u.test(bare) ? shortCap(bare, 60, 'Your newest post') : shortCap(raw, 60, 'Your newest post');
+      const g = ttGradeOf(nv);
+      let pill, pc, why;
+      if (!g) { pill = 'Not graded yet'; pc = 'mute'; why = 'Grades start once you have 4 posts to compare.'; }
+      else if (g.waiting) {
+        pill = 'Too early'; pc = 'mute';
+        why = !(views > 0) ? 'It gets a grade once it has views counted.'
+          : g.ageM < PJ_MIN_AGE ? 'It gets a grade at ' + Math.round(PJ_MIN_AGE / 60) + ' hours old (about ' + pjDur(PJ_MIN_AGE - g.ageM) + ' to go).'
+          : 'It gets a grade once its first 48 hours can be estimated.';
+      } else if (g.grade === '—') {
+        pill = 'Not graded yet'; pc = 'mute';
+        why = g.thinEng ? 'A reach grade needs at least 4 other posts to compare with, and a like rate needs 200 views to judge.'
+          : 'A reach grade needs at least 4 other posts to compare with.';
+      } else {
+        pill = 'Grade ' + g.grade; pc = g.grade[0] === 'A' ? 'up' : g.grade[0] === 'B' ? '' : g.grade[0] === 'C' ? 'warn' : 'down';
+        why = g.rank
+          ? (g.beats === 100 ? 'Beats all ' + g.rank.n + ' of your other posts on reach' : 'Beats ' + g.beats + '% of your ' + g.rank.n + ' other posts on reach') +
+            (g.ageM < PJ_HORIZON ? ', going by its estimated first 48 hours.' : '.')
+          : 'Beats ' + g.engBeats + '% of your other posts on like rate. A reach grade needs at least 4 other posts to compare with.';
+      }
+      const rate = ageH >= 1 && ageH < 24 ? views / ageH : ageH >= 24 ? paceOf(nv) : null;
+      const pace = rate != null && rate >= 1 ? 'Averaging ' + fmt.format(Math.round(rate)) + ' views ' + (ageH < 24 ? 'an hour' : 'a day') + ' since it went up. ' : '';
+      html += '<div class="today-sec"><div class="today-msh"><span class="today-lbl">Newest post</span>' +
+        '<span class="today-pill' + (pc ? ' ' + pc : '') + '">' + esc(pill) + '</span></div>' +
+        '<div class="today-post" role="button" tabindex="0" data-vid="' + esc(nv.id) + '" title="Open its full breakdown">' +
+        (nv.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(nv.cover_image_url) + '">' : '') +
+        '<div style="flex:1;min-width:0"><div class="pt">' + esc(cap) + '</div><div class="pm">Posted ' + esc(fmtAgo(nv.create_time * 1000)) +
+        ' · ' + fmt.format(views) + ' views · ' + fmt.format(nv.like_count || 0) + ' likes</div></div></div>' +
+        '<p class="today-note">' + esc(pace + why) + '</p></div>';
+    }
+
+    // the next milestone, the same projection as the Milestone chip and the Coach
+    const p = m.ms;
+    html += '<div class="today-sec">';
+    if (p) {
+      html += '<div class="today-msh"><span class="today-lbl">Next milestone</span><span class="togo">' + fmt.format(p.target - p.cur) + ' to go</span></div>' +
+        '<div class="today-mst"><b>' + fmt.format(p.target) + ' followers</b>' + (p.when ? '<span>' + esc(p.when) + '</span>' : '') + '</div>' +
+        '<div class="gbar"><span class="gl">' + fmt.format(p.cur) + '</span><span class="gt"><span class="gf" style="width:' +
+        Math.max(2, milestonePct(p)) + '%;background:var(--up)"></span></span><span class="gv">' + milestonePct(p) + '%</span></div>' +
+        (p.daysOut == null ? '<p class="today-note">' + esc(p.text) + '</p>' : '');
+    } else {
+      html += '<span class="today-lbl">Next milestone</span><p class="today-note">After about 12 hours of follower counts, this estimates when you’ll reach the next milestone.</p>';
+    }
+    html += '</div>';
+    main.innerHTML = html;
+    if (!main.dataset.wired) {
+      main.dataset.wired = '1';
+      const open = t => { const b = t && t.closest && t.closest('[data-vid]'); if (b) ttdOpen(b.dataset.vid, b); };
+      main.addEventListener('click', e => open(e.target));
+      main.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (!(e.target && e.target.closest && e.target.closest('[data-vid]'))) return;
+        e.preventDefault(); open(e.target);
+      });
+    }
+    more.innerHTML = ttTodayMoreHtml(m, w);
+  }
+
+  // the fold: everything the old Today chip said, on the calendar day, plus the working
+  function ttTodayMoreHtml(m, w) {
+    const P = s => '<p>' + s + '</p>', B = s => '<b>' + s + '</b>';
+    // a check before midnight is named with its day, so two 10:40 pm checks are never confused
+    const dayName = t => new Date(t).toLocaleDateString('en-AU', { weekday: 'long' });
+    const span = (a, b) => 'from ' + (a.exact ? 'midnight' : clockTxt(a.s[0]) + ' ' + dayName(a.s[0])) + ' to ' +
+      (b.exact ? 'midnight' : clockTxt(b.s[0]) + ' ' + dayName(b.s[0]));
+    let v = '';
+    v += m.views == null ? P('Nothing recorded since midnight yet.')
+      : P(B('+' + fmt.format(m.views)) + ' since midnight, from the view counts your tracker recorded on ' +
+        (m.stored ? 'your ' + m.stored + ' newest posts' : 'your posts') + ' — the same figure as “Today so far” in Trends.' +
+        (m.viewsPartial ? ' Part of today wasn’t recorded, so the real figure is higher.' : ''));
+    v += m.yViews != null
+      ? P('Yesterday, the whole day: ' + B('+' + fmt.format(m.yViews)) + (m.yH !== 24 ? ' (a ' + m.yH + '-hour day: the clocks went ' + (m.yH < 24 ? 'forward' : 'back') + ')' : '') + '.')
+      : P('Yesterday wasn’t fully recorded, so its whole-day total is left out.');
+    if (m.typViews != null) v += P('A typical full day: about ' + B('+' + fmt.format(Math.round(m.typViews))) + ' (the middle of your last ' + m.rankN + ' full days tracked).');
+    if (w.rank) v += P(w.record ? '<span class="cc-win">' + w.rank + '</span>' : w.rank);
+    let f = '';
+    if (m.followers != null) f += P(B(fmt.format(m.liveF)) + ' now, ' + B(fmt.format(m.base.s[1])) + ' at your tracker’s ' + clockTxt(m.base.s[0]) +
+      ' check' + (m.base.exact ? '' : ' last night') + ': ' + B(signedN(m.followers)) + ' today.');
+    else f += P(!m.hasLog ? 'Your tracker hasn’t checked your follower count yet.'
+      : 'Your tracker has no follower check between ' + clockTxt(m.tMid - TODAY_NEAR) + ' and ' + clockTxt(m.tMid + TODAY_EXACT) +
+        ', so there’s no start-of-day count to measure from. The latest Worker also checks just after midnight, which fills this in.');
+    f += m.typFollowers != null
+      ? P('A typical day brings about ' + B(paceTxt(m.typFollowers)) + ' — the same typical day (the middle of ' + m.typBasis + ') your milestone date is worked out from.')
+      : P('Not enough whole days of follower counts yet to say what a typical day brings.');
+    if (m.yFollowers != null) f += P('Yesterday: ' + B(signedN(m.yFollowers)) + (m.base.exact && m.yBase.exact ? ', midnight to midnight.' : ', counted ' + span(m.yBase, m.base) + '.'));
+    // "so far", not "already": unfollows can still take today back down
+    if (m.fAhead != null) f += P('So far, ' + (m.fAhead === m.fDays ? 'more followers than on any' : m.fAhead === 0 ? 'no more followers than on any'
+      : 'more followers than on ' + m.fAhead) + ' of the last ' + m.fDays + ' days with a midnight check at both ends.');
+    let l = '';
+    if (m.likes != null) l += P(B(fmt.format(m.liveL)) + ' now, ' + B(fmt.format(m.base.s[2])) + ' at the same check: ' + B(signedN(m.likes)) + ' today.');
+    else l += P(m.base ? 'Your tracker’s check has no likes count, so there’s nothing to measure from.' : 'No start-of-day count to measure from, as for followers.');
+    if (m.typLikes != null) l += P('A typical day: about ' + B(paceTxt(m.typLikes)) + ' (the middle of ' + m.typLikesBasis + ').');
+    if (m.yLikes != null) l += P('Yesterday: ' + B(signedN(m.yLikes)) + (m.base.exact && m.yBase.exact ? ', midnight to midnight.' : ', counted ' + span(m.yBase, m.base) + '.'));
+    const ms = m.ms && m.ms.daysOut != null ? '<div class="today-block"><h4>Next milestone</h4>' + P(esc(m.ms.text.replace(/<[^>]*>/g, ''))) + '</div>' : '';
+    return '<div class="today-more">' +
+      '<div class="today-block"><h4>Views</h4>' + v + '</div>' +
+      '<div class="today-block"><h4>Followers</h4>' + f + '</div>' +
+      '<div class="today-block"><h4>Likes on your account</h4>' + l + '</div>' + ms +
+      '<div class="today-block"><p class="dnote">“Today” is the calendar day on this device’s clock, from midnight' +
+      (w.clocks ? ' (' + w.clocks + ')' : '') + '. Your tracker checks followers and likes every few hours and, with the latest Worker, just after midnight.</p></div>' +
+      '</div>';
   }
 
   /* ---------- hashtags, with the account's own record attached ----------
@@ -4258,6 +4618,24 @@
     if ($('party').classList.contains('on')) { closeParty(); return; }
     ttdClose();
   });
+  /* The ⋯ menu. A plain toggle: it closes on a tap outside it, on Escape (focus goes back
+     to the button), and after Refresh. Theme, sound and Pause leave it open so their effect
+     can be seen and undone. */
+  function setMenu(open, refocus) {
+    const m = $('ttMenu'), b = $('moreBtn');
+    if (!m || !b) return;
+    m.hidden = !open;
+    b.setAttribute('aria-expanded', String(!!open));
+    if (!open && refocus) b.focus();
+  }
+  $('moreBtn').addEventListener('click', () => setMenu($('ttMenu').hidden));
+  document.addEventListener('click', e => {
+    const m = $('ttMenu');
+    if (!m || m.hidden || m.contains(e.target) || $('moreBtn').contains(e.target)) return;
+    setMenu(false);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('ttMenu').hidden) setMenu(false, true); });
+  $('refreshBtn').addEventListener('click', () => setMenu(false));
   $('signInBtn').addEventListener('click', () => signIn(false));
   $('switchAcctBtn').addEventListener('click', () => signIn(true));
   $('signOutBtn').addEventListener('click', () => signOut());
@@ -4581,7 +4959,9 @@
   function paintSound() {
     const b = $('soundBtn');
     if (!b) return;
-    b.textContent = soundOn ? '\ud83d\udd0a' : '\ud83d\udd07';
+    // a word beside the glyph: inside the ⋯ menu a lone speaker says less than it did in
+    // a row of controls
+    b.textContent = soundOn ? '\ud83d\udd0a Sound on' : '\ud83d\udd07 Sound off';
     b.classList.toggle('on', soundOn);
     b.setAttribute('aria-pressed', String(soundOn));
     b.title = soundOn ? 'Sound when a milestone lands \u2014 tap to mute' : 'Muted \u2014 tap to turn sound back on';
