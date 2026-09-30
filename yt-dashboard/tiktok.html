@@ -65,6 +65,16 @@
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
+  #ttDrawer .dhead h3 { overflow-wrap:anywhere; }
+  /* on a phone the caption gets the width: Close stays top right, Open on TikTok goes under it */
+  @media (max-width:640px) {
+    #ttDrawer .dhead { display:grid; grid-template-columns:auto minmax(0, 1fr) auto;
+      grid-template-areas:"cover title close" "cover open open"; column-gap:12px; row-gap:10px; align-items:start; }
+    #ttDrawer .dhead #ttdCover { grid-area:cover; width:64px; }
+    #ttDrawer .dhead h3 { grid-area:title; min-width:0; }
+    #ttDrawer .dhead #ttdOpen { grid-area:open; justify-self:start; align-self:end; }
+    #ttDrawer .dhead #ttdClose { grid-area:close; }
+  }
   #tbody tr { cursor:pointer; }
   #tbody td.title a.ttopen { color:var(--muted); text-decoration:none; font-size:12px;
     padding:0 5px; border:1px solid var(--line); border-radius:6px; margin-left:6px;
@@ -165,6 +175,31 @@
   body[data-theme="cloud"] #tableCard.cc-peek-host { overflow:visible; }
   body[data-theme="cloud"] .today-post img { border-radius:10px; }
   @media (max-width:380px) { .today-tiles .tile .v { font-size:18px; } .today-tiles { gap:6px; } }
+  /* ---- a single post: the Recent posts card and the drawer ---- */
+  .ptag { color:var(--muted); font-weight:500; font-size:.86em; }
+  /* the pill leads the sentence and the sentence flows on around it, so a long reason
+     never becomes a narrow column beside it */
+  .post-verdict { margin:2px 0 12px; font-size:12.5px; line-height:1.8; color:var(--muted); }
+  .post-verdict .today-pill { font-size:12.5px; padding:3px 11px; margin-right:4px; line-height:1.45; vertical-align:1px; }
+  .today-tiles.post-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); margin:0 0 4px; }
+  .post-tiles .tile .v { font-size:22px; }
+  .post-tiles .tile .k { color:var(--muted); font-weight:600; }
+  .post-tiles .tile .c:first-of-type { color:var(--text); opacity:.86; }
+  @media (min-width:760px) { .today-tiles.post-tiles { grid-template-columns:repeat(4, minmax(0, 1fr)); } }
+  .post-chart { margin-top:14px; margin-bottom:0; }
+  .post-chart > h4 { margin-bottom:8px; }
+  /* on a wide screen the one chart stays chart-sized rather than filling a 1,400px card */
+  .post-chart svg.chart { max-width:820px; }
+  details.chart-how { margin-top:8px; border-top:0; }
+  details.chart-how > summary { color:var(--muted); font-weight:600; padding-top:4px; min-height:32px; }
+  details.chart-how .cc-more-body { padding-top:4px; }
+  details.post-more > summary { font-size:13px; }
+  details.post-more > .cc-more-body > .dsection:first-child, details.post-more > .cc-more-body > div:first-child > .dsection { margin-top:4px; }
+  body[data-theme="cloud"] .post-verdict .today-pill { border-radius:999px; }
+  /* the usual range as a cream cloud across the sky-blue chart, its key outlined on white */
+  body[data-theme="cloud"] { --uband:#fff0bf; --uband-op:.95; }
+  body[data-theme="cloud"] .post-chart .legend .lg-key.bar { opacity:1 !important; box-shadow:inset 0 0 0 1px #e2bf62; }
+  @media (max-width:380px) { .post-tiles .tile .v { font-size:19px; } }
   /* the question chips sit under Today so far now, a size smaller */
   #answerCard .achips { gap:5px; margin-bottom:10px; }
   #answerCard .achips button { font-size:11.5px; padding:6px 11px; }
@@ -621,6 +656,8 @@
   // for a caption inside an attribute: esc() leaves quotes alone, which is fine in text but
   // would end a title="…" early
   const escAttr = s => esc(s).replace(/"/g, '&quot;');
+  // a single post's caption in full, its hashtags set quieter than its words (nothing cut)
+  const capHtml = v => esc(capOf(v)).replace(TAG_RE, m => '<span class="ptag">' + m + '</span>');
   /* Average views per day since posting (total ÷ age) — a lifetime average, not today's
      speed. Null under a day old: 93 views in 3 hours is not '744 a day', and stretching it
      to one would be inventing the other 21 hours. */
@@ -858,13 +895,18 @@
            axisNum takes one argument and its niceScale returns no `step`.
        (c) xs goes into the registry, so the crosshair this renderer emits can actually be
            moved. index.html pushes no xs, so its .cline is dead markup. */
+  /* A series may instead be a BAND: { band: [[lo, hi] | null, …], color, opacity, name } —
+     a shaded range drawn under the lines, broken wherever a point is null, like a line. And
+     a line may carry `end`, a label written beside its last point. opts.legend replaces the
+     legend's order and names when given. */
   function multiLineHtml(series, tips, opts) {
     opts = opts || {};
     const g = { w: 620, h: 190, L: 66, R: 18, T: 16, B: 30 };
-    const maxLen = Math.max(2, ...series.map(s2 => s2.pts.length));
+    const valsOf = s2 => s2.band ? s2.band.flatMap(b => b || []) : s2.pts;
+    const maxLen = Math.max(2, ...series.map(s2 => (s2.band || s2.pts).length));
     // opts.yMax sets the top of the scale (a line above it is clipped at the plot's edge);
     // without it the tallest point decides
-    const sc = niceScale(0, opts.yMax > 0 ? opts.yMax : Math.max(1, ...series.flatMap(s2 => s2.pts).filter(v => v != null)), 4, opts.int);
+    const sc = niceScale(0, opts.yMax > 0 ? opts.yMax : Math.max(1, ...series.flatMap(valsOf).filter(v => v != null)), 4, opts.int);
     const Y = v => g.h - g.B - (v - sc.lo) / (sc.hi - sc.lo || 1) * (g.h - g.T - g.B);
     const X = i => g.L + i * (g.w - g.L - g.R) / (maxLen - 1);
     const base = g.h - g.B;
@@ -887,6 +929,20 @@
         '<text class="ax" x="' + (X(opts.nowAt) + 6).toFixed(1) + '" y="' + (g.T + 10) + '">now</text>' : '') +
       '<line class="cline" y1="' + g.T + '" y2="' + base + '" style="display:none"/>';
     for (const s2 of series) {
+      if (s2.band) {
+        // one closed shape per unbroken run: along the top edge, then back along the bottom
+        let d = '', run = [];
+        const flushRun = () => {
+          if (run.length > 1) d += 'M' + run.map(i => X(i).toFixed(1) + ',' + Y(s2.band[i][1]).toFixed(1)).join(' L') +
+            ' L' + run.slice().reverse().map(i => X(i).toFixed(1) + ',' + Y(s2.band[i][0]).toFixed(1)).join(' L') + ' Z';
+          run = [];
+        };
+        for (let i = 0; i < s2.band.length; i++) { if (s2.band[i]) run.push(i); else flushRun(); }
+        flushRun();
+        if (d) out += '<path class="uband" d="' + d + '"' + (clip ? ' clip-path="url(#' + clip + ')"' : '') +
+          ' style="fill:' + s2.color + ';opacity:' + (s2.opacity != null ? s2.opacity : .2) + ';stroke:none"/>';
+        continue;
+      }
       if (s2.pts.filter(v => v != null).length < 2) continue;
       let d = '', open = false, last = -1;
       for (let i = 0; i < s2.pts.length; i++) {
@@ -899,10 +955,15 @@
       out += '<path class="line" d="' + d + '"' + (clip ? ' clip-path="url(#' + clip + ')"' : '') + ' style="fill:none;stroke:' + s2.color + ';stroke-width:' + (s2.width || 1.5) + ';opacity:' + (s2.opacity != null ? s2.opacity : 1) + '"/>';
       // the focus series gets an end marker so it stays findable in the tangle
       if (s2.dot && last >= 0) out += '<circle cx="' + X(last).toFixed(1) + '" cy="' + Y(s2.pts[last]).toFixed(1) + '" r="4.5" style="fill:' + s2.color + ';stroke:var(--ink);stroke-width:2"/>';
+      if (s2.end && last >= 0) {
+        const ex = X(last), right = ex > g.L + (g.w - g.L - g.R) * .6;
+        out += '<text class="val" x="' + (right ? ex - 2 : ex + 8).toFixed(1) + '" y="' + Math.max(g.T + 12, Y(s2.pts[last]) - 11).toFixed(1) + '"' +
+          (right ? ' text-anchor="end"' : '') + '>' + esc(s2.end) + '</text>';
+      }
     }
     out += '</svg>';
-    const keys = series.filter(s2 => s2.name);
-    return out + (keys.length > 1 ? legendHtml(keys.map(s2 => ({ name: s2.name, color: s2.color, opacity: s2.opacity }))) : '');
+    const keys = opts.legend || series.filter(s2 => s2.name).map(s2 => ({ name: s2.name, color: s2.color, opacity: s2.opacity, bar: !!s2.band }));
+    return out + (keys.length > 1 ? legendHtml(keys) : '');
   }
 
   // Scatter — the one form here that plots two measures against each other rather
@@ -2520,6 +2581,15 @@
   });
 
   /* ---------- latest post + minute race ---------- */
+  /* The single-post folds keep their state. The card is rebuilt on every poll and the drawer
+     on every repaint, so a fold you had opened would snap shut within the minute; each one
+     carries a data-fold key, and is rebuilt open if it was open. */
+  const foldOpen = {};
+  document.addEventListener('toggle', e => {
+    const d = e.target;
+    if (d && d.matches && d.matches('details[data-fold]')) foldOpen[d.dataset.fold] = d.open;
+  }, true);
+  const foldAttr = k => ' data-fold="' + k + '"' + (foldOpen[k] ? ' open' : '');
   let slotIdx = 0;
   const SLOT_MAX = 10;               // matches the YouTube page's ◀ ▶ range
   const recent = () => videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0)).slice(0, SLOT_MAX);
@@ -2528,12 +2598,14 @@
     if (!slots.length) return;
     slotIdx = Math.max(0, Math.min(i, slots.length - 1));
     const v = slots[slotIdx];
-    $('latestTitle').textContent = capOf(v);
+    $('latestTitle').innerHTML = capHtml(v);
     const c = $('latestCover');
     if (v.cover_image_url) { c.src = v.cover_image_url; c.style.display = 'block'; } else c.style.display = 'none';
+    // views and likes are the tiles' own numbers now (Views, Like rate), so the line under
+    // the caption says when it went up and how long ago
     $('latestMetaLine').innerHTML = (slotIdx === 0 ? 'Latest post' : 'Earlier post') + ' · posted ' +
       esc(new Date(v.create_time * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) +
-      ' · <b style="color:var(--text)">' + fmt.format(v.view_count || 0) + ' views · ' + fmt.format(v.like_count || 0) + ' likes</b>';
+      ' · ' + esc(fmtAgo(v.create_time * 1000));
     $('latestPos').textContent = (slotIdx + 1) + ' / ' + slots.length;
     $('latestPrev').disabled = slotIdx >= slots.length - 1;
     $('latestNext').disabled = slotIdx <= 0;
@@ -2639,6 +2711,19 @@
   const TTC_STEP = 30;           // minutes between grid points, so 97 of them
   const TTC_MAX = 8;             // grey lines, matching the YouTube page
   const TTC_MIN_VOTES = 2;       // one surviving curve is an anecdote, not a typical launch
+  const TTC_BAND_MIN = 4;        // the usual range needs four finished launches at an age
+  /* The usual range at one age, from the same finished launches that vote on the gold line:
+     their values there, less the highest and the lowest quarter of them, rounded down — with
+     4 to 7 launches that is the top one and the bottom one, with 8 the top two and the bottom
+     two. So a line above the band beat most of your launches at that age, and one below it
+     trailed most of them. Each edge is a real launch's count, never an average of two, and
+     under TTC_BAND_MIN launches there is no band at that age at all. */
+  const ttcBand = vals => {
+    const s = vals.filter(x => x != null).sort((a, b) => a - b);
+    if (s.length < TTC_BAND_MIN) return null;
+    const k = Math.floor(s.length / 4);
+    return { lo: s[k], hi: s[s.length - 1 - k], n: s.length, k };
+  };
 
   /* pjAt, but honest at both ends.
 
@@ -2689,43 +2774,89 @@
       return vals.length >= TTC_MIN_VOTES ? pjMed(vals) : null;   // null, never 0 — a zero would draw
     });
     const fPts = focus ? grid.map(t => ttcAt(focus, t)) : grid.map(() => null);
+    const band = grid.map((t, i) => ttcBand(vPts.map(a => a[i])));
+    const hasBand = band.some(b => b);
     const ageM = Math.max(0, (Date.now() - v.create_time * 1000) / 60000);
     const tips = grid.map((t, i) =>
       fmtAge(t) + ' \u2014 \u2605 this post: ' + (fPts[i] == null ? '\u2014' : fmt.format(Math.round(fPts[i]))) +
-      ' \u00b7 your usual post: ' + (med[i] == null ? 'not enough tracked' : fmt.format(Math.round(med[i]))));
-    const series = [
-      ...oPts.map((a, i) => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .28, name: i === 0 ? 'Your other posts' : '' })),
-      { pts: med, color: 'var(--gold)', width: 1.5, name: 'Your usual post' },
-      ...(fPts.filter(x => x != null).length > 1 ? [{ pts: fPts, color: 'var(--live)', width: 2, dot: true, name: 'This post' }] : [])
-    ];
-    /* The scale follows this post and the typical line, with headroom — not the tallest grey
-       line, or one viral post flattens everything else to the floor. A grey line above it
-       is clipped at the top edge, and the note says how many. */
-    const peak = a => Math.max(0, ...a.filter(x => x != null));
+      ' \u00b7 your usual post: ' + (med[i] == null ? 'not enough tracked' : fmt.format(Math.round(med[i]))) +
+      (band[i] ? ' \u00b7 usual range ' + fmt.format(Math.round(band[i].lo)) + '\u2013' + fmt.format(Math.round(band[i].hi)) +
+        ' (the middle ' + (band[i].n - 2 * band[i].k) + ' of ' + band[i].n + ')' : ''));
     const hasFocus = fPts.filter(x => x != null).length > 1;
-    const top = Math.max(hasFocus ? peak(fPts) : 0, peak(med));
-    const yMax = med.some(x => x != null) && top > 0 ? top * 1.6 : 0;
+    // where this post's own line ends: at 48 hours, or where its tracking has got to
+    let fEnd = -1;
+    for (let i = fPts.length - 1; i >= 0; i--) if (fPts[i] != null) { fEnd = i; break; }
+    // labelled only once the 48 hours are done; while it is launching the "now" rule marks it
+    const endTxt = hasFocus && grid[fEnd] >= TTC_SPAN ? fmt.format(Math.round(fPts[fEnd])) + ' at 48h' : '';
+    const series = [
+      // the band first, so every line is drawn over it
+      // gold like the usual line, faint; a theme can set its own (Cinnamoroll's is cream)
+      ...(hasBand ? [{ band: band.map(b => b && [b.lo, b.hi]), color: 'var(--uband, var(--gold))', opacity: 'var(--uband-op, .2)', name: 'Your usual range' }] : []),
+      ...oPts.map((a, i) => ({ pts: a, color: 'var(--muted)', width: 1, opacity: .22, name: i === 0 ? 'Your other posts' : '' })),
+      { pts: med, color: 'var(--gold)', width: 1.8, name: 'Your usual post' },
+      ...(hasFocus ? [{ pts: fPts, color: 'var(--live)', width: 2.4, dot: true, name: 'This post', end: endTxt }] : [])
+    ];
+    // read in order of importance: this post, then what it is measured against
+    const legend = [
+      ...(hasFocus ? [{ name: 'This post', color: 'var(--live)' }] : []),
+      { name: 'Your usual post', color: 'var(--gold)' },
+      ...(hasBand ? [{ name: 'Your usual range', color: 'var(--uband, var(--gold))', opacity: .2, bar: true }] : []),
+      ...(oPts.length ? [{ name: 'Your other posts', color: 'var(--muted)', opacity: .22 }] : [])
+    ];
+    /* The scale follows this post, the typical line and the usual range, with headroom —
+       not the tallest grey line, or one viral post flattens everything else to the floor. A
+       grey line above it is clipped at the top edge, and the note says how many. The band
+       already leaves out the top quarter of launches, so it cannot be one viral post. */
+    const peak = a => Math.max(0, ...a.filter(x => x != null));
+    const top = Math.max(hasFocus ? peak(fPts) : 0, peak(med), peak(band.map(b => b && b.hi)));
+    const yMax = med.some(x => x != null) && top > 0 ? top * 1.1 : 0;
     const scTop = yMax ? niceScale(0, yMax, 4, true).hi : Infinity;
     const clipped = oPts.filter(a => peak(a) > scTop).length;
     const offTop = clipped ? '<p class="dnote" style="margin-top:6px">' + clipped + ' other post' + (clipped === 1 ? ' runs' : 's run') + ' off the top.</p>' : '';
+    // no gold line is the one thing that empties the chart, so it says why where it shows
     const thin = voters.length < TTC_MIN_VOTES
       ? '<p class="dnote" style="margin-top:6px">No gold line yet — it needs at least ' + TTC_MIN_VOTES +
         ' of your posts tracked without gaps through their first 48 hours, and this page has ' + voters.length +
         ' so far. It fills in by itself as you post.</p>'
-      : '<p class="dnote" style="margin-top:6px">The gold line stops where fewer than ' + TTC_MIN_VOTES +
-        ' of your posts were tracked that far. ' +
-        'A break in a line is a gap in tracking, not a pause in views.</p>';
-    holder.innerHTML = '<div class="dsection"><h4>First 48 hours \u2014 this post vs your others</h4>' +
+      : '';
+    // the band's own rule, with the numbers it is resting on here
+    const most = band.reduce((b, x) => (x && (!b || x.n > b.n) ? x : b), null);
+    const bandTxt = hasBand
+      ? 'The shaded band is your usual range: where your finished launches were at each age, leaving out the highest and lowest quarter of them' +
+        ' (of these ' + most.n + ', the top ' + most.k + ' and the bottom ' + most.k + '). Above it is a better start than most of your posts had; below it, a slower one.'
+      : voters.length >= TTC_MIN_VOTES
+        ? 'A shaded band of your usual range appears once ' + TTC_BAND_MIN + ' of these posts are tracked without gaps through their first 48 hours — ' + voters.length + ' so far.'
+        : '';
+    const how = mount ? 'drawer-how' : 'card-how';
+    holder.innerHTML = '<div class="dsection post-chart"><h4>First 48 hours vs your usual</h4>' +
+      multiLineHtml(series, tips, { label: 'First 48 hours: this post against your usual post and your usual range', x0: 'posted', xMid: '24h', x1: '48h', int: true, yMax,
+        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null, legend }) + offTop + thin +
+      // said where it shows, as well as in the fold: otherwise the chart looks as if this post is missing from it
+      (hasFocus ? '' : '<p class="dnote" style="margin-top:6px">' + (videos.filter(x => (x.create_time || 0) > (v.create_time || 0)).length >= 20
+        ? 'This page keeps the first 48 hours of your 20 newest posts, so this one\u2019s own line isn\u2019t drawn \u2014 only your usual.'
+        : 'This post\u2019s own first 48 hours aren\u2019t loaded here, so only your usual is drawn.') + '</p>') +
+      '<details class="cc-more chart-how"' + foldAttr(how) + '><summary><span aria-hidden="true">\u24d8</span> How to read this</summary><div class="cc-more-body">' +
       '<p class="explain">Grey lines are up to ' + TTC_MAX + ' of your newest other posts, each lined up from when it went up. Gold is your usual post (the middle of those tracked without gaps)' +
       (hasFocus ? '; the bright line is this post — above gold means a better start than usual.' : ' — this post\u2019s own first 48 hours aren\u2019t loaded here.') + '</p>' +
-      multiLineHtml(series, tips, { label: 'First 48 hours', x0: 'posted', xMid: '24h', x1: '48h', int: true, yMax,
-        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null }) + offTop + thin + '</div>';
+      (bandTxt ? '<p class="explain">' + bandTxt + '</p>' : '') +
+      (voters.length >= TTC_MIN_VOTES ? '<p class="dnote">The gold line stops where fewer than ' + TTC_MIN_VOTES +
+        ' of your posts were tracked that far. A break in a line is a gap in tracking, not a pause in views.</p>' : '') +
+      '</div></details></div>';
   }
 
+  /* A single post, on this card and in the drawer alike: a verdict, four numbers that each
+     say what they are compared with, and one chart — its first 48 hours against your usual.
+     Everything else the card showed before (the estimate, the eight numbers, the live race,
+     the minute chart, the report card and the hourly record) is under "More numbers and
+     charts", one tap away: nothing was removed. */
   function renderLatest(v) {
-    // filled by renderProjection() once the card is in the DOM — it is the first thing
-    // on the card because "where is this heading" is the question the card exists to answer
-    let html = '<div id="pjWrap"></div>';
+    let html = ttPostTopHtml(v);
+    // the one chart on show, filled by ttLaunchCurves() once the card is in the DOM
+    html += '<div id="ttLaunchWrap"></div>';
+    html += '<details class="cc-more post-more"' + foldAttr('card-more') + '><summary>More numbers and charts</summary><div class="cc-more-body">';
+    // filled by renderProjection() once the card is in the DOM — "where is this heading"
+    // leads the fold, as it used to lead the card
+    html += '<div id="pjWrap"></div>';
     html += ttMetricGridHtml(v);
     /* Same-age race. A runtime id like pjWrap and lifeSection rather than static markup:
        showSlot rebuilds this whole card on every poll, so there is nothing to mount into.
@@ -2739,13 +2870,13 @@
       '<button class="ghost' + (ttRaceMode === 'latest' ? ' active' : '') + '" data-ttrace="latest">Newest 10</button>' +
       '<button class="ghost' + (ttRaceMode === 'best' ? ' active' : '') + '" data-ttrace="best">Top 10 at this age</button>' +
       '</div>' +
-      '<div id="ttRaceContent"><p class="dnote">loading\u2026</p></div></div>' +
-      '<div id="ttLaunchWrap"></div>';
+      '<div id="ttRaceContent"><p class="dnote">loading\u2026</p></div></div>';
     html += ttMinuteChartHtml(v);
     html += ttReportCardHtml(v);
     $('latestContent').innerHTML = html +
       '<div class="dsection" id="lifeSection" data-life="section" style="display:none">' +
-      '<h4>Every hour since it went up</h4><p class="explain" data-life="explain"></p><div data-life="chart"></div></div>';
+      '<h4>Every hour since it went up</h4><p class="explain" data-life="explain"></p><div data-life="chart"></div></div>' +
+      '</div></details>';
     renderProjection(v);
     renderTtRace(v);
     ttLaunchCurves(v);
@@ -2931,15 +3062,17 @@
     ttdId = id; ttdVid = v;
     ttdLastFocus = document.activeElement;
     const dr = $('ttDrawer');
-    $('ttdTitle').textContent = capOf(v);
+    // a post opened afresh starts at its summary, with its folds closed
+    foldOpen['drawer-more'] = false; foldOpen['drawer-how'] = false;
+    $('ttdTitle').innerHTML = capHtml(v);
     const c = $('ttdCover');
     if (v.cover_image_url) { c.src = v.cover_image_url; c.style.display = 'block'; } else c.style.display = 'none';
     const a = $('ttdOpen');
     if (v.share_url) { a.href = v.share_url; a.style.display = ''; } else a.style.display = 'none';
+    // the views are the first tile's number now
     $('ttdMeta').innerHTML = 'Posted ' +
       esc(new Date(v.create_time * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })) +
-      ' \u00b7 ' + esc(fmtAgo(v.create_time * 1000)) + ' \u00b7 <b style="color:var(--text)">' +
-      fmt.format(v.view_count || 0) + ' views</b>';
+      ' \u00b7 ' + esc(fmtAgo(v.create_time * 1000));
     dr.style.display = 'block';
     dr.scrollTop = 0;
     // grow it out of whatever was tapped, so you keep track of where you came from
@@ -2971,7 +3104,11 @@
   function ttdFill() {
     const v = ttdVid, body = $('ttdBody');
     if (!v || !body) return;
+    // the Recent posts card's layout: verdict, four numbers, one chart, then the fold
     body.innerHTML =
+      ttPostTopHtml(v) +
+      '<div data-ttd="launch"></div>' +
+      '<details class="cc-more post-more"' + foldAttr('drawer-more') + '><summary>More numbers and charts</summary><div class="cc-more-body">' +
       '<div data-ttd="pj"></div>' +
       ttMetricGridHtml(v) +
       ttdHashtagsHtml(v) +
@@ -2981,11 +3118,11 @@
       '<button class="ghost' + (ttRaceMode === 'latest' ? ' active' : '') + '" data-ttrace="latest">Newest 10</button>' +
       '<button class="ghost' + (ttRaceMode === 'best' ? ' active' : '') + '" data-ttrace="best">Top 10 at this age</button>' +
       '</div><div data-ttd="race"><p class="dnote">loading\u2026</p></div></div>' +
-      '<div data-ttd="launch"></div>' +
       ttMinuteChartHtml(v) +
       ttReportCardHtml(v) +
       '<div class="dsection" data-life="section" style="display:none"><h4>Every hour since it went up</h4>' +
-      '<p class="explain" data-life="explain"></p><div data-life="chart"></div></div>';
+      '<p class="explain" data-life="explain"></p><div data-life="chart"></div></div>' +
+      '</div></details>';
     renderProjection(v, body.querySelector('[data-ttd="pj"]'));
     renderTtRace(v, body.querySelector('[data-ttd="race"]'));
     ttLaunchCurves(v, body.querySelector('[data-ttd="launch"]'));
@@ -3183,6 +3320,103 @@
           : thinEng ? '<div class="gbar"><span class="gl">Like rate</span><span class="gv">too few views to judge yet</span></div>' : '') +
         '</div></div></div></div>';
     }
+    return html;
+  }
+
+  /* The top of a single post — the Recent posts card and the drawer share it: the verdict,
+     then four numbers, each saying what it is compared with.
+
+       · Views against your usual post: the middle of your other posts' reach figures (scoreOf
+         — total views once a post is 2 days old, its estimated first-48-hour total before),
+         the figure the report card ranks and the hashtags compare with. Only from 4 others.
+         A post under 2 days old is not compared with finished totals: it says where it is
+         heading if that can be estimated, or its views and hours so far if not.
+       · Like rate against the ONE typical like rate, from 200 views, with the report card's
+         own bands (over 115% above, under 85% below). The likes count rides underneath.
+       · Views today: the calendar day, by the Today card's rules (ttPostToday).
+       · Shares, and how many views there were for each one — views, not viewers: one person
+         can watch twice. */
+  function ttPostTopHtml(v) {
+    const now = Date.now();
+    const views = v.view_count || 0, likes = v.like_count || 0, shares = v.share_count || 0;
+    const ageM = Math.max(0, (now - (v.create_time || 0) * 1000) / 60000);
+    // "8 am" never breaks between its number and its am
+    const nb = x => String(x).replace(/(\d) (am|pm)\b/g, '$1\u00a0$2');
+    const tile = (val, cls, k, c1, c2) => '<div class="tile"><div class="v' + (cls ? ' ' + cls : '') + '">' + val + '</div><div class="k">' + k + '</div>' +
+      (c1 ? '<div class="c">' + nb(esc(c1)) + '</div>' : '') + (c2 ? '<div class="c">' + nb(esc(c2)) + '</div>' : '') + '</div>';
+
+    // the verdict: the report card's grade, or why there is none yet
+    const vd = ttVerdictOf(v);
+    let why = vd.why;
+    if (vd.start != null) {
+      const later = localMidnight(vd.start) !== localMidnight(now) ? ' tomorrow' : '';
+      why = 'It can get a grade from ' + clockTxt(vd.start) + later + ' (' + Math.round(PJ_MIN_AGE / 60) +
+        ' hours old), once its first 48 hours can be estimated.';
+    }
+    let html = '<p class="post-verdict"><span class="today-pill' + (vd.pc ? ' ' + vd.pc : '') + (vd.win ? ' cc-win' : '') + '">' +
+      (vd.win ? '\u2605 ' : '') + esc(vd.pill) + '</span> ' + nb(esc(why)) + '</p>';
+
+    // Views, against your usual post
+    const mine = scoreOf(v);
+    const pool = videos.filter(x => x.id !== v.id).map(scoreOf).filter(x => x != null);
+    const usual = pool.length >= 4 ? pjMed(pool) : null;
+    const uTxt = usual != null ? fmt.format(Math.round(usual)) : '';
+    let vc1 = '', vc2 = '';
+    if (ageM >= PJ_HORIZON) {
+      if (usual > 0 && views > 0) {
+        const r = views / usual;
+        vc1 = r >= 2 ? (r < 10 ? String(Math.round(r * 10) / 10) : fmt.format(Math.round(r))) + '× your usual post'
+          : Math.round(r * 100) + '% of your usual post';
+        vc2 = 'your usual: ' + uTxt + ' views';
+      } else vc1 = usual > 0 ? 'your usual post: ' + uTxt : 'too few posts to compare with yet';
+    } else if (mine != null) {
+      vc1 = 'heading for ~' + fmt.format(Math.round(mine)) + ' by 48 hours';
+      if (usual > 0) vc2 = 'your usual post: ' + uTxt;
+    } else {
+      vc1 = 'in its first ' + fmtAge(ageM).replace(/ 0m$/, '');
+      const perH = ageM >= 60 ? views / (ageM / 60) : 0;
+      if (perH >= 1) vc2 = 'averaging ' + fmt.format(Math.round(perH)) + ' an hour';
+    }
+
+    // Like rate, against your usual like rate
+    const medEng = typicalLikeRate(v.id);
+    const likesTxt = fmt.format(likes) + (likes === 1 ? ' like' : ' likes');
+    let lv, lcls = '', lc1;
+    if (views >= 200) {
+      lv = engOf(v).toFixed(1) + '%';
+      if (medEng > 0) {
+        const idx = Math.round(engOf(v) / medEng * 100);
+        lc1 = (idx > 115 ? 'above' : idx < 85 ? 'below' : 'close to') + ' your usual ' + medEng.toFixed(1) + '%';
+      } else lc1 = 'nothing to compare with yet';
+    } else { lv = '\u2014'; lcls = 'none'; lc1 = views > 0 ? 'needs 200 views to judge' : 'no views yet'; }
+
+    // Views today, by the calendar
+    const td = ttPostToday(v);
+    let tv = '\u2014', tcls = 'none', tc1 = '', tc2 = '';
+    if (td.state === 'new') {
+      tv = '+' + fmt.format(td.gain); tcls = td.gain > 0 ? 'up' : '';
+      tc1 = 'it went up today at ' + clockTxt(td.t0);
+    } else if (td.state === 'ok') {
+      tv = '+' + fmt.format(td.gain); tcls = td.gain > 0 ? 'up' : '';
+      tc1 = td.partial ? 'part of today wasn’t recorded' : 'since midnight' + (now - td.last > 20 * 60e3 ? ', to ' + clockTxt(td.last) : '');
+      if (td.today != null) tc2 = (clockTxt(td.tB) === clockTxt(td.yB) ? 'yesterday by ' + clockTxt(td.yB) : 'yesterday’s first ' + td.n + ' hours') + ': ' + fmt.format(td.yday);
+      else if (td.cmpWhy === 'early') tc2 = 'compared with yesterday from 1 am';
+      else if (td.cmpWhy === 'posted') tc2 = 'it went up yesterday at ' + clockTxt(td.t0);
+      else if (td.cmpWhy === 'yesterday') tc2 = 'yesterday wasn’t fully tracked';
+    } else if (td.state === 'stale') tc1 = 'no reading since midnight yet';
+    else tc1 = videos.filter(x => (x.create_time || 0) > (v.create_time || 0)).length >= 20
+      ? 'counted for your 20 newest posts only' : 'no readings of it yet';
+
+    // Shares — per view, never "per viewer"
+    const per = shares > 0 ? views / shares : 0;
+    const sc1 = shares === 0 ? 'none yet' : per >= 2 ? '1 for every ' + fmt.format(Math.round(per)) + ' views' : '';
+
+    html += '<div class="today-tiles post-tiles">' +
+      tile(fmt.format(views), '', 'views', vc1, vc2) +
+      tile(lv, lcls, 'like rate', lc1, likesTxt) +
+      tile(tv, tcls, 'views today', tc1, tc2) +
+      tile(fmt.format(shares), '', shares === 1 ? 'share' : 'shares', sc1, '') +
+      '</div>';
     return html;
   }
 
@@ -3709,7 +3943,9 @@
      Each gain is filed under the hour just before its reading (arr[i][0] − 1), because a
      reading taken at 3:00 carries the views that came in before 3:00. */
   const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's hourly tier
-  function ttGainBuckets(from) {
+  // `onlyId`: one post's hours and holes, by exactly the same rules (the post card's "views
+  // today" tile reads it, so a post's figure is its own share of the Today card's)
+  function ttGainBuckets(from, onlyId) {
     const vids = (hist && hist.videos) || {};
     const now = Date.now();
     const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
@@ -3717,6 +3953,7 @@
     const holes = [];              // [from, to] of each hole a gain crossed, for hour-level checks
     let total = 0;
     for (const [id, rec] of Object.entries(vids)) {
+      if (onlyId != null && id !== onlyId) continue;
       const arr = (rec && rec.s) || [];
       if (!arr.length) continue;
       // the high-water mark as it stood at `from`, so the same reading gains the same
@@ -4392,6 +4629,75 @@
     return w;
   }
 
+  /* A post's verdict: the report card's own grade (ttGradeOf), said as a pill and a line.
+     The Today card's newest-post row and every single post — the Recent posts card and the
+     drawer — read it from here, so a pill can never show a grade the report card would not
+     give. `start` is when a post too young to estimate can first be graded (5 hours old);
+     `win` is a genuine record: ahead of every other post on real counts, not an estimate. */
+  function ttVerdictOf(v) {
+    const g = ttGradeOf(v), views = v.view_count || 0;
+    const r = { g, pill: 'Not graded yet', pc: 'mute', why: '', start: null, win: false };
+    if (!g) { r.why = 'Grades start once you have 4 posts to compare.'; return r; }
+    if (g.waiting) {
+      // an old post with no views counted is not early, just ungraded
+      r.pill = !(views > 0) && g.ageM >= PJ_HORIZON ? 'Not graded yet' : 'Too early';
+      if (views > 0 && g.ageM < PJ_MIN_AGE) r.start = (v.create_time || 0) * 1000 + PJ_MIN_AGE * 60e3;
+      r.why = !(views > 0) ? 'It gets a grade once it has views counted.'
+        : g.ageM < PJ_MIN_AGE ? 'It gets a grade at ' + Math.round(PJ_MIN_AGE / 60) + ' hours old (about ' + pjDur(PJ_MIN_AGE - g.ageM) + ' to go).'
+        : 'It gets a grade once its first 48 hours can be estimated.';
+      return r;
+    }
+    if (g.grade === '—') {
+      r.why = g.thinEng ? 'A reach grade needs at least 4 other posts to compare with, and a like rate needs 200 views to judge.'
+        : 'A reach grade needs at least 4 other posts to compare with.';
+      return r;
+    }
+    r.pill = 'Grade ' + g.grade;
+    r.pc = g.grade[0] === 'A' ? 'up' : g.grade[0] === 'B' ? '' : g.grade[0] === 'C' ? 'warn' : 'down';
+    r.why = g.rank
+      ? (g.beats === 100 ? 'Beats all ' + g.rank.n + ' of your other posts on reach' : 'Beats ' + g.beats + '% of your ' + g.rank.n + ' other posts on reach') +
+        (g.ageM < PJ_HORIZON ? ', going by its estimated first 48 hours.' : '.')
+      : 'Beats ' + g.engBeats + '% of your other posts on like rate. A reach grade needs at least 4 other posts to compare with.';
+    // an estimate that beats everything is not a record yet; real counts that do, are
+    r.win = g.beats === 100 && (g.rank ? g.ageM >= PJ_HORIZON : true);
+    return r;
+  }
+
+  /* One post's views today, by the Today card's own rules: the calendar day on this
+     device's clock, from the counts the tracker recorded, filed hour by hour by
+     ttGainBuckets (a rise across a hole in the recording goes into no hour). A post that
+     went up after midnight has had every one of its views today, so its live count is the
+     answer. "Yesterday by this time" is the same whole hours of each day for this post, up
+     to its own newest reading, and abstains before 1 am, on a hole in either day, when the
+     post was not up (or not recorded) from yesterday's midnight, or on a short day. */
+  function ttPostToday(v) {
+    const now = Date.now(), H = 3600e3;
+    const tMid = localMidnight(now), yMid = localMidnight(now, 1);
+    const t0 = (v.create_time || 0) * 1000;
+    if (t0 >= tMid) return { state: 'new', gain: v.view_count || 0, t0 };
+    const rec = hist && hist.videos && hist.videos[v.id];
+    const s = (rec && rec.s) || [];
+    if (!s.length) return { state: 'none' };
+    const last = s[s.length - 1][0];
+    if (last <= tMid) return { state: 'stale', last };
+    const g = ttGainBuckets(now - 16 * 864e5, v.id);
+    const sum = (a, b) => { let x = 0; for (const [at, b2] of g.hours) if (at >= a && at < b) x += b2.gain; return x; };
+    const hole = (a, b) => g.holes.some(([p, q]) => p < b && q > a);
+    // no reading at or before midnight, or a hole since: some of today's views were not seen
+    const out = { state: 'ok', last, t0, gain: sum(tMid, Infinity), partial: s[0][0] > tMid || hole(tMid, now + 1) };
+    const n = Math.floor((Math.min(now, last) - tMid) / H);
+    if (now - tMid < H) out.cmpWhy = 'early';
+    else if (n < 1) out.cmpWhy = 'stale';
+    else if (t0 > yMid) out.cmpWhy = 'posted';
+    else {
+      const tB = tMid + n * H, yB = yMid + n * H;
+      if (yB > tMid || s[0][0] > yMid || hole(yMid, yB)) out.cmpWhy = 'yesterday';
+      else if (s[0][0] > tMid || hole(tMid, tB)) out.cmpWhy = 'today';
+      else { out.n = n; out.tB = tB; out.yB = yB; out.today = sum(tMid, tB); out.yday = sum(yMid, yB); }
+    }
+    return out;
+  }
+
   function renderToday() {
     const card = $('todayCard'), main = $('todayMain'), more = $('todayMoreBody');
     if (!card || !main || !more || !videos.length) return;
@@ -4428,25 +4734,8 @@
       const views = nv.view_count || 0, ageH = (m.now - (nv.create_time || 0) * 1000) / 3600e3;
       const raw = capOf(nv), bare = raw.replace(/#[\p{L}\p{N}_]+/gu, ' ').replace(/\s+/g, ' ').trim();
       const cap = bare && /[\p{L}\p{N}]/u.test(bare) ? shortCap(bare, 60, 'Your newest post') : shortCap(raw, 60, 'Your newest post');
-      const g = ttGradeOf(nv);
-      let pill, pc, why;
-      if (!g) { pill = 'Not graded yet'; pc = 'mute'; why = 'Grades start once you have 4 posts to compare.'; }
-      else if (g.waiting) {
-        pill = 'Too early'; pc = 'mute';
-        why = !(views > 0) ? 'It gets a grade once it has views counted.'
-          : g.ageM < PJ_MIN_AGE ? 'It gets a grade at ' + Math.round(PJ_MIN_AGE / 60) + ' hours old (about ' + pjDur(PJ_MIN_AGE - g.ageM) + ' to go).'
-          : 'It gets a grade once its first 48 hours can be estimated.';
-      } else if (g.grade === '—') {
-        pill = 'Not graded yet'; pc = 'mute';
-        why = g.thinEng ? 'A reach grade needs at least 4 other posts to compare with, and a like rate needs 200 views to judge.'
-          : 'A reach grade needs at least 4 other posts to compare with.';
-      } else {
-        pill = 'Grade ' + g.grade; pc = g.grade[0] === 'A' ? 'up' : g.grade[0] === 'B' ? '' : g.grade[0] === 'C' ? 'warn' : 'down';
-        why = g.rank
-          ? (g.beats === 100 ? 'Beats all ' + g.rank.n + ' of your other posts on reach' : 'Beats ' + g.beats + '% of your ' + g.rank.n + ' other posts on reach') +
-            (g.ageM < PJ_HORIZON ? ', going by its estimated first 48 hours.' : '.')
-          : 'Beats ' + g.engBeats + '% of your other posts on like rate. A reach grade needs at least 4 other posts to compare with.';
-      }
+      // the report card's grade, worded once for here and for every single post (ttVerdictOf)
+      const { pill, pc, why } = ttVerdictOf(nv);
       const rate = ageH >= 1 && ageH < 24 ? views / ageH : ageH >= 24 ? paceOf(nv) : null;
       const pace = rate != null && rate >= 1 ? 'Averaging ' + fmt.format(Math.round(rate)) + ' views ' + (ageH < 24 ? 'an hour' : 'a day') + ' since it went up. ' : '';
       html += '<div class="today-sec"><div class="today-msh"><span class="today-lbl">Newest post</span>' +

@@ -47,7 +47,7 @@ const mk = () => new Function('NOW', `
   ${fn('function dropEarlyLaunchPts(arr)')}
   ${fn('function mergeHist(b)')}
   ${(TT.match(/  const TT_GAP = [^\n]*\n/) || [''])[0]}
-  ${fn('function ttGainBuckets(from)')}
+  ${fn('function ttGainBuckets(from, onlyId)')}
   return {
     get hist() { return hist; }, set hist(h) { hist = h; },
     mergeHist, dropEarlyLaunchPts,
@@ -378,7 +378,7 @@ console.log('\nrecorded days — coverage');
 {
   const R = hist => new Function('hist', `
     ${(TT.match(/  const TT_GAP = [^\n]*\n/) || [''])[0]}
-    ${fn('function ttGainBuckets(from)')}
+    ${fn('function ttGainBuckets(from, onlyId)')}
     ${fn('function recDayGains(days)')}
     return recDayGains(16);`)(hist);
   const now = Date.now();

@@ -19,6 +19,8 @@
  *   • When a live total goes up on a poll, a brief green glow and a "▲ +N" chip — N is the
  *     page's own delta text, copied, never a number worked out here. Anything a page marks
  *     .cc-win (a genuine record) gets a sparkle the first time it is shown.
+ *   • Opening a fold (<details class="cc-more">) draws and counts what it reveals; a chart in
+ *     a closed fold is simply drawn, never left invisible.
  *   • Two notifications for other decoration to follow (stickers.js): 'cc:increase' when a
  *     ▲ chip shows and 'cc:drawn' when a chart has finished drawing in.
  *
@@ -156,7 +158,17 @@
       }
       return ck + '|' + list.indexOf(el);
     }
-    const shown = el => el.isConnected && el.getClientRects().length > 0;
+    /* Inside a closed <details> is not shown. Chrome keeps a closed fold's contents laid out
+       (content-visibility), so they still report boxes — and a chart armed there would sit
+       paused on its first frame, invisible, waiting for a scroll that can never see it. Left
+       still, it is simply drawn; opening the fold draws it in (see 'toggle' below). */
+    const inClosedFold = el => {
+      for (let d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
+        if (!d.open) { const sm = d.querySelector(':scope > summary'); if (!(sm && sm.contains(el))) return true; }
+      }
+      return false;
+    };
+    const shown = el => el.isConnected && el.getClientRects().length > 0 && !inClosedFold(el);
     const vh = () => win.innerHeight || doc.documentElement.clientHeight || 800;
     // Under automation (a screenshot harness) nothing waits to be scrolled to, so a
     // full-page capture shows finished charts rather than ones frozen at their first frame.
@@ -468,6 +480,9 @@
        lengths, positions) all come before writes (classes, text), so a repaint costs one
        layout rather than one per chart. */
     let queue = [], queued = false, booting = true;
+    // folds (<details class="cc-more">) you opened, waiting for the next flush to draw inside
+    const foldScans = [];
+    let foldPress = null;
     const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(guard(flush)); } };
     const mo = new MutationObserver(guard(recs => {
       if (queue.length > 6000) queue = queue.slice(-3000);
@@ -509,6 +524,8 @@
         booting = false;
         scan(body, false, 80);   // whatever the page drew before this file ran is a first sighting
       }
+      // a fold you just opened: what it reveals is seen for the first time, so it draws and counts
+      if (foldScans.length) foldScans.splice(0).forEach(d => { if (d.isConnected && d.open) scan(d, true, 60); });
 
       // 1. attribute changes carry the resets: a room opening, the drawer, the party, One page
       for (const r of recs) {
@@ -635,6 +652,10 @@
       const ctl = tg.closest(CTL_SEL);
       if (!ctl) return;
       if (e.type === 'keydown' && /^(?:Arrow|Page|Home$|End$| $|Spacebar$)/.test(e.key) && tg !== ctl) return;
+      // a fold's own summary: the toggle below draws what it reveals, and a press reset over
+      // the whole card would let the next poll replay everything else in it
+      const fold = ctl.matches('summary') && ctl.parentElement && ctl.parentElement.matches('details.cc-more') ? ctl.parentElement : null;
+      if (fold) { foldPress = { el: fold, t: now() }; return; }
       // long enough for a press that fetches (a date range, another upload) to come back;
       // a key only replays once per reset, so a poll inside the window finds it seen
       const drawer = tg.closest('.drawer');
@@ -645,6 +666,25 @@
     doc.addEventListener('click', poke, true);
     doc.addEventListener('keydown', poke, true);
     doc.addEventListener('change', poke, true);
+
+    /* ---------------- a fold you opened: draw what it reveals ----------------
+       A chart inside a closed <details class="cc-more"> has no box, so the flush that put it
+       there could only leave it still — fully drawn, never invisible, just not animated. When
+       you open the fold, everything inside is a first sighting: it draws and counts now. Only
+       a fold YOU opened (its summary pressed a moment ago): the pages rebuild cards with a
+       fold already open on every poll, 'toggle' fires for those too, and they must stay still.
+       'toggle' does not bubble, so this listens in the capture phase. */
+    doc.addEventListener('toggle', guard(e => {
+      const d = e.target;
+      if (!d || d.nodeType !== 1 || !d.matches || !d.matches('details.cc-more')) return;
+      const p = foldPress;
+      if (!p || p.el !== d || now() - p.t > 1500) return;
+      foldPress = null;
+      if (!d.open) return;
+      reset(d, 1500);
+      foldScans.push(d);
+      schedule();
+    }), true);
 
     /* ---------------- reduced motion switched on mid-visit: stand everything down ---------------- */
     if (mq) {

@@ -55,7 +55,18 @@ data/             recorded history, committed by the robots
   under the away card, its old heading kept as the caption under the bars
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
-  the newest upload, so nine slots out of ten showed nothing where a chart belongs
+  the newest upload, so nine slots out of ten showed nothing where a chart belongs.
+  On TikTok the card and the per-post drawer open on a **summary**: a verdict pill (the
+  report card's own grade, or "Too early" with the clock time a grade can start), four
+  numbers that each say what they are compared with — **views** against your usual post
+  (9.9×, or 43% of it; a launching post says where it is heading instead), **like rate**
+  against your usual rate from 200 views, **views today** since local midnight against
+  yesterday by the same hour (the Today card's own rules), and **shares** as "1 for every N
+  views" — and one chart, **First 48 hours vs your usual**, with your usual range shaded
+  (your finished launches less the highest and lowest quarter, from 4 of them). Everything
+  else the card showed — the estimate, the eight numbers, the race, the minute chart, the
+  report card, the hourly record — is under **More numbers and charts**, one tap away; an
+  open fold survives the next refresh, and opening one draws its charts in
 - **Minute-by-minute launch tracking** — recorded by the Worker even when nobody
   has the site open, because the platforms don't provide it
 - **Plateau projection** — "where is this one heading?", on the latest-upload card.

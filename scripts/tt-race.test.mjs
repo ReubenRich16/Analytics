@@ -349,12 +349,17 @@ console.log('\nwired onto the card');
   check('the overlay mounts into a runtime id', /id="ttLaunchWrap"/.test(TT));
   check('it is drawn after the card is in the DOM',
     TT.indexOf('ttLaunchCurves(v);') > TT.indexOf("$('latestContent').innerHTML = html"));
-  // the heading, not the phrase — the phrase also appears in a comment far earlier
-  const ownCurve = TT.indexOf('<h4>Views since it went live');
-  check('it sits between the race and this post\'s own curve',
-    TT.indexOf('id="ttRaceContent"') < TT.indexOf('id="ttLaunchWrap"') &&
-    TT.indexOf('id="ttLaunchWrap"') < ownCurve,
-    [TT.indexOf('id="ttRaceContent"'), TT.indexOf('id="ttLaunchWrap"'), ownCurve].join(' < '));
+  /* The redesign made it the card's ONE chart on show ("First 48 hours vs your usual"),
+     above the "More numbers and charts" fold; the race and this post's own minute curve moved
+     into that fold, in their old order. */
+  const rl = TT.slice(TT.indexOf('  function renderLatest(v) {'), TT.indexOf('\n  }\n', TT.indexOf('  function renderLatest(v) {')));
+  const foldAt = rl.indexOf('<details class="cc-more post-more"');
+  check('it is the chart on show, above the fold',
+    rl.indexOf('id="ttLaunchWrap"') > 0 && foldAt > rl.indexOf('id="ttLaunchWrap"'),
+    [rl.indexOf('id="ttLaunchWrap"'), foldAt].join(' < '));
+  check('and the race, then this post\'s own curve, sit inside the fold',
+    foldAt < rl.indexOf('id="ttRaceContent"') && rl.indexOf('id="ttRaceContent"') < rl.indexOf('html += ttMinuteChartHtml(v);'),
+    [foldAt, rl.indexOf('id="ttRaceContent"'), rl.indexOf('html += ttMinuteChartHtml(v);')].join(' < '));
   check('a late launch merge repaints it too', /if \(ttRaceCur\) \{ renderTtRace\(\); ttLaunchCurves\(\); \}/.test(TT));
   check('it costs no new request — no fetch appears in the builder',
     !/api\(|fetch\(/.test(TT.slice(TT.indexOf('function ttLaunchCurves'), TT.indexOf('\n  }\n', TT.indexOf('function ttLaunchCurves')))),
