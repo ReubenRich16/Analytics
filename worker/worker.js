@@ -1129,6 +1129,16 @@ const TT_API   = 'https://open.tiktokapis.com/v2/';
 const TT_SCOPES = 'user.info.basic,user.info.profile,user.info.stats,video.list';
 const TT_VIDEO_FIELDS = 'id,title,video_description,duration,cover_image_url,share_url,create_time,like_count,comment_count,share_count,view_count';
 const TT_USER_FIELDS = 'open_id,avatar_url,display_name,username,profile_deep_link,follower_count,following_count,likes_count,video_count';
+/* The owner's own time zone. The page's "Today so far" measures followers and likes from
+   the snapshot that marks the start of her day, so besides the ~3h cadence the sampler
+   also takes one on the first tick after LOCAL midnight here (the 5-minute scan boundary,
+   so within about five minutes of it). Calendar days come from Intl, never from adding
+   24 hours, so the 23- and 25-hour days either side of daylight saving land right. */
+const TT_TZ = 'Australia/Melbourne';
+const TT_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: TT_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+const ttLocalDay = t => TT_DAY_FMT.format(new Date(t));
+// due: the regular ~3h snapshot, or the first one of a new local calendar day
+const ttFollowerDue = (now, lastAt) => !lastAt || now - lastAt > 3 * 3600e3 || ttLocalDay(now) !== ttLocalDay(lastAt);
 
 const rand = n => { const a = new Uint8Array(n || 24); crypto.getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, '0')).join(''); };
 /* Where the sign-in flow is allowed to send the browser back to.
@@ -1518,7 +1528,9 @@ async function ttTick(env) {
     // 5-minute boundary (clock-derived, so quiet minutes need no KV write)
     if (!hot.length && new Date(now).getUTCMinutes() % SCAN_MIN !== 0) continue;
     // Follower history, for the milestone projection. TikTok exposes no history of its own,
-    // so we sample every ~3h — 8 writes a day per account, negligible against the KV budget.
+    // so we sample every ~3h — 8 writes a day per account, negligible against the KV budget —
+    // plus one on the first tick after local midnight (TT_TZ), which the page's "Today so
+    // far" measures followers and likes from.
     try {
       // A read that throws is not an empty history. Treating it as one appended a single
       // snapshot to [] and wrote that back, wiping up to 400 days of follower history for
@@ -1526,7 +1538,7 @@ async function ttTick(env) {
       let fh = [], fhFailed = false;
       try { fh = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { fhFailed = true; }
       const lastAt = fh.length ? fh[fh.length - 1][0] : 0;
-      if (!fhFailed && now - lastAt > 3 * 3600e3) {
+      if (!fhFailed && ttFollowerDue(now, lastAt)) {
         const { ok, body } = await ttGet('user/info/?fields=follower_count,likes_count,video_count', token);
         const u = ok && body && body.data && body.data.user;
         if (u) {

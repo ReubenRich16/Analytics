@@ -51,10 +51,22 @@ data/             recorded history, committed by the robots
   that total *falls* when an older one scrolls out of the window. A quick reload **resumes**
   the session (the gap is counted, not dropped); a cold open **backfills** the strip, faded,
   from the recorded minute samples — never smeared from coarser ones, because nothing on
-  these pages interpolates
+  these pages interpolates. On TikTok the strip is called **Live · this visit** and sits
+  under the away card, its old heading kept as the caption under the bars
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
-  the newest upload, so nine slots out of ten showed nothing where a chart belongs
+  the newest upload, so nine slots out of ten showed nothing where a chart belongs.
+  On TikTok the card and the per-post drawer open on a **summary**: a verdict pill (the
+  report card's own grade, or "Too early" with the clock time a grade can start), four
+  numbers that each say what they are compared with — **views** against your usual post
+  (9.9×, or 43% of it; a launching post says where it is heading instead), **like rate**
+  against your usual rate from 200 views, **views today** since local midnight against
+  yesterday by the same hour (the Today card's own rules), and **shares** as "1 for every N
+  views" — and one chart, **First 48 hours vs your usual**, with your usual range shaded
+  (your finished launches less the highest and lowest quarter, from 4 of them). Everything
+  else the card showed — the estimate, the eight numbers, the race, the minute chart, the
+  report card, the hourly record — is under **More numbers and charts**, one tap away; an
+  open fold survives the next refresh, and opening one draws its charts in
 - **Minute-by-minute launch tracking** — recorded by the Worker even when nobody
   has the site open, because the platforms don't provide it
 - **Plateau projection** — "where is this one heading?", on the latest-upload card.
@@ -88,16 +100,31 @@ data/             recorded history, committed by the robots
   faster than it was yesterday, the biggest recorded hour, and yesterday ranked among the
   days behind it. New-since-you-looked items wear a dot; already-seen ones dim. On YouTube
   the headline is **exact** — the robot records the channel's own totals, so it is a
-  subtraction, not a sum of samples — and this card replaced the old Recent milestones list
+  subtraction, not a sum of samples — and this card replaced the old Recent milestones list.
+  On TikTok the absence leads as big numbers (views · followers · milestones, the headline
+  sentence's own figures, and only those it gives) with the sentence and its basis under
+  them; the busiest hour ("Wed 9–10 pm", as the clock read it) and yesterday share one short
+  paragraph; milestones since you last looked come first with a **NEW** badge, and older
+  ones fold under **Earlier this fortnight** (an open fold survives the next refresh). Posts
+  are named by their caption without hashtags, cut at a whole word — the full caption is the
+  row's title and aria-label — and the explanation sits behind **ⓘ How this works**
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
   TikTok (Now · Posts · Account · Coach · Ideas). The missing Audience room is missing for
   a reason rather than for want of building it: TikTok's API exposes no audience data of
   any kind, so it could only ever be empty. The missing Trends room used to be justified
   the same way — TikTok publishes no daily series of its own — but the Worker's recordings
-  outgrew that: the Account room now carries a **Trends — from your own recordings** card
-  (a pulse tile row, views per day with week-vs-week, 400 days of follower history, and a
-  when-views-arrive clock), every number built from the recordings rather than fetched.
+  outgrew that: the Account room now carries a **Trends — from your own recordings** card,
+  every number built from the recordings rather than fetched. It leads with **the last 7 days
+  against the 7 before** as two big tiles (each with its dates and how many days it rests on)
+  and the sentence comparing them — and when one post brought in more than half of a week's
+  views, it names that post with its exact share. Then **Today so far** (the Now room's own
+  figure) and followers over the week; **views each day** as bars, one per calendar day, where
+  a day the recording can't vouch for is left empty and marked "no data", the tallest day
+  carries its exact figure and every bar has a tip; 400 days of **follower history** (30 / 90 /
+  All); and **when people watch** — the 24 hour-of-day bars with the busiest and quietest three
+  hours in a row on top, from those same bars. How each chart is counted, and where the numbers
+  come from, fold away one tap below them.
   **Everything TikTok's API can support is built on both pages** — what separates them
   is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card
@@ -106,6 +133,23 @@ data/             recorded history, committed by the robots
   yesterday and against where it places across the week — how the newest upload landed,
   who's watching and when you're next due. Computed from numbers
   already on the page, so it costs no extra quota
+- On TikTok the first card is **Today so far** — the calendar day on your own clock, from
+  midnight, not a rolling 24 hours: views (the same figure as Trends' "Today so far"),
+  followers and likes since midnight, each with a comparison; "ahead of / behind / level
+  with yesterday", which compares the same whole hours of each day (hours against hours on
+  the 23- and 25-hour daylight-saving days, and it says so); the newest post with its grade
+  or "Too early"; and the next milestone. **More about today** folds away yesterday's whole
+  day, a typical day (the milestone's own pace), and where today already places. The
+  question chips sit under it, led by **Top mover** — also on the calendar day: the post that
+  gained the most views since midnight, and its share of the Today card's own figure (a post
+  that went up today counts from 0 at the moment it went up). Followers and likes are measured from
+  the Worker's follower check that starts the day: it now takes one on its first tick after
+  midnight in Australia/Melbourne (as well as every ~3 hours); a check up to 15 minutes
+  after midnight counts as the start of the day (named by its time, "since 12:05 am", unless
+  it was within the minute), otherwise the last one before midnight (within 3½ hours) is used
+  and named ("since 10:40 pm", with a line under the tiles saying it was last night's check),
+  otherwise the tile says there is none. The page's controls (theme, refresh rate, sound, Refresh, Pause, One page,
+  Sign out and the links to the other dashboards) live behind the **⋯** button
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever
 - 15 themes, sound on new likes/subscribers, and a phone-friendly layout

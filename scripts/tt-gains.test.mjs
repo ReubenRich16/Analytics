@@ -47,7 +47,7 @@ const mk = () => new Function('NOW', `
   ${fn('function dropEarlyLaunchPts(arr)')}
   ${fn('function mergeHist(b)')}
   ${(TT.match(/  const TT_GAP = [^\n]*\n/) || [''])[0]}
-  ${fn('function ttGainBuckets(from)')}
+  ${fn('function ttGainBuckets(from, onlyId, to)')}
   return {
     get hist() { return hist; }, set hist(h) { hist = h; },
     mergeHist, dropEarlyLaunchPts,
@@ -62,7 +62,9 @@ const t0 = CT * 1000;
 const views = m => Math.round(5000 / (1 + Math.exp(-(m / 60 - 6) / 2)) - 5000 / (1 + Math.exp(3)));
 const raw = [];
 for (let slot = Math.ceil(t0 / MIN) * MIN; slot <= t0 + 48 * HOUR; slot += MIN) raw.push([slot, views((slot - t0) / MIN), 1, 0, 0]);
-const TRUE = raw[raw.length - 1][1] - raw[0][1];
+// the post went up inside every window below, so it is counted from 0 at the moment it went
+// up: every view it has is a view gained (a first reading of 1 view is one real view)
+const TRUE = raw[raw.length - 1][1];
 const buckets = new Map();
 for (const r of raw) {
   const b = Math.floor((r[0] - t0) / (5 * MIN)), cur = buckets.get(b);
@@ -239,7 +241,7 @@ console.log('\nround numbers are news only the first time');
     const fmt = new Intl.NumberFormat('en-US');
     const esc = s => String(s);
     const capOf = v => v.title || '';
-    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n  };\n', TT.indexOf('  const shortCap = ')) + 5)}
+    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n', TT.indexOf('  const escAttr = ')) + 1)}
     const fseries = () => (hist && Array.isArray(hist.followers) ? hist.followers : []);
     ${fn('function nextMilestone(cur)')}
     ${feed}
@@ -378,7 +380,7 @@ console.log('\nrecorded days — coverage');
 {
   const R = hist => new Function('hist', `
     ${(TT.match(/  const TT_GAP = [^\n]*\n/) || [''])[0]}
-    ${fn('function ttGainBuckets(from)')}
+    ${fn('function ttGainBuckets(from, onlyId, to)')}
     ${fn('function recDayGains(days)')}
     return recDayGains(16);`)(hist);
   const now = Date.now();

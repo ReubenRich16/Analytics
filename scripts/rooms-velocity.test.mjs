@@ -87,7 +87,9 @@ function homeless(src, page, chrome) {
     spans.filter(s => !cards.some(c => c.at > s.from && c.at < s.to)).map(s => s.k).join(',') || '');
 }
 homeless(YT, 'YouTube', ['setupPanel', 'channelBanner', 'answerCard', 'drawer']);
-homeless(TT, 'TikTok', ['setupPanel', 'profileBanner', 'answerCard']);
+// TikTok's answer card is not chrome any more: it sits in the Now room under Today so far,
+// so it has to live in exactly one room like every other card
+homeless(TT, 'TikTok', ['setupPanel', 'profileBanner']);
 
 console.log('\nthe tab bar copes with six of them');
 {
@@ -402,7 +404,7 @@ console.log('\nwhile you were away');
   check('the first hundred views on a post is not treated as news', /if \(m < 100\) continue;/.test(feed));
   check('the feed is bounded in time and in length',
     /ALERT_DAYS = 14/.test(TT) && /\.slice\(0, 8\)/.test(feed));
-  check('and a caption cannot inject markup into it', /esc\(shortCap\(cap, 46, 'a post'\)\)/.test(feed));
+  check('and a caption cannot inject markup into it', /esc\(feedCap\(cap, 40, 'a post'\)\)/.test(feed));
   /* One line per subject. A post that climbed three rungs inside the window reported all
      three and pushed everything else off the list — and "passed 100 views" is not news
      once "passed 500 views" is sitting above it. */
@@ -573,6 +575,9 @@ console.log('\nrecorded trends — the charts TikTok never provides');
 {
   check('the card lives in the Account room, revealed at sign-in',
     /id="recTrendsCard"/.test(TT) && /'breakdownCard', 'recTrendsCard'/.test(TT));
+  check('and leads it: the week against the week before is the first thing the Account room shows',
+    TT.indexOf('data-pane="account"') < TT.indexOf('id="recTrendsCard"') && TT.indexOf('id="recTrendsCard"') < TT.indexOf('id="breakdownCard"') &&
+    TT.indexOf('id="breakdownCard"') < TT.indexOf('data-pane="coach"'));
   const rt = TT.slice(TT.indexOf('function renderRecTrends('), TT.indexOf('\n  }\n', TT.indexOf('const rr = $(\'recRange\')')));
   check('it only shows once the recordings exist',
     /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(rt));
@@ -581,7 +586,10 @@ console.log('\nrecorded trends — the charts TikTok never provides');
   check('weeks say how many recorded days they rest on', /' of 7 days recorded'/.test(rt));
   check('weeks are calendar weeks, not the last seven days that happen to have data',
     /k >= dk\(7\) && k <= dk\(1\)/.test(rt) && /k >= dk\(14\) && k <= dk\(8\)/.test(rt) && !/doneKeys\.slice\(-7\)/.test(rt));
-  check('the views-per-day line breaks across a missing day', /maxGap: 1\.5 \* 864e5/.test(rt));
+  // views each day are bars now (tt-trends.test.mjs runs them): a missing day is an empty
+  // slot that says "no data", so nothing is ever drawn across it
+  check('the views-each-day bars leave a missing day empty, marked “no data”',
+    /\{ k, v: null, tip: recDayLong\(k\) \+ ': no data — '/.test(rt) && /">no data<\/text>'/.test(TT));
   check('a stale follower snapshot is not labelled "now"', /fNowStale\(\) \? fmtAgo\(fNow\[0\]\) : 'now'/.test(rt) && /'last checked ' \+ fmtAgo/.test(rt));
   check('the day chart says whose views it counts and where they are kept', /from the counts kept on this device/.test(rt));
   check('week-vs-week only speaks with five recorded days on each side',
