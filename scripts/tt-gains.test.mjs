@@ -239,7 +239,7 @@ console.log('\nround numbers are news only the first time');
     const fmt = new Intl.NumberFormat('en-US');
     const esc = s => String(s);
     const capOf = v => v.title || '';
-    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n  };\n', TT.indexOf('  const shortCap = ')) + 5)}
+    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n', TT.indexOf('  const escAttr = ')) + 1)}
     const fseries = () => (hist && Array.isArray(hist.followers) ? hist.followers : []);
     ${fn('function nextMilestone(cur)')}
     ${feed}

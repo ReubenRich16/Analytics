@@ -60,11 +60,13 @@ console.log('\nthe away card');
     const fmt = new Intl.NumberFormat('en-US'), esc = s => String(s);
     const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3;
     const capOf = v => v.title || '';
-    const shortCap = s => s;
+    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n', TT.indexOf('  const escAttr = ')) + 1)}
     ${arrow(TT, '  const fmtAgo = ts =>')}
+    ${arrow(TT, '  const hourSpan = at =>')}
     ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}
     ${fn('function ttGainBuckets(from)')}
     ${fn('function recDayGains(days)')}
+    ${fn('function ttAwayLen()')}
     ${fn('function ttAwayHeadHtml(list)')}
     ${fn('function ttMomentsHtml()')}
     return { ttAwayHeadHtml, ttMomentsHtml };`)(hist, videos, me, awaySince, awayUntil, NOW);

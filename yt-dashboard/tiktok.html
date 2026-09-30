@@ -38,8 +38,30 @@
   #alertsContent .alert.seen { opacity:.55; }
   #alertsContent .alert .dot { width:6px; height:6px; border-radius:50%; background:var(--accent);
     flex:none; align-self:center; }
-  #alertsContent .alert.moment .txt { color:var(--text); }
-  #alertsContent .awayhead { margin-bottom:10px; }
+  /* NEW: a milestone passed since you last looked */
+  #alertsContent .alert .anew { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+    font-family:var(--f-sans); font-size:10px; font-weight:800; letter-spacing:.05em; line-height:1.5;
+    background:var(--gold); color:var(--ink); vertical-align:1px; white-space:nowrap; }
+  /* the absence as big numbers, then the sentence that says what they rest on */
+  #alertsContent { margin-top:8px; }
+  .away-nums { display:flex; flex-wrap:wrap; gap:6px 24px; margin:0 0 6px; }
+  .away-nums .anum { display:flex; flex-direction:column; min-width:0; }
+  .away-nums .v { font-family:var(--f-num); font-size:24px; font-weight:700; letter-spacing:-.02em; line-height:1.15;
+    font-variant-numeric:tabular-nums; color:var(--text); white-space:nowrap; }
+  .away-nums .v.up { color:var(--up); }
+  .away-nums .v.down { color:var(--down); }
+  .away-nums .k { font-size:12px; font-weight:600; color:var(--muted); }
+  #alertsContent .awayhead { font-size:12.5px; margin-bottom:6px; }
+  /* the busiest hour and yesterday: one short paragraph, a line each */
+  .away-moments { font-size:12.5px; line-height:1.5; color:var(--muted); margin:0 0 10px; }
+  .away-moments b { color:var(--text); font-weight:600; }
+  .away-moments .amom { display:block; }
+  .away-moments .amom + .amom { margin-top:3px; }
+  #alertsContent .away-quiet { margin:2px 0 0; }
+  #alertsContent details.cc-more { margin-top:8px; }
+  #alertsContent details.cc-more .cc-more-body { padding-top:4px; }
+  details.away-how > summary { color:var(--muted); font-weight:600; }
+  details.away-how .explain:last-child { margin-bottom:2px; }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
   #ttDrawer .dhead a { flex:none; text-decoration:none; }
@@ -304,20 +326,33 @@
     <div class="stat" title="Change since the last refresh, counting only posts seen both times"><div class="label" id="commentsLabel">Comments</div><div class="stat-num" id="commentsNum">–</div><div class="delta" id="commentsDelta"></div><div class="sparkslot" id="ttCommentsSpark"></div></div>
   </div>
 
+  <!-- WHILE YOU WERE AWAY — the absence as big numbers first (views, followers, milestones),
+       the sentence that says what they rest on, the busiest hour and yesterday in one short
+       paragraph, anything speeding up, then the milestones passed since you last looked.
+       Older ones fold under "Earlier this fortnight", and how the card works sits behind ⓘ:
+       both one tap away, nothing removed. -->
+  <div class="card" id="alertsCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away<span id="awayFor"></span></div>
+    <div id="alertsContent"><p class="dnote">checking…</p></div>
+    <details class="cc-more away-how" id="awayHow">
+      <summary><span aria-hidden="true">ⓘ</span> How this works</summary>
+      <div class="cc-more-body">
+        <p class="explain">Milestones your account and posts passed in the last 14 days, and any post that is speeding up — tracked even while this page was closed. <b>Tap any post to open its full breakdown.</b></p>
+        <p class="explain">“Since you last looked” means since this page was last open on this device. Milestones passed since then are marked <b>NEW</b>; older ones fold under “Earlier this fortnight”.</p>
+      </div>
+    </details>
+  </div>
+
+  <!-- LIVE · THIS VISIT — the views gained each refresh (its old heading, kept as the caption
+       under the bars), now under the news rather than above it -->
   <div class="card velocity" id="velocityPanel">
     <div class="vhead">
-      <div class="label">Views gained each refresh</div>
+      <div class="label">Live · this visit</div>
       <div class="rate" id="rateText"></div>
     </div>
     <div class="bars" id="bars"></div>
-    <div class="session" id="barsNote"></div>
+    <div class="session vnote">Each bar is the views gained in one refresh. <span id="barsNote"></span></div>
     <div class="session" id="sessionText"></div>
-  </div>
-
-  <div class="card" id="alertsCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">While you were away</div>
-    <p class="explain" style="margin-top:8px">Milestones your account and posts passed in the last 14 days, and any post that is speeding up — tracked even while this page was closed. <b>Tap any post to open its full breakdown.</b></p>
-    <div id="alertsContent"><p class="dnote">checking…</p></div>
   </div>
 
   <!-- LATEST POST -->
@@ -562,6 +597,30 @@
     }
     return words !== s && Array.from(words).length <= n ? words.replace(/[\s,;:.–—-]+$/u, '') + '…' : clip(words, n);
   };
+  /* A post's name in the away card: its caption without the hashtags (the cover already
+     says which post it is), cut at a whole word with "…". A tag in the middle of a sentence
+     is part of the sentence ("my #morning routine"), so it keeps its word and loses only the
+     '#'; runs of tags at the start or the end go. A "#1" is not a tag. If that leaves
+     nothing to read — a caption that is all hashtags — the full caption is used instead.
+     The row carries the full caption too, in its title and aria-label. */
+  const TAG_RE = /#[\p{L}\p{N}_]*\p{L}[\p{L}\p{N}_]*/gu;
+  const noTags = s => {
+    s = String(s || '').replace(/\s+/g, ' ').trim();
+    const real = x => /[\p{L}\p{N}]/u.test(x.replace(TAG_RE, ''));
+    const out = s.replace(TAG_RE, (tag, i) => real(s.slice(0, i)) && real(s.slice(i + tag.length)) ? tag.slice(1) : '\u0000')
+      .replace(/\s*\u0000[\s\u0000]*(?=[,.;:!?…]|$)/gu, '')   // a tag gone from before a comma leaves no space
+      .replace(/\s*\u0000[\s\u0000]*/gu, ' ')
+      .replace(/^[\s,;:–—-]+|[\s,;:–—-]+$/gu, '');
+    return /[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(out) ? out : s;
+  };
+  const feedCap = (s, n, fb) => {
+    s = String(s || '').replace(/\s+/g, ' ').trim();
+    if (!s || s === '(no caption)') return fb || '';
+    return clip(noTags(s), n);
+  };
+  // for a caption inside an attribute: esc() leaves quotes alone, which is fine in text but
+  // would end a title="…" early
+  const escAttr = s => esc(s).replace(/"/g, '&quot;');
   /* Average views per day since posting (total ÷ age) — a lifetime average, not today's
      speed. Null under a day old: 93 views in 3 hours is not '744 a day', and stretching it
      to one would be inventing the other 21 hours. */
@@ -1569,7 +1628,7 @@
      totals and the per-post baseline are saved on every tick, so the first poll after a
      reload diffs against the last saved reading and the seconds in between are counted
      rather than dropped. A longer gap starts a fresh session — a three-day-old "session"
-     is not a session, and the away card above tells that story — but the strip still
+     is not a session, and the away card tells that story — but the strip still
      BACKFILLS from the Worker's recordings, faded, so a cold open is never a blank graph.
 
      Backfill only trusts minute-resolution samples. A pair of readings five minutes or an
@@ -3758,7 +3817,10 @@
         const x = arr[i][1] || 0;
         if (arr[i][0] >= since && x > hi) for (const m of ladder(hi, x)) {
           if (m < 100) continue;   // the first hundred views is not news
-          out.push({ k: 'v:' + id, id, cover, at: arr[i][0], t: '<b>' + esc(shortCap(cap, 46, 'a post')) + '</b> passed ' + fmt.format(m) + ' views' });
+          // the line names the post without its hashtags; `cap` (the full caption) and `tail`
+          // (the rest of the line, as text) make the row's title and aria-label
+          const tail = ' passed ' + fmt.format(m) + ' views';
+          out.push({ k: 'v:' + id, id, cover, cap, tail, at: arr[i][0], t: '<b>' + esc(feedCap(cap, 40, 'a post')) + '</b>' + tail });
         }
         hi = Math.max(hi, x);
       }
@@ -3772,23 +3834,37 @@
     return [...best.values()].sort((a, b) => b.at - a.at).slice(0, 8);
   }
 
-  /* The headline: the whole absence in one sentence, so the card answers before it
-     itemises. Only when the away stamp exists and the absence is long enough to be one —
-     under half an hour "while you were away" is theatre, and the feed below already
-     covers it. Views are what the recordings saw (a post's first sample inside the window
-     counts from that sample), followers come from the account snapshots, and both say
-     nothing rather than guessing when the Worker holds no data for the stretch. */
+  /* The headline: the whole absence as big numbers — views, followers, milestones — and
+     under them the same figures in one sentence that names what they rest on, so the card
+     answers before it itemises. Only when the away stamp exists and the absence is long
+     enough to be one — under half an hour "while you were away" is theatre, and the feed
+     below already covers it. Views are what the recordings saw (a post's first sample
+     inside the window counts from that sample), followers come from the account snapshots,
+     and both say nothing rather than guessing when the Worker holds no data for the
+     stretch. A number the sentence leaves out has no big number either. */
   const AWAY_MIN = 30 * 60e3;
+  // how long she was away, as the headline says it ('19h'), or '' when it is not an absence
+  function ttAwayLen() {
+    const until = awayUntil || Date.now();
+    if (!awaySince || until - awaySince < AWAY_MIN) return '';
+    return fmtAgo(Date.now() - (until - awaySince)).replace(' ago', '');
+  }
   function ttAwayHeadHtml(list) {
     const until = awayUntil || Date.now();
     if (!awaySince || until - awaySince < AWAY_MIN) return '';
-    const bits = [];
+    const bits = [], nums = [];
+    // a big number: [data-count] so motion.js counts it up (and always lands on this text)
+    const num = (v, k, cls) => '<div class="anum"><b class="v' + (cls ? ' ' + cls : '') + '" data-count>' + v +
+      '</b><span class="k">' + k + '</span></div>';
     const g = ttGainBuckets(awaySince);
     // the store keeps the newest posts only, so the headline names its basis when that is
     // fewer than the posts TikTok lists
     const stored = Object.keys((hist && hist.videos) || {}).length;
-    if (g.total > 0) bits.push('<b>+' + fmt.format(g.total) + ' views</b> on your ' +
-      (stored < videos.length ? stored + ' newest posts' : 'posts'));
+    if (g.total > 0) {
+      bits.push('<b>+' + fmt.format(g.total) + ' views</b> on your ' +
+        (stored < videos.length ? stored + ' newest posts' : 'posts'));
+      nums.push(num('+' + fmt.format(g.total), 'views', 'up'));
+    }
     /* Followers run from the snapshot at or before the moment she left to the live count in
        the header — and only when that snapshot is within three hours of her leaving, so the
        figure is about the absence and not about the morning before it. */
@@ -3796,23 +3872,48 @@
     const a = ATB(f, awaySince);
     if (a && me && me.follower_count != null && awaySince - a[0] <= 3 * 3600e3) {
       const df = (me.follower_count || 0) - (a[1] || 0);
-      if (df) bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
+      if (df) {
+        bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
+        nums.push(num((df > 0 ? '+' : '−') + fmt.format(Math.abs(df)), 'follower' + (Math.abs(df) === 1 ? '' : 's'), df > 0 ? 'up' : 'down'));
+      }
     }
+    // the milestones are the feed's own NEW lines, one per post or account total
     const crossed = list.filter(x => x.at >= awaySince).length;
-    if (crossed) bits.push('<b>' + crossed + '</b> milestone' + (crossed === 1 ? '' : 's') + ' passed');
+    if (crossed) {
+      bits.push('<b>' + crossed + '</b> milestone' + (crossed === 1 ? '' : 's') + ' passed');
+      nums.push(num(String(crossed), 'milestone' + (crossed === 1 ? '' : 's')));
+    }
     if (!bits.length) return '';
-    return '<p class="explain awayhead">In the <b>' + esc(fmtAgo(Date.now() - (until - awaySince)).replace(' ago', '')) + '</b> since you last looked: ' +
+    // the sentence reads every one of these figures with its basis, so a screen reader hears
+    // it once, there, rather than the bare numbers first
+    return '<div class="away-nums" aria-hidden="true">' + nums.join('') + '</div>' +
+      '<p class="explain awayhead">In the <b>' + esc(ttAwayLen()) + '</b> since you last looked: ' +
       bits.join(' · ') + '.</p>';
   }
 
-  /* Two moments, told as plain lines: the biggest recorded hour, and how yesterday placed
-     among the days behind it. Each abstains rather than stretching: the hour needs a real
-     gain behind it, the ranking needs a few full days, and today never ranks because it
+  /* An hour bucket as the clock read it: 'Wed 9–10 pm', 'Wed 11 am–12 pm'. The end is the
+     clock at the end of the hour, so the hour the clocks go forward reads '1–3 am'; the two
+     2 am hours when they go back both read '2–3 am' rather than one of them '2–2 am'. More
+     than six days back the date is named too, because a weekday alone would repeat. */
+  const hourSpan = at => {
+    const d = new Date(at), h = d.getHours();
+    let e = new Date(at + 3600e3).getHours();
+    if (e === h) e = (h + 1) % 24;
+    const n = x => x % 12 || 12, ap = x => x < 12 ? 'am' : 'pm';
+    const day = d.toLocaleDateString('en-AU', { weekday: 'short' }) + (Date.now() - at > 6 * 864e5
+      ? ' ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) + ',' : '');
+    // non-breaking spaces, so 'Wed 9–10 pm' never breaks across two lines
+    return (day + ' ' + n(h) + (ap(h) === ap(e) ? '' : ' ' + ap(h)) + '–' + n(e) + ' ' + ap(e)).replace(/ /g, '\u00a0');
+  };
+
+  /* Two moments, told in one short paragraph: the busiest recorded hour, and how yesterday
+     placed among the days behind it. Each abstains rather than stretching: the hour needs a
+     real gain behind it, the ranking needs a few full days, and today never ranks because it
      is not finished being a day yet. */
   function ttMomentsHtml() {
     const rows = [];
     const from = awaySince && (awayUntil || Date.now()) - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
-    const label = from === awaySince ? 'Biggest hour since you last looked' : 'Biggest hour in the last 24 hours';
+    const label = from === awaySince ? 'Busiest hour since you last looked' : 'Busiest hour in the last 24 hours';
     const g = ttGainBuckets(from);
     let bestAt = 0, best = null;
     for (const [at, b] of g.hours) if (!best || b.gain > best.gain) { best = b; bestAt = at; }
@@ -3823,10 +3924,9 @@
         const rec = (hist && hist.videos && hist.videos[top[0]]) || null;
         const live = videos.find(x => x.id === top[0]);
         const cap = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
-        if (cap) carrier = ', mostly “' + esc(shortCap(cap, 34, 'a post')) + '”';
+        if (cap) carrier = ', mostly “<span title="' + escAttr(cap) + '">' + esc(feedCap(cap, 34, 'a post')) + '</span>”';
       }
-      rows.push({ t: label + ': <b>+' + fmt.format(best.gain) + ' views</b>' + carrier,
-        at: new Date(bestAt).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric' }) });
+      rows.push(label + ': <b>+' + fmt.format(best.gain) + ' views</b>, ' + esc(hourSpan(bestAt)) + carrier);
     }
     // yesterday, ranked among the full local days the recordings cover — the same days,
     // on the same rules, as Trends' views per day (recDayGains): a partial first day, a day
@@ -3845,63 +3945,22 @@
       // a day level with another says "joint", as the Today chip does
       const joint = done.some(([k, v]) => k !== yk && v === yv) ? 'joint ' : '';
       // a clear record (nothing tied with it) is marked for motion.js to celebrate
-      rows.push({ t: 'Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
+      rows.push('Yesterday: <b>+' + fmt.format(day.get(yk)) + ' views</b> — ' +
         (rank === 1 && q === 1 ? 'level with every other day' + of
           : rank === 1 ? (joint ? 'joint best' + of : '<span class="cc-win">your best' + of + '</span>')
           : rank > n / 2 ? (q === 1 ? (joint ? 'joint quietest' : 'your quietest') : joint + ordinal(q) + ' quietest') + of
-          : joint + ordinal(rank) + ' best' + of), at: '' });
+          : joint + ordinal(rank) + ' best' + of));
     }
     if (!rows.length) return '';
-    return rows.map(r => '<div class="alert moment"><div class="txt">' + r.t + '</div>' +
-      (r.at ? '<div class="at">' + esc(r.at) + '</div>' : '') + '</div>').join('');
+    return '<p class="away-moments">' + rows.map(t => '<span class="amom">' + t + '</span>').join('') + '</p>';
   }
 
+  let alertsHtml = null;   // what the card last painted, so an unchanged poll leaves it alone
   function renderAlerts() {
     const el = $('alertsContent');
     if (!el) return;
-    const list = ttAlerts();
-    const accel = [...accelSet].map(id => videos.find(x => x.id === id)).filter(Boolean);
-    let html = ttAwayHeadHtml(list);
-    if (accel.length) {
-      html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
-        accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' speeding up</b> \u2014 at least ' +
-        ACCEL_RATIO + '\u00d7 the views of the 24 hours before, and ' + ACCEL_MIN + '+ views in the last 24 hours. Tap one for its full breakdown.</p>' +
-        '<div class="chiprow" style="margin-bottom:10px">' +
-        accel.slice(0, 6).map(v => '<button type="button" class="chip chipv" data-vid="' + esc(v.id) + '">' +
-          (v.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(v.cover_image_url) + '">' : '') +
-          esc(shortCap(capOf(v), 34, 'a post')) + '</button>').join('') + '</div>';
-    }
-    html += ttMomentsHtml();
-    if (!list.length) {
-      html += '<p class="dnote">No milestones passed in the last ' + ALERT_DAYS +
-        ' days. This updates by itself, even while the page is closed.</p>';
-      el.innerHTML = html;
-      return;
-    }
-    /* A post row opens its full breakdown, exactly like a table row \u2014 and wears its cover
-       so you can see WHICH post without reading. Only a post still in TikTok's 60-post
-       window is clickable: the drawer needs the live post to open, and a dead row that
-       does nothing when tapped is worse than a plain one. Account-level rows (followers,
-       account likes) have no post to open and stay plain on purpose.
-
-       Inbox rules, only when this device knows when you last looked: an item newer than
-       the away stamp wears a dot, an older one dims. The feed is already newest-first,
-       so the new ones sit naturally on top. */
-    const mark = awaySince != null;
-    html += list.map(a => {
-      const live = a.id && videos.some(x => x.id === a.id);
-      const fresh = mark && a.at >= awaySince;
-      const cls = 'alert' + (live ? ' open' : '') + (mark ? (fresh ? ' fresh' : ' seen') : '');
-      return '<div class="' + cls + '"' + (live ? ' role="button" tabindex="0" data-vid="' + esc(a.id) + '"' : '') + '>' +
-        (fresh ? '<span class="dot" title="New since you last looked"></span>' : '') +
-        (a.id && a.cover ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.cover) + '">' : '') +
-        // a milestone passed since you last looked is a real event, so motion.js may celebrate it
-        '<div class="txt">' + (fresh ? '<span class="cc-win">' + a.t + '</span>' : a.t) + '</div>' +
-        '<div class="at">' + esc(fmtAgo(a.at)) + '</div></div>';
-    }).join('');
-    el.innerHTML = html;
-    // wired once, delegated: renderAlerts replaces this innerHTML on every poll, and a
-    // listener per row would be re-bound each time for no reason
+    // wired once, delegated: renderAlerts replaces this innerHTML when the card changes, and
+    // a listener per row would be re-bound each time for no reason
     if (!el.dataset.wired) {
       el.dataset.wired = '1';
       const open = t => { const b = t && t.closest && t.closest('[data-vid]'); if (b) ttdOpen(b.dataset.vid, b); };
@@ -3914,6 +3973,80 @@
         ttdOpen(b.dataset.vid, b);
       });
     }
+    const list = ttAlerts();
+    const accel = [...accelSet].map(id => videos.find(x => x.id === id)).filter(Boolean);
+    // the absence, in the card's own label: 'While you were away · 19 hours'
+    const len = ttAwayLen();
+    const lab = $('awayFor'), forTxt = len ? ' · ' + len.replace(/^(\d+)([mhd])$/, (_, k, u) =>
+      k + ' ' + { m: 'minute', h: 'hour', d: 'day' }[u] + (k === '1' ? '' : 's')) : '';
+    if (lab && lab.textContent !== forTxt) lab.textContent = forTxt;
+    let html = ttAwayHeadHtml(list);
+    html += ttMomentsHtml();
+    if (accel.length) {
+      html += '<p class="explain" style="margin-bottom:8px"><b style="color:var(--text)">\u26a1 ' +
+        accel.length + ' post' + (accel.length === 1 ? ' is' : 's are') + ' speeding up</b> \u2014 at least ' +
+        ACCEL_RATIO + '\u00d7 the views of the 24 hours before, and ' + ACCEL_MIN + '+ views in the last 24 hours. Tap one for its full breakdown.</p>' +
+        '<div class="chiprow" style="margin-bottom:10px">' +
+        accel.slice(0, 6).map(v => '<button type="button" class="chip chipv" data-vid="' + esc(v.id) + '" title="' + escAttr(capOf(v)) + '">' +
+          (v.cover_image_url ? '<img alt="" loading="lazy" src="' + esc(v.cover_image_url) + '">' : '') +
+          esc(feedCap(capOf(v), 34, 'a post')) + '</button>').join('') + '</div>';
+    }
+    /* Paints only when something changed. A poll that brings nothing new leaves the card as
+       it is, so an open fold stays open and a focused row keeps its focus; when it does
+       repaint, the "Earlier" fold is reopened if it was open. */
+    const paint = h => {
+      if (h === alertsHtml && el.innerHTML) return;
+      const was = $('awayOlder'), reopen = !!(was && was.open);
+      alertsHtml = h;
+      el.innerHTML = h;
+      const now = $('awayOlder');
+      if (reopen && now) now.open = true;
+    };
+    if (!list.length) {
+      html += '<p class="dnote">No milestones passed in the last ' + ALERT_DAYS +
+        ' days. This updates by itself, even while the page is closed.</p>';
+      paint(html);
+      return;
+    }
+    /* A post row opens its full breakdown, exactly like a table row \u2014 and wears its cover
+       so you can see WHICH post without reading. Only a post still in TikTok's 60-post
+       window is clickable: the drawer needs the live post to open, and a dead row that
+       does nothing when tapped is worse than a plain one. Account-level rows (followers,
+       account likes) have no post to open and stay plain on purpose. A post row names the
+       post without its hashtags; the full caption is its title and its aria-label.
+
+       Inbox rules, only when this device knows when you last looked: an item newer than
+       the away stamp wears a dot and a NEW badge and comes first; an older one dims and
+       folds under "Earlier this fortnight". The feed is already newest-first, so the new
+       ones sit naturally on top. Without a stamp nothing can be called new, so the three
+       newest show and the rest fold, none of them dotted or dimmed. */
+    const mark = awaySince != null;
+    const row = a => {
+      const live = a.id && videos.some(x => x.id === a.id);
+      const fresh = mark && a.at >= awaySince;
+      const cls = 'alert' + (live ? ' open' : '') + (mark ? (fresh ? ' fresh' : ' seen') : '');
+      const ago = fmtAgo(a.at);
+      const name = a.cap ? ' title="' + escAttr(a.cap) + '" aria-label="' +
+        escAttr(a.cap + a.tail + ', ' + ago + (fresh ? ', new since you last looked' : '')) + '"' : '';
+      return '<div class="' + cls + '"' + (live ? ' role="button" tabindex="0" data-vid="' + esc(a.id) + '"' : a.cap ? ' role="group"' : '') + name + '>' +
+        (fresh ? '<span class="dot" title="New since you last looked"></span>' : '') +
+        (a.id && a.cover ? '<img class="acover" alt="" loading="lazy" src="' + esc(a.cover) + '">' : '') +
+        // a milestone passed since you last looked is a real event, so motion.js may celebrate it
+        '<div class="txt">' + (fresh ? '<span class="cc-win">' + a.t + '</span>' : a.t) +
+        (fresh ? '<span class="anew">NEW</span>' : '') + '</div>' +
+        '<div class="at">' + esc(ago) + '</div></div>';
+    };
+    const top = mark ? list.filter(a => a.at >= awaySince) : list.slice(0, 3);
+    const rest = mark ? list.filter(a => a.at < awaySince) : list.slice(3);
+    if (mark && !top.length) html += '<p class="dnote away-quiet">No new milestones since you last looked.</p>';
+    html += top.map(row).join('');
+    if (rest.length) {
+      const when = ALERT_DAYS === 14 ? 'Earlier this fortnight' : 'Earlier in the last ' + ALERT_DAYS + ' days';
+      html += '<details class="cc-more" id="awayOlder"><summary>' + when + ' \u00b7 ' + rest.length +
+        (top.length ? ' more' : ' milestone' + (rest.length === 1 ? '' : 's')) + '</summary>' +
+        '<div class="cc-more-body">' + rest.map(row).join('') + '</div></details>';
+    }
+    paint(html);
   }
 
   /* ---------- recorded trends ----------

@@ -51,7 +51,8 @@ data/             recorded history, committed by the robots
   that total *falls* when an older one scrolls out of the window. A quick reload **resumes**
   the session (the gap is counted, not dropped); a cold open **backfills** the strip, faded,
   from the recorded minute samples — never smeared from coarser ones, because nothing on
-  these pages interpolates
+  these pages interpolates. On TikTok the strip is called **Live · this visit** and sits
+  under the away card, its old heading kept as the caption under the bars
 - **Latest-upload card** with ◀ ▶ to cycle the ten most recent posts. Every slot gets the
   full treatment — the same-age race and the launch-curve overlay used to appear only on
   the newest upload, so nine slots out of ten showed nothing where a chart belongs
@@ -88,7 +89,14 @@ data/             recorded history, committed by the robots
   faster than it was yesterday, the biggest recorded hour, and yesterday ranked among the
   days behind it. New-since-you-looked items wear a dot; already-seen ones dim. On YouTube
   the headline is **exact** — the robot records the channel's own totals, so it is a
-  subtraction, not a sum of samples — and this card replaced the old Recent milestones list
+  subtraction, not a sum of samples — and this card replaced the old Recent milestones list.
+  On TikTok the absence leads as big numbers (views · followers · milestones, the headline
+  sentence's own figures, and only those it gives) with the sentence and its basis under
+  them; the busiest hour ("Wed 9–10 pm", as the clock read it) and yesterday share one short
+  paragraph; milestones since you last looked come first with a **NEW** badge, and older
+  ones fold under **Earlier this fortnight** (an open fold survives the next refresh). Posts
+  are named by their caption without hashtags, cut at a whole word — the full caption is the
+  row's title and aria-label — and the explanation sits behind **ⓘ How this works**
 - **Export / import** and **cross-device sync** through your own Worker's storage
 - **Rooms** — six on YouTube (Now · Videos · Trends · Audience · Coach · Ideas), five on
   TikTok (Now · Posts · Account · Coach · Ideas). The missing Audience room is missing for
