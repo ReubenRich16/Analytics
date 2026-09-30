@@ -220,6 +220,26 @@
     font-size:clamp(30px,5.4vw,52px); margin:5px 0 8px; }
   .abody .ap { font-size:13.5px; color:var(--muted); line-height:1.6; max-width:70ch; }
 
+  /* ---------- folds: secondary detail, one tap away ----------
+     A native <details>, so it opens with a keyboard, is announced as expandable, and a
+     screenshot or test harness can open every one of them at once. Nothing is removed by
+     folding it — the content is in the page, just closed. */
+  details.cc-more { border-top:1px solid var(--line); margin-top:12px; }
+  /* the summary is only as wide as its words, so the right-hand side stays clear (the
+     Cinnamoroll sticker peeks up there over the next card) */
+  details.cc-more > summary { list-style:none; cursor:pointer; display:flex; align-items:center;
+    width:max-content; max-width:100%; gap:7px; min-height:38px; padding:10px 0 0; font-family:var(--f-sans);
+    font-size:12.5px; font-weight:700; color:var(--accent); -webkit-tap-highlight-color:transparent; }
+  details.cc-more > summary::-webkit-details-marker { display:none; }
+  details.cc-more > summary::after { content:"▾"; content:"▾" / ""; font-size:13px; line-height:1;
+    transition:transform .2s ease; }
+  details.cc-more[open] > summary::after { transform:rotate(180deg); }
+  @media (hover:hover) { details.cc-more > summary:hover { text-decoration:underline; text-underline-offset:3px; } }
+  details.cc-more > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+  details.cc-more .cc-more-body { padding-top:10px; }
+  @media (pointer:coarse) { details.cc-more > summary { min-height:44px; } }
+  @media (prefers-reduced-motion:reduce) { details.cc-more > summary::after { transition:none; } }
+
   /* ---------- rooms ---------- */
   .roombar { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
   /* Scrolls sideways rather than crushing. At four tabs `flex:1` shared the bar evenly and

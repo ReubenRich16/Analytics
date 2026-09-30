@@ -290,8 +290,8 @@ console.log('\nreading a curve for the overlay');
     ${fn('function pjAt(c, t)')}
     ${fn('function pjClean(c)')}
     const PJ_HORIZON = 48 * 60, PJ_GAP = 60, PJ_COVER = 44 * 60;
-    ${fn('function ttcAt(c, t)')}
-    return { ttcAt, pjClean };
+    ${fn('function ttcAt(c, t)')}${fn('function ttcAtB(c, t)')}
+    return { ttcAt, ttcAtB, pjClean };
   `)(NOW);
   const c = [[0, 0], [60, 600], [120, 900]];
   check('inside the recording it interpolates', M.ttcAt(c, 90) === 750, M.ttcAt(c, 90));
@@ -301,6 +301,10 @@ console.log('\nreading a curve for the overlay');
   check('past the end of the recording it refuses rather than holding flat',
     M.ttcAt(c, 2880) === null, String(M.ttcAt(c, 2880)));
   check('before it starts, likewise', M.ttcAt(c, -1) === null);
+  // the usual range reads the last recorded count at or before an age: a count a launch had
+  check('the band’s reading never interpolates: at 90 minutes it is the 60-minute reading', M.ttcAtB(c, 90) === c.find(p => p[0] === 60)[1] && M.ttcAtB(c, 120) === 900,
+    M.ttcAtB(c, 90) + ' / ' + JSON.stringify(c));
+  check('and it keeps ttcAt’s ends', M.ttcAtB(c, 2880) === null && M.ttcAtB(c, -1) === null && M.ttcAtB([[0, 5]], 0) === null);
   check('and a one-point curve answers nothing', M.ttcAt([[0, 5]], 0) === null);
 
   /* A hole is judged against the age it ENDS at, by pjClean's rule rather than a new one:
@@ -349,12 +353,17 @@ console.log('\nwired onto the card');
   check('the overlay mounts into a runtime id', /id="ttLaunchWrap"/.test(TT));
   check('it is drawn after the card is in the DOM',
     TT.indexOf('ttLaunchCurves(v);') > TT.indexOf("$('latestContent').innerHTML = html"));
-  // the heading, not the phrase — the phrase also appears in a comment far earlier
-  const ownCurve = TT.indexOf('<h4>Views since it went live');
-  check('it sits between the race and this post\'s own curve',
-    TT.indexOf('id="ttRaceContent"') < TT.indexOf('id="ttLaunchWrap"') &&
-    TT.indexOf('id="ttLaunchWrap"') < ownCurve,
-    [TT.indexOf('id="ttRaceContent"'), TT.indexOf('id="ttLaunchWrap"'), ownCurve].join(' < '));
+  /* The redesign made it the card's ONE chart on show ("First 48 hours vs your usual"),
+     above the "More numbers and charts" fold; the race and this post's own minute curve moved
+     into that fold, in their old order. */
+  const rl = TT.slice(TT.indexOf('  function renderLatest(v) {'), TT.indexOf('\n  }\n', TT.indexOf('  function renderLatest(v) {')));
+  const foldAt = rl.indexOf('<details class="cc-more post-more"');
+  check('it is the chart on show, above the fold',
+    rl.indexOf('id="ttLaunchWrap"') > 0 && foldAt > rl.indexOf('id="ttLaunchWrap"'),
+    [rl.indexOf('id="ttLaunchWrap"'), foldAt].join(' < '));
+  check('and the race, then this post\'s own curve, sit inside the fold',
+    foldAt < rl.indexOf('id="ttRaceContent"') && rl.indexOf('id="ttRaceContent"') < rl.indexOf('html += ttMinuteChartHtml(v);'),
+    [foldAt, rl.indexOf('id="ttRaceContent"'), rl.indexOf('html += ttMinuteChartHtml(v);')].join(' < '));
   check('a late launch merge repaints it too', /if \(ttRaceCur\) \{ renderTtRace\(\); ttLaunchCurves\(\); \}/.test(TT));
   check('it costs no new request — no fetch appears in the builder',
     !/api\(|fetch\(/.test(TT.slice(TT.indexOf('function ttLaunchCurves'), TT.indexOf('\n  }\n', TT.indexOf('function ttLaunchCurves')))),
@@ -470,7 +479,7 @@ console.log('\nreport card — honest reasons, one typical like rate');
     const engOf = v => (v.view_count ? (v.like_count || 0) / v.view_count * 100 : 0);
     const scoreOf = v => scores[v.id] == null ? null : scores[v.id];
     const pjRank = (pool, v) => { if (!pool.length || v == null) return null; let b = 0, s = 0; for (const x of pool) { if (x < v) b++; else if (x === v) s++; } return { pct: (b + s / 2) / pool.length * 100, n: pool.length }; };
-    ${pmed}\n${tl}\n${grab('ttReportCardHtml')}
+    ${pmed}\n${tl}\n${grab('ttGradeOf')}${grab('ttReportCardHtml')}
     return ttReportCardHtml(v);`)(videos, scores, v, NOW).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
   const others = [];
   const sc = {};
@@ -497,7 +506,9 @@ console.log('\nreport card — honest reasons, one typical like rate');
   const zero = { id: 'z', create_time: (NOW - 60 * 864e5) / 1000, view_count: 0, like_count: 0 };
   const zc = card(zero, [zero, ...others], sc);
   check('a 0-view post gets no engagement bar and no F', !/Like rate \S+ \d+% of your usual/.test(zc) && !/ F /.test(zc), zc);
-  const src = grab('ttReportCardHtml');
+  // the grade is worked out once (ttGradeOf) for the card and the Today card's newest-post
+  // row, so the checks below read both halves
+  const src = grab('ttGradeOf') + grab('ttReportCardHtml');
   check('the engagement bar is coloured from its own index when reach is graded',
     /idx >= 100 \? 'var\(--up\)' : idx >= 85 \? 'var\(--accent\)' : 'var\(--gold\)'/.test(src));
   check('no "|| 1" fallback that turns a 0 median into a ratio', !/\|\| 1;/.test(src));

@@ -58,13 +58,17 @@ console.log('\nthe away card');
     const RealDate = globalThis.Date;
     class Date extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } }
     const fmt = new Intl.NumberFormat('en-US'), esc = s => String(s);
-    const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3;
+    const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3, AWAY_F_FRESH = 2 * 60e3;
+    // the follower count captured when she came back: the profile handed in as \`me\`
+    let awayF = me && me.follower_count != null ? me.follower_count : null;
     const capOf = v => v.title || '';
-    const shortCap = s => s;
+    ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n', TT.indexOf('  const escAttr = ')) + 1)}
     ${arrow(TT, '  const fmtAgo = ts =>')}
-    ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}
-    ${fn('function ttGainBuckets(from)')}
+    ${arrow(TT, '  const hourSpan = at =>')}
+    ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}${arrow(TT, '  const ttStoredBasis = ')}
+    ${fn('function ttGainBuckets(from, onlyId, to)')}
     ${fn('function recDayGains(days)')}
+    ${fn('function ttAwayLen()')}
     ${fn('function ttAwayHeadHtml(list)')}
     ${fn('function ttMomentsHtml()')}
     return { ttAwayHeadHtml, ttMomentsHtml };`)(hist, videos, me, awaySince, awayUntil, NOW);
@@ -123,7 +127,10 @@ console.log('\nthe away card');
   check('a resumed tab re-reads the away stamp, but only after a real absence',
     /if \(v && Date\.now\(\) - v >= AWAY_MIN\) loadSeen\(\);/.test(vis) && /resumeSeen\(\); poll\(\);/.test(vis));
   check('and a page restored from the back-forward cache does too', /addEventListener\('pageshow', e => \{\s*\n\s*if \(e\.persisted/.test(TT));
-  check('loadSeen freezes when she came back', /awayUntil = Date\.now\(\);\s*\n\s*touchSeen\(\);/.test(fn('function loadSeen()')));
+  check('loadSeen freezes when she came back, and takes the follower count as it stood then',
+    /awayUntil = Date\.now\(\);\s*\n\s*awayF = null;\s*\n\s*takeAwayF\(\);\s*\n\s*touchSeen\(\);/.test(fn('function loadSeen()')));
+  check('a refresh that brings a fresh profile stamps it, and a failed one keeps the old stamp',
+    /if \(u\) \{ u\._at = Date\.now\(\); me = u; takeAwayF\(\); \}/.test(TT) && !/me = u \|\| me;/.test(TT));
 }
 
 console.log('\nthe stat tiles');
@@ -258,9 +265,13 @@ console.log('\nlaunch curves');
     ${fn('function pjClean(c)')}
     ${fn('function pjCurveOf(id, createTime, rec)')}
     ${line(TT, '  const TTC_SPAN = ')}${line(TT, '  const TTC_STEP = ')}${line(TT, '  const TTC_MAX = ')}${line(TT, '  const TTC_MIN_VOTES = ')}
-    ${fn('function ttcAt(c, t)')}
+    ${line(TT, '  const TTC_BAND_MIN = ')}
+    ${arrow(TT, '  const ttcBand = vals =>')}
+    ${fn('function ttcAt(c, t)')}${fn('function ttcAtB(c, t)')}
     ${line(TT, '  const ttLaunchGrid = ')}
-    const multiLineHtml = (series, tips, opts) => { capture(series, opts); return '<svg/>'; };
+    const foldAttr = k => ' data-fold="' + k + '"';
+    const videos = [];
+    const multiLineHtml = (series, tips, opts) => { capture(series, opts, tips); return '<svg/>'; };
     const holder = { innerHTML: '' };
     const $ = () => holder;
     let ttRaceCur = null;
@@ -285,12 +296,64 @@ console.log('\nlaunch curves');
   check('an unfinished launch does not vote on the typical line', gold[10] === 300, gold[10]);
   check('the scale follows this post and the typical line, not the viral one', got.opts.yMax > 0 && got.opts.yMax < 10000, got.opts.yMax);
   check('and the viral line is counted as running off the top', /1 other post runs off the top\./.test(html), html);
-  check('the title and explainer say what the grey lines are', /First 48 hours — this post vs your others/.test(html) &&
-    /Grey lines are up to 8 of your newest other posts/.test(html), html);
+  // the redesign's title; the explainer is kept word for word, behind "How to read this"
+  check('the title says what it compares, and the explainer says what the grey lines are', /<h4>First 48 hours vs your usual<\/h4>/.test(html) &&
+    /Grey lines are up to 8 of your newest other posts/.test(html) && /<summary>[^<]*<span aria-hidden="true">ⓘ<\/span> How to read this<\/summary>/.test(html), html);
+  check('three finished launches give a gold line but no band, and it says how many more',
+    !got.series.some(s => s.band) && /A shaded band of your usual range appears once 4 of these posts are tracked without gaps through their first 48 hours — 3 so far\./.test(html), html);
   const noFocus = L({ videos: { f1: hist.videos.f1, f2: hist.videos.f2 } }, NOW, (series, opts) => { got = { series, opts }; })({ id: 'gone', create_time: (NOW - 9000 * MIN) / 1000 });
   check('with no line for this post it says so instead of pointing at one', /this post’s own first 48 hours aren’t loaded here/.test(noFocus) && !/bright line/.test(noFocus), noFocus);
+  check('and says so under the chart too, not only behind "How to read this"',
+    /<p class="dnote"[^>]*>This post’s own first 48 hours aren’t loaded here, so only your usual is drawn\.<\/p>/.test(noFocus), noFocus);
   const thin = L({ videos: { running: hist.videos.running } }, NOW, () => {})(target);
   check('the thin note counts finished launches on this page', /tracked without gaps through their first 48 hours, and this page has 0 so far/.test(thin), thin);
+
+  /* The usual range. It is drawn from exactly the launches that vote on the gold line, and
+     each edge is a real launch's count: the highest and lowest quarter (rounded down) are left
+     out — with 4 to 7 launches the top one and the bottom one. */
+  const five = { videos: {
+    a: mk(5000, 1000, 2880), b: mk(5100, 2000, 2880), c: mk(5200, 3000, 2880), d: mk(5300, 4000, 2880), e: mk(5400, 90000, 2880),
+    running: mk(600, 50, 2880), me: mk(3000, 2500, 2880)
+  } };
+  const me = { id: 'me', create_time: (NOW - 3000 * MIN) / 1000 };
+  let tipsGot = null;
+  const bandHtml = L(five, NOW, (series, opts, tips) => { got = { series, opts }; tipsGot = tips; })(me);
+  const band = got.series.find(s => s.band);
+  const at48 = band && band.band[96];
+  check('five finished launches give a band', !!band, JSON.stringify(got.series.map(s => s.name)));
+  check('at 48 hours it runs from the 2nd lowest to the 2nd highest launch (the top 1 and bottom 1 left out)',
+    at48 && at48[0] === 2000 && at48[1] === 4000, JSON.stringify(at48));
+  check('so one viral launch can never widen it', at48 && at48[1] < 90000);
+  check('an unfinished launch never joins it (the 10-hour-old post is not a voter)',
+    band && band.band[20] && band.band[20][0] === Math.round(2000 * 600 / 1200), JSON.stringify(band && band.band[20]));
+  const TB = new Function(`${line(TT, '  const TTC_BAND_MIN = ')}${arrow(TT, '  const ttcBand = vals =>')}return ttcBand;`)();
+  check('under 4 launches at an age there is no band there (null, never zero)', TB([1, 2, 3, null]) === null);
+  check('a missing launch at an age is not counted as one', JSON.stringify(TB([5, 1, null, 3, 2])) === JSON.stringify({ lo: 2, hi: 3, n: 4, k: 1 }), JSON.stringify(TB([5, 1, null, 3, 2])));
+  check('it is gold like the usual line, and drawn under every line',
+    band && /var\(--gold\)/.test(band.color) && got.series.indexOf(band) === 0);
+  check('the explainer states the rule with the numbers it rests on',
+    /leaving out the highest and lowest quarter of them \(of these 5, the top 1 and the bottom 1\)\. Above it is a better start than most of your posts had; below it, a slower one\./.test(bandHtml), bandHtml);
+  check('each point says its range and how many it rests on', /usual range 2,000–4,000 \(the middle 3 of 5\)/.test(tipsGot[96]), tipsGot[96]);
+  check('the legend leads with this post, then what it is measured against',
+    got.opts.legend.map(k => k.name).join('|') === 'This post|Your usual post|Your usual range|Your other posts', got.opts.legend.map(k => k.name).join('|'));
+  check('the range is a square key, the lines are lines', got.opts.legend.find(k => k.name === 'Your usual range').bar === true &&
+    !got.opts.legend.find(k => k.name === 'Your usual post').bar);
+  const focusS = got.series.find(s => s.name === 'This post');
+  check('a finished launch is labelled with its real 48-hour count', focusS && focusS.end === '2,500 at 48h', focusS && focusS.end);
+  check('the scale takes in the band but not the viral launch', got.opts.yMax >= 4000 && got.opts.yMax < 10000, got.opts.yMax);
+  const young = L(five, NOW, (series, opts) => { got = { series, opts }; })(target);
+  const yf = got.series.find(s => s.name === 'This post');
+  check('a launch still running gets no end label — the "now" rule marks it', yf && !yf.end && got.opts.nowAt != null);
+  // eight launches: the top two and the bottom two go
+  const eight = { videos: {} };
+  for (let i = 1; i <= 8; i++) eight.videos['x' + i] = mk(5000 + i * 10, i * 1000, 2880);
+  L(eight, NOW, (series, opts) => { got = { series, opts }; })(me);
+  const b8 = got.series.find(s => s.band).band[96];
+  check('with 8 launches the band leaves out the top 2 and the bottom 2', b8[0] === 3000 && b8[1] === 6000, JSON.stringify(b8));
+  // but only the 8 newest other posts are drawn, so a 9th never votes on either
+  const nine = { videos: { ...eight.videos, old: mk(9000, 100000, 2880) } };
+  L(nine, NOW, (series, opts) => { got = { series, opts }; })(me);
+  check('and only the 8 newest others are drawn or vote', got.series.find(s => s.band).band[96][1] === 6000);
 }
 
 console.log('\nthe minute chart');
@@ -363,7 +426,7 @@ for (const [page, src] of [['tiktok.html', TT], ['index.html', YT]]) {
   check(page + ': and a 2.5 step becomes 2', !ns(0, 9, 4, true).ticks.some(t => t % 1), ns(0, 9, 4, true).ticks.join(','));
 }
 check('every TikTok count chart asks for whole ticks',
-  /'Views per day', \{ at, tips, int: true/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
+  /niceScale\(0, Math\.max\(1, max\), 4, true\)/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
   /at, tips, int: true, x0: lifeAgeTxt/.test(TT) && /int: true, yMax/.test(TT) && /at: rec\.s\.map\(s => s\[0\]\), int: true/.test(TT) &&
   /niceScale\(0, ceil, 4, true\)/.test(TT));
 

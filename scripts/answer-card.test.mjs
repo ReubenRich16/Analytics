@@ -28,16 +28,18 @@ function contract(src, page, chips) {
   }
 }
 contract(YT, 'YouTube', ['answerToday','answerSubs','answerMover','answerNewest','answerHitRate','answerAudience','answerMilestone','answerNext']);
-contract(TT, 'TikTok',  ['answerToday','answerMover','answerNewest','answerHitRate','answerEngagement','answerMilestone','answerNext']);
+// TikTok's Today chip is gone: the Today so far card (scripts/tt-today.test.mjs) answers it
+// on the calendar day instead of a rolling 24 hours
+contract(TT, 'TikTok',  ['answerMover','answerNewest','answerHitRate','answerEngagement','answerMilestone','answerNext']);
 
 console.log('\nboth cards are wired the same way');
 // the dispatcher array and ANSWER_CHIPS must agree, chip for chip — a mismatch paints
 // one chip's answer under another chip's name
 const WIRING = {
   YouTube: '[answerToday, answerSubs, answerMover, answerNewest, answerHitRate, answerAudience, answerMilestone, answerNext][answerChip]',
-  TikTok:  '[answerToday, answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip]'
+  TikTok:  '[answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip]'
 };
-const CHIP_COUNT = { YouTube: 8, TikTok: 7 };
+const CHIP_COUNT = { YouTube: 8, TikTok: 6 };
 for (const [page, src] of [['YouTube', YT], ['TikTok', TT]]) {
   check(page + ' has the card markup', /id="answerCard"/.test(src) && /id="answerChips"/.test(src) && /id="answerBody"/.test(src));
   check(page + ' paints through one dispatcher, in chip order', src.includes(WIRING[page]));
@@ -94,8 +96,21 @@ console.log('\nboth pages cycle the same number of recent uploads');
 
    So the rule is: normalise every bucket to a 24-hour rate, and refuse to compare a bucket
    whose span is badly off a day or whose gain went backwards. */
-console.log('\nToday — yesterday and the week');
-for (const [src, page, unit] of [[YT, 'YouTube', 'views'], [TT, 'TikTok', 'followers']]) {
+console.log('\nTikTok — no rolling-24h Today chip; Top mover leads');
+{
+  const chips = (TT.match(/const ANSWER_CHIPS = \[([^\]]+)\]/) || [])[1] || '';
+  check('the chip row starts with Top mover', /^'Top mover'/.test(chips.trim()), chips);
+  check('and has no Today chip', !/'Today'/.test(chips), chips);
+  check('its builder and the rolling-window helper it alone used are gone', !/function answerToday\(/.test(TT) && !/function weekPlace\(/.test(TT));
+  check('no "in 24h" follower headline is left on the page', !/followers in 24h|such 24-hour stretches|Your usual 24 hours lately/.test(TT));
+  check('dayBuckets stays: the milestone\'s typical day is built on it', /function dayBuckets\(series, vi, n, allowNeg\)/.test(TT) && /dayBuckets\(series, 1, 14, true\)/.test(TT));
+  check('the Today so far card sits in the Now room, above the answer card',
+    TT.indexOf('id="todayCard"') > TT.indexOf('data-pane="now"') && TT.indexOf('id="todayCard"') < TT.indexOf('id="answerCard"') &&
+    TT.indexOf('id="answerCard"') < TT.indexOf('data-pane="posts"'));
+}
+
+console.log('\nToday — yesterday and the week (YouTube; TikTok\'s is the Today so far card)');
+for (const [src, page, unit] of [[YT, 'YouTube', 'views']]) {
   const grab = n => { const i = src.indexOf('function ' + n + '('); return i < 0 ? null : src.slice(i, src.indexOf('\n  }\n', i)) + '\n  }\n'; };
   const db = grab('dayBuckets'), wp = grab('weekPlace');
   check(page + ' carries dayBuckets and weekPlace', !!db && !!wp);
@@ -232,21 +247,77 @@ console.log('\nMover — the post that did the work in the last 24 hours');
   check('YouTube — a video under a day old can be the Mover, from zero at birth', yb.f === '+5,000 views in 24h', yb.f);
   check('YouTube — and says it is since it went up, not a 24-hour rate', /has gained 5,000 views since it went up 20h ago/.test(yb.p), yb.p);
 
-  const ttMover = new Function('hist', 'videos', 'capOf', 'fmt', 'ATB', 'NOW',
-    DateShim + helpers(TT) + grab(TT, 'answerMover') + '\nreturn answerMover;');
-  const oldS = (NOW - 90 * 864e5) / 1000;
-  const tt = ttMover({ videos: { a: { s: series(80) }, b: { s: series(20) }, gone: { s: series(999) } } },
-    [{ id: 'a', title: 'post a', create_time: oldS }, { id: 'b', title: 'post b', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
-  check('TikTok — same rules, and a post outside the 60-post window abstains', tt.f === '+80 views in 24h', tt.f);
-  check('TikTok — the pool is named: the newest posts being recorded', /80% of the ~100 gained by the 2 newest posts being tracked/.test(tt.p), tt.p);
-  const nb = ttMover({ videos: { a: { s: series(300) }, n: { s: [[NOW - 19 * H, 900], [NOW - 0.5 * H, 5000]] } } },
-    [{ id: 'a', title: 'Old steady one', create_time: oldS }, { id: 'n', title: 'Brand new', create_time: (NOW - 20 * H) / 1000 }],
-    v => v.title, fmtUS, atb, NOW)();
-  check('TikTok — a 20-hour-old post with 5,000 views is not left out', nb.f === '+5,000 views in 24h' && /“Brand new” has gained 5,000 views since it went up 20h ago/.test(nb.p), nb.p);
-  check('TikTok — and its views count in the total, so the old post is not credited with 100%', /94% of the ~5,300/.test(nb.p), nb.p);
-  const longCap = ttMover({ videos: { a: { s: series(80) } } },
-    [{ id: 'a', title: 'Brushing the mic, no talking at all tonight #asmr #tingles #nottalking', create_time: oldS }], v => v.title, fmtUS, atb, NOW)();
-  check('TikTok — a long caption is cut on a word, with an ellipsis, never mid-hashtag', /“Brushing the mic, no talking at all tonight…”/.test(longCap.p), longCap.p);
+}
+
+/* TikTok's Top mover is on the calendar day, as the Today card is: since local midnight, on
+   the Today card's own hours, so the posts' shares add up to its views figure. The owner
+   dropped the rolling-24-hour framing, and the chip right under that card had kept it. */
+console.log('\nTikTok Top mover — the post that did the work today, since midnight');
+{
+  const MIN = 60e3, H = 3600e3;
+  const noon = new Date(2026, 8, 30, 12, 0).getTime(), mid = new Date(2026, 8, 30).getTime();
+  const cut = (a, b) => { const i = TT.indexOf(a); return TT.slice(i, TT.indexOf(b, i)); };
+  const arrowOf = a => cut(a, '\n  };\n') + '\n  };\n';
+  const lineOf = a => cut(a, '\n') + '\n';
+  const grabTT = n => cut('  function ' + n + '(', '\n  }\n') + '\n  }\n';
+  const moverApi = (hist, videos, NOW) => new Function('hist', 'videos', 'NOW', `
+    const RealDate = globalThis.Date;
+    class Date extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } }
+    const fmt = new Intl.NumberFormat('en-AU');
+    ${lineOf('  const capOf = ')}${arrowOf('  const clip = (s, n) =>')}${arrowOf('  const shortCap = ')}
+    ${lineOf('  const TAG_RE = ')}${arrowOf('  const noTags = s =>')}${arrowOf('  const feedCap = ')}
+    ${lineOf('  const TT_GAP = ')}${arrowOf('  const ttStoredBasis = ')}
+    ${grabTT('ttGainBuckets')}${grabTT('recDayGains')}
+    ${arrowOf('  const localMidnight = ')}${arrowOf('  const clockTxt = ')}
+    ${grabTT('answerMover')}
+    return { answerMover, recDayGains };`)(hist, videos, NOW);
+  const mover = (hist, videos, NOW) => moverApi(hist, videos, NOW).answerMover();
+  // a post read every 15 minutes from two days back, gaining `today` views a reading since
+  // midnight and `before` a reading until then
+  const rec = (title, before, today, born) => {
+    const s = []; let v = 1000;
+    for (let t = mid - 2 * 864e5; t <= noon; t += 15 * MIN) { v += t > mid ? today : before; s.push([t, v, 0, 0, 0]); }
+    return { create_time: (born || mid - 30 * 864e5) / 1000, title, s };
+  };
+  const live = (id, title, born) => ({ id, title, create_time: (born || mid - 30 * 864e5) / 1000 });
+  const cap = 'Brushing the mic, no talking at all tonight #asmr #tingles #nottalking';
+  const hist = { videos: { a: rec(cap, 50, 6), b: rec('Rain on a tin roof', 0, 2) } };
+  const r = mover(hist, [live('a', cap), live('b', 'Rain on a tin roof')], noon);
+  check('the figure is since midnight: 48 readings × 6', r.f === '+288 views today', r.f);
+  check('its share is of the Today card’s figure: 288 of 384 is 75%', /75% of the 384 views your posts gained today, the Today so far figure\./.test(r.p), r.p);
+  check('it says since midnight, and never “24 hours”', /has gained 288 views since midnight/.test(r.p) && !/24/.test(r.f + r.p + r.h), r.p);
+  check('yesterday’s big gains do not make it the mover', true && r.f !== '+2,400 views today');
+  check('the post is named without its hashtags, and the full caption rides in its title', /^“Brushing the mic, no talking at all tonight” has gained/.test(r.p) && r.t === cap, r.p);
+  check('a lopsided day is called out', /doing the lifting/.test(r.h), r.h);
+  // a post that went up at 9 am, first read at 9:03 with 900: every view counts, from 0
+  const born = mid + 9 * H, s = [];
+  for (let t = born + 3 * MIN, v = 900; t <= noon; t += 15 * MIN, v += 20) s.push([t, v, 0, 0, 0]);
+  const withNew = mover({ videos: { ...hist.videos, n: { create_time: born / 1000, title: 'Brand new #asmr', s } } },
+    [live('a', cap), live('b', 'Rain on a tin roof'), live('n', 'Brand new #asmr', born)], noon);
+  const nv = s[s.length - 1][1];
+  check('a post that went up today counts from 0, so its first reading’s views are in', withNew.f === '+' + new Intl.NumberFormat('en-AU').format(nv) + ' views today', withNew.f + ' vs ' + nv);
+  check('and it says when it went up', /“Brand new” has gained [\d,]+ views since midnight \(it went up at 9 am\)/.test(withNew.p), withNew.p);
+  // a post that has scrolled out of TikTok's list is still in the pool, by its recorded caption
+  const gone = mover(hist, [live('b', 'Rain on a tin roof')], noon);
+  check('a post out of TikTok’s list still counts, named by its recorded caption', gone.f === '+288 views today' && /^“Brushing the mic/.test(gone.p), gone.p);
+  const fewer = mover(hist, [live('a', cap), live('b', 'Rain on a tin roof'), live('z', 'Not kept')], noon);
+  check('and when the store misses a listed post, the basis is named, by the Today card’s own test', /your 2 newest posts gained today/.test(fewer.p), fewer.p);
+  const none = mover({ videos: { a: rec(cap, 50, 0) } }, [live('a', cap)], noon);
+  check('a day with nothing counted yet says so', none.h === 'Nothing counted yet today.' && none.f === '—' && /since midnight/.test(none.p), JSON.stringify(none));
+  check('nothing recorded at all still answers with a sentence', !!mover(null, [], noon).p);
+  // a hole today: the views across it count in no hour, and the sentence says so
+  const holed = rec(cap, 50, 6); holed.s = holed.s.filter(x => !(x[0] > mid + 2 * H && x[0] < mid + 5 * H));
+  const hr = mover({ videos: { a: holed, b: rec('Rain on a tin roof', 0, 2) } }, [live('a', cap), live('b', 'Rain on a tin roof')], noon);
+  check('a hole today is admitted', /Part of today wasn’t recorded, so these are the views that were counted\./.test(hr.p), hr.p);
+  // readings off the quarter-hour grid (at :10, :25, …): the first one after midnight carries
+  // a few minutes from before it, and the chip must still show the Today card's very figure
+  const off = t => { const r = rec(t, 50, 6); r.s = r.s.map(x => [x[0] + 10 * MIN, x[1], 0, 0, 0]).filter(x => x[0] <= noon); return r; };
+  const offHist = { videos: { a: off(cap), b: off('Rain on a tin roof') } };
+  const api = moverApi(offHist, [live('a', cap), live('b', 'Rain on a tin roof')], noon);
+  const todayCard = api.recDayGains(16).get(new Date(noon).toLocaleDateString('en-CA'));
+  const om = api.answerMover();
+  check('the chip’s total is the Today card’s figure, to the view, whatever the reading times', new RegExp('of the ' + todayCard + ' views').test(om.p), todayCard + ' / ' + om.p);
+  check('the chip paints the full caption as the sentence’s title', /\(a\.t \? ' title="' \+ escAttr\(a\.t\) \+ '"' : ''\)/.test(TT));
 }
 
 console.log('\nYouTube Today — built from your videos, not the lumpy channel total');
