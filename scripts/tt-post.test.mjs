@@ -69,7 +69,7 @@ const SRC = `
   ${line('  const milestonePct = ')}
   ${arrow('  const liveFollowers = fh =>')}
   ${fnOf('projectMilestone')}
-  ${line('  const TT_GAP = ')}
+  ${line('  const TT_GAP = ')}${arrow('  const ttStoredBasis = ')}
   ${fnOf('ttGainBuckets')}${fnOf('recDayGains')}
   ${fnOf('ttGradeOf')}${fnOf('ttReportCardHtml')}
   ${TODAY}
@@ -113,7 +113,9 @@ console.log('\nviews today — one post, by the Today card’s rules (Wed 30 Sep
     d.n === m.cmp.n && d.today === m.cmp.today && d.yday === m.cmp.yday && d.n === 8, JSON.stringify([d.n, d.today, d.yday, m.cmp.n, m.cmp.today, m.cmp.yday]));
   check('nothing is partial when the recording is whole', d.partial === false);
   const t = tileOf(P.ttPostTopHtml(v), 'views today');
-  check('the tile: +396, since midnight, yesterday by 8 am: 320', t && t.v === '+396' && t.cls === 'up' && t.c[0] === 'since midnight' && t.c[1] === 'yesterday by 8 am: 320', JSON.stringify(t));
+  check('the tile: +396 since midnight, and the comparison with both of its own figures (by 8 am: 384 today, 320 yesterday)',
+    t && t.v === '+396' && t.cls === 'up' && t.c[0] === 'since midnight' && t.c[1] === 'by 8 am: 384 today, 320 yesterday', JSON.stringify(t));
+  check('the tile never sets yesterday’s whole-hour figure beside the live-to-now one alone', !/^yesterday by/.test(t.c[1]), JSON.stringify(t));
 
   // two posts: each is its own share of the day, and together they are the day
   const hist2 = { videos: { p: rec(NOW, t0, k => k === today ? 12 : 10), q: rec(NOW, NOW - 20 * D, () => 3) }, followers: [] };
@@ -139,7 +141,7 @@ console.log('\nviews today — one post, by the Today card’s rules (Wed 30 Sep
   const P5 = load(NOW, late, [v]);
   const d5 = P5.ttPostToday(v), t5 = tileOf(P5.ttPostTopHtml(v), 'views today');
   check('a count that stops at the last reading says so: since midnight, to 7:45 am', t5.c[0] === 'since midnight, to 7:45 am', JSON.stringify(t5));
-  check('and the comparison runs only to the whole hours it has (7 am)', d5.n === 7 && t5.c[1] === 'yesterday by 7 am: 280', JSON.stringify([d5.n, t5.c]));
+  check('and the comparison runs only to the whole hours it has (7 am)', d5.n === 7 && t5.c[1] === 'by 7 am: 280 today, 280 yesterday', JSON.stringify([d5.n, t5.c]));
 
   // no reading at all since midnight
   const stale = { videos: { p: rec(NOW, t0, () => 10, t => t > at(2026, 9, 29, 23)) }, followers: [] };
@@ -181,7 +183,7 @@ console.log('\nviews today — the edges');
   const dd = Pd.ttPostToday(dv), mm = Pd.ttTodayModel();
   const td = tileOf(Pd.ttPostTopHtml(dv), 'views today');
   check('the day after the clocks go forward it compares hours with hours, as the Today card does',
-    dd.n === mm.cmp.n && dd.today === mm.cmp.today && dd.yday === mm.cmp.yday && td.c[1] === 'yesterday’s first 8 hours: ' + mm.cmp.yday, JSON.stringify([dd.n, dd.yday, mm.cmp.yday, td.c]));
+    dd.n === mm.cmp.n && dd.today === mm.cmp.today && dd.yday === mm.cmp.yday && td.c[1] === 'first 8 hours: ' + mm.cmp.today + ' today, ' + mm.cmp.yday + ' yesterday', JSON.stringify([dd.n, dd.yday, mm.cmp.yday, td.c]));
   const body = fnOf('ttPostToday');
   check('no day boundary here is made by adding or taking 24 hours', !/864e5 \*|24 \* H|86400/.test(body.replace('now - 16 * 864e5', '')), body.match(/.*(24 \* H|86400).*/)?.[0]);
 }
@@ -242,6 +244,20 @@ console.log('\nthe verdict is the report card’s own grade');
   const ht = Pt.ttPostTopHtml(hot);
   check('an estimate that beats all of them is graded, but is not a record yet',
     /Grade A\+/.test(ht) && !/cc-win/.test(ht) && !/★/.test(ht) && /going by its estimated first 48 hours/.test(ht), ht.slice(0, 200));
+  // a tie at the top of a big pool rounds to 100% — it is not ahead of all of them
+  const big = [], bsc = {};
+  for (let i = 0; i < 120; i++) { big.push(post('b' + i, NOW - (10 + i) * D, 1000 + i, 80)); bsc['b' + i] = 1000 + i; }
+  const tieTop = post('h', NOW - 12 * D, 1119, 90);
+  const Pb = load(NOW, { videos: {}, followers: [] }, [tieTop, ...big], {}, { ...bsc, h: 1119 });
+  const vb = Pb.ttVerdictOf(tieTop);
+  check('level with the best of 120 others is not “beats all”, and not a record, though it rounds to 100%',
+    vb.g.beats === 100 && !vb.win && /^Beats 99% of your 120 other posts on reach\.$/.test(vb.why), vb.why);
+  // ahead of every post, but one of them is still estimated: no star yet, and it says why
+  const est = post('y', NOW - 10 * H, 3000, 200);
+  const Py = load(NOW, { videos: {}, followers: [] }, [hit, est, ...others], {}, { ...sc, h: 35436, y: 20000 });
+  const vy = Py.ttVerdictOf(hit);
+  check('ahead of all, one of them an estimate: not a record yet, and said', !vy.win &&
+    /^Beats all 29 of your other posts on reach \(some of them are under 2 days old, so they count by their estimated first 48 hours\)\.$/.test(vy.why), vy.why);
   check('the Today card’s newest-post row reads the same verdict', /const \{ pill, pc, why \} = ttVerdictOf\(nv\);/.test(TODAY));
 }
 
@@ -259,7 +275,12 @@ console.log('\nthe four numbers, each against something');
   check('exactly double is 2×', vt(4700).c[0] === '2× your usual post', vt(4700).c[0]);
   check('under double it is a percentage (43%, not 0.4×)', vt(1000).c[0] === '43% of your usual post', vt(1000).c[0]);
   check('the value is the post’s real count, for the count-up to land on', vt(35436).v === '35,436');
-  check('the usual leaves this post out (the report card’s pool)', /videos\.filter\(x => x\.id !== v\.id\)\.map\(scoreOf\)/.test(fnOf('ttPostTopHtml')));
+  check('the usual leaves this post out, and counts finished posts only (48 hours or older)',
+    /videos\.filter\(x => x\.id !== v\.id && \(now - \(x\.create_time \|\| 0\) \* 1000\) \/ 60000 >= PJ_HORIZON\)\.map\(scoreOf\)/.test(fnOf('ttPostTopHtml')));
+  // a launching post's estimate is not a view count, so it never moves "your usual: N views"
+  const est = tileOf(top(post('p', NOW - 12 * D, 35436, 2835, 5), { p: 35436, e1: 90000, e2: 90000, e3: 90000 },
+    others.concat([1, 2, 3].map(i => post('e' + i, NOW - 10 * H, 3000, 200)))), 'views');
+  check('three launching posts estimated at 90,000 leave the usual at 2,350 views', est.c[1] === 'your usual: 2,350 views', JSON.stringify(est));
   const few = tileOf(top(post('p', NOW - 12 * D, 5000, 400), { p: 5000 }, others.slice(0, 3)), 'views');
   check('with fewer than 4 others there is no usual to compare with', few.c[0] === 'too few posts to compare with yet', JSON.stringify(few));
   const launching = tileOf(top(post('p', NOW - 10 * H, 2725, 260), { p: 5393 }), 'views');
@@ -323,7 +344,7 @@ console.log('\nthe usual range, drawn');
   check('the range is gold like the usual line, and Cinnamoroll sets its own',
     /color: 'var\(--uband, var\(--gold\)\)'/.test(TT) && /body\[data-theme="cloud"\] \{ --uband:#[0-9a-f]{6}; --uband-op:[.\d]+; \}/.test(TT));
   check('it needs 4 finished launches at an age, from the gold line’s own voters',
-    /const TTC_BAND_MIN = 4;/.test(TT) && /const band = grid\.map\(\(t, i\) => ttcBand\(vPts\.map\(a => a\[i\]\)\)\);/.test(TT));
+    /const TTC_BAND_MIN = 4;/.test(TT) && /const vAtB = voters\.map\(c => grid\.map\(t => ttcAtB\(c, t\)\)\);\s*\n\s*const band = grid\.map\(\(t, i\) => ttcBand\(vAtB\.map\(a => a\[i\]\)\)\);/.test(TT));
 }
 
 /* ---------- 5. nothing lost: every panel is in the fold, on both hosts ---------- */
@@ -356,7 +377,10 @@ console.log('\nnothing that was shown is gone');
   check('the chart’s explainer is kept word for word, behind “How to read this”',
     /Grey lines are up to ' \+ TTC_MAX \+ ' of your newest other posts, each lined up from when it went up\. Gold is your usual post \(the middle of those tracked without gaps\)/.test(lc) &&
     /The gold line stops where fewer than ' \+ TTC_MIN_VOTES \+[\s\S]*A break in a line is a gap in tracking, not a pause in views\./.test(lc) && /How to read this<\/summary>/.test(lc));
-  check('and the notes that explain an empty or clipped chart stay on show', /offTop \+ thin \+/.test(lc) && /No gold line yet/.test(lc));
+  check('and the notes that explain an empty or clipped chart stay on show', /offTop \+ tiny \+ thin \+/.test(lc) && /No gold line yet/.test(lc));
+  check('a post too small for the scale says so with its own recorded count, instead of a silent rescale',
+    /const tiny = fLast && isFinite\(scTop\) && peak\(fPts\) < scTop \* 0\.1/.test(lc) && /too few to show on this scale yet, so its line runs along the bottom/.test(lc) &&
+    /const fLast = hasFocus \? focus\.filter\(p => p\[0\] <= TTC_SPAN\)\.pop\(\) : null;/.test(lc));
   check('the card’s ids are all still there', ['latestCard', 'latestPrev', 'latestNext', 'latestPos', 'latestCover', 'latestTitle', 'latestMetaLine', 'latestContent']
     .every(id => TT.includes('id="' + id + '"')));
   check('the caption is shown whole, its hashtags only set quieter', /const capHtml = v => esc\(capOf\(v\)\)\.replace\(TAG_RE, m => '<span class="ptag">' \+ m \+ '<\/span>'\);/.test(TT) &&

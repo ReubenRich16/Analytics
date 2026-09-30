@@ -58,13 +58,15 @@ console.log('\nthe away card');
     const RealDate = globalThis.Date;
     class Date extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } }
     const fmt = new Intl.NumberFormat('en-US'), esc = s => String(s);
-    const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3;
+    const ALERT_DAYS = 14, AWAY_MIN = 30 * 60e3, AWAY_F_FRESH = 2 * 60e3;
+    // the follower count captured when she came back: the profile handed in as \`me\`
+    let awayF = me && me.follower_count != null ? me.follower_count : null;
     const capOf = v => v.title || '';
     ${TT.slice(TT.indexOf('  const clip = (s, n) =>'), TT.indexOf('\n', TT.indexOf('  const escAttr = ')) + 1)}
     ${arrow(TT, '  const fmtAgo = ts =>')}
     ${arrow(TT, '  const hourSpan = at =>')}
-    ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}
-    ${fn('function ttGainBuckets(from, onlyId)')}
+    ${line(TT, '  const fseries = () =>')}${line(TT, '  const fAtOrBefore = ')}${line(TT, '  const ATB = ')}${line(TT, '  const ordinal = ')}${line(TT, '  const TT_GAP = ')}${arrow(TT, '  const ttStoredBasis = ')}
+    ${fn('function ttGainBuckets(from, onlyId, to)')}
     ${fn('function recDayGains(days)')}
     ${fn('function ttAwayLen()')}
     ${fn('function ttAwayHeadHtml(list)')}
@@ -125,7 +127,10 @@ console.log('\nthe away card');
   check('a resumed tab re-reads the away stamp, but only after a real absence',
     /if \(v && Date\.now\(\) - v >= AWAY_MIN\) loadSeen\(\);/.test(vis) && /resumeSeen\(\); poll\(\);/.test(vis));
   check('and a page restored from the back-forward cache does too', /addEventListener\('pageshow', e => \{\s*\n\s*if \(e\.persisted/.test(TT));
-  check('loadSeen freezes when she came back', /awayUntil = Date\.now\(\);\s*\n\s*touchSeen\(\);/.test(fn('function loadSeen()')));
+  check('loadSeen freezes when she came back, and takes the follower count as it stood then',
+    /awayUntil = Date\.now\(\);\s*\n\s*awayF = null;\s*\n\s*takeAwayF\(\);\s*\n\s*touchSeen\(\);/.test(fn('function loadSeen()')));
+  check('a refresh that brings a fresh profile stamps it, and a failed one keeps the old stamp',
+    /if \(u\) \{ u\._at = Date\.now\(\); me = u; takeAwayF\(\); \}/.test(TT) && !/me = u \|\| me;/.test(TT));
 }
 
 console.log('\nthe stat tiles');
@@ -262,7 +267,7 @@ console.log('\nlaunch curves');
     ${line(TT, '  const TTC_SPAN = ')}${line(TT, '  const TTC_STEP = ')}${line(TT, '  const TTC_MAX = ')}${line(TT, '  const TTC_MIN_VOTES = ')}
     ${line(TT, '  const TTC_BAND_MIN = ')}
     ${arrow(TT, '  const ttcBand = vals =>')}
-    ${fn('function ttcAt(c, t)')}
+    ${fn('function ttcAt(c, t)')}${fn('function ttcAtB(c, t)')}
     ${line(TT, '  const ttLaunchGrid = ')}
     const foldAttr = k => ' data-fold="' + k + '"';
     const videos = [];

@@ -290,8 +290,8 @@ console.log('\nreading a curve for the overlay');
     ${fn('function pjAt(c, t)')}
     ${fn('function pjClean(c)')}
     const PJ_HORIZON = 48 * 60, PJ_GAP = 60, PJ_COVER = 44 * 60;
-    ${fn('function ttcAt(c, t)')}
-    return { ttcAt, pjClean };
+    ${fn('function ttcAt(c, t)')}${fn('function ttcAtB(c, t)')}
+    return { ttcAt, ttcAtB, pjClean };
   `)(NOW);
   const c = [[0, 0], [60, 600], [120, 900]];
   check('inside the recording it interpolates', M.ttcAt(c, 90) === 750, M.ttcAt(c, 90));
@@ -301,6 +301,10 @@ console.log('\nreading a curve for the overlay');
   check('past the end of the recording it refuses rather than holding flat',
     M.ttcAt(c, 2880) === null, String(M.ttcAt(c, 2880)));
   check('before it starts, likewise', M.ttcAt(c, -1) === null);
+  // the usual range reads the last recorded count at or before an age: a count a launch had
+  check('the band’s reading never interpolates: at 90 minutes it is the 60-minute reading', M.ttcAtB(c, 90) === c.find(p => p[0] === 60)[1] && M.ttcAtB(c, 120) === 900,
+    M.ttcAtB(c, 90) + ' / ' + JSON.stringify(c));
+  check('and it keeps ttcAt’s ends', M.ttcAtB(c, 2880) === null && M.ttcAtB(c, -1) === null && M.ttcAtB([[0, 5]], 0) === null);
   check('and a one-point curve answers nothing', M.ttcAt([[0, 5]], 0) === null);
 
   /* A hole is judged against the age it ENDS at, by pjClean's rule rather than a new one:

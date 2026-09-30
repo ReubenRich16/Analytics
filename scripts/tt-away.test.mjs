@@ -55,10 +55,14 @@ const SRC = `
   ${line('  const fseries = () =>')}${line('  const fAtOrBefore = ')}${line('  const ATB = ')}${line('  const ordinal = ')}
   ${fnOf('nextMilestone')}
   ${line('  const ACCEL_MIN = ')}${line('  const ACCEL_RATIO = ')}${line('  const ALERT_DAYS = ')}
-  ${line('  const TT_GAP = ')}
+  ${line('  const TT_GAP = ')}${arrow('  const ttStoredBasis = ')}
   ${fnOf('ttGainBuckets')}
   ${fnOf('ttAlerts')}
   ${line('  const AWAY_MIN = ')}
+  ${line('  const AWAY_F_FRESH = ')}
+  // the follower count captured when she came back (the page's takeAwayF): here, the one
+  // the test hands in as the profile at that moment, unless it names another
+  let awayF = backF !== undefined ? backF : me && me.follower_count != null ? me.follower_count : null;
   ${fnOf('ttAwayLen')}
   ${fnOf('ttAwayHeadHtml')}
   ${arrow('  const hourSpan = at =>')}
@@ -70,7 +74,7 @@ const SRC = `
 
 /* A little DOM: #alertsContent keeps its HTML and counts paints; each paint makes a fresh
    #awayOlder (closed unless the markup says open), as a real innerHTML would. */
-function make({ hist, videos = [], me = {}, awaySince = null, awayUntil = null, NOW, accel = [] }) {
+function make({ hist, videos = [], me = {}, awaySince = null, awayUntil = null, NOW, accel = [], backF }) {
   const dom = { paints: 0, fold: null, opened: [], els: {} };
   const content = {
     dataset: {}, on: {}, addEventListener(t, f) { this.on[t] = f; }, _h: '',
@@ -79,8 +83,8 @@ function make({ hist, videos = [], me = {}, awaySince = null, awayUntil = null, 
   };
   dom.content = content;
   const $ = id => id === 'alertsContent' ? content : id === 'awayOlder' ? dom.fold : (dom.els[id] || (dom.els[id] = { textContent: '' }));
-  const api = new Function('hist', 'videos', 'me', 'awaySince', 'awayUntil', 'NOW', '$', 'opened', 'accelSet', SRC)(
-    hist, videos, me, awaySince, awayUntil, NOW, $, dom.opened, new Set(accel));
+  const api = new Function('hist', 'videos', 'me', 'awaySince', 'awayUntil', 'NOW', '$', 'opened', 'accelSet', 'backF', SRC)(
+    hist, videos, me, awaySince, awayUntil, NOW, $, dom.opened, new Set(accel), backF);
   return Object.assign(dom, api);
 }
 
@@ -202,6 +206,41 @@ console.log('\nthe big numbers are the sentence\'s numbers');
   const none = x.ttAwayHeadHtml(list.filter(a => a.at < AWAY));
   check('no milestone number when nothing was passed', !/milestone/.test(none) && /<span class="k">views<\/span>/.test(none), none);
   check('a short absence has no headline at all', make({ hist, videos: live, me, awaySince: NOW - 20 * MIN, awayUntil: NOW, NOW }).ttAwayHeadHtml(list) === '');
+}
+
+/* She was away 19 hours, came back at noon, and has now been reading for two more. The label
+   still says 19h, so every figure under it must be those 19 hours: the views stop at the
+   moment she came back, the milestones too, and the followers are the count as it stood
+   then — not the live one, which kept moving while she read. */
+console.log('\nthe figures stop when she came back (reading for two hours after a 19-hour absence)');
+{
+  const LATER = NOW + 2 * H;
+  const recL = (id, mile, crossAt, perHour) => ({ ...rec(id, mile, crossAt, perHour), s: series(START, LATER, mile, crossAt, perHour) });
+  const histL = { ...hist, videos: {
+    a: recL('a', 1000, NOW - 10 * H, 1), b: recL('b', 2500, NOW - 5 * D, 1), c: recL('c', 1000, NOW - 8 * D, 1),
+    d: recL('d', 5000, NOW - 3 * D, 2), e: recL('e', 25000, NOW - 11 * D, 1),
+    f: { ...hist.videos.f, s: series(START, LATER, 100500, START, 40) },
+    // a post that passes 750 views at 1 pm, after she came back
+    g: { ...rec('a', 750, NOW + H, 2), s: series(START, LATER, 750, NOW + H, 2) } } };
+  const histThen = { ...hist, videos: { ...hist.videos, g: { ...rec('a', 750, NOW + H, 2), s: series(START, NOW, 750, NOW + H, 2) } } };
+  const then = make({ hist: histThen, videos: live, me, awaySince: AWAY, awayUntil: NOW, NOW });
+  const want = strip((then.ttAwayHeadHtml(then.ttAlerts()).match(/<p class="explain awayhead">[\s\S]*?<\/p>/) || [''])[0]);
+  const x = make({ hist: histL, videos: live, me: { follower_count: 280 }, backF: 267, awaySince: AWAY, awayUntil: NOW, NOW: LATER });
+  const list = x.ttAlerts();
+  const got = strip((x.ttAwayHeadHtml(list).match(/<p class="explain awayhead">[\s\S]*?<\/p>/) || [''])[0]);
+  check('(the fixture has a milestone after she came back, and views kept arriving)',
+    list.some(a => a.at > NOW) && x.ttAlerts().length > 0);
+  check('two hours later the headline reads exactly as it did when she came back', got === want && /^In the 19h since you last looked: /.test(got), got + ' vs ' + want);
+  check('followers are the count when she came back (267 − 260), not the live 280', /\+7 followers/.test(got), got);
+  // no count captured at that moment: a follower check within 2 minutes of it stands in, and
+  // an older one does not
+  const noF = { ...histL, followers: hist.followers.concat([[NOW - MIN, 266, 1, 1]]) };
+  const y = make({ hist: noF, videos: live, me: { follower_count: 280 }, backF: null, awaySince: AWAY, awayUntil: NOW, NOW: LATER });
+  const yh = strip(y.ttAwayHeadHtml(y.ttAlerts()));
+  check('with no count captured then, a follower check a minute before she came back stands in (266 − 260)', /\+6 followers/.test(yh), yh);
+  const z = make({ hist: histL, videos: live, me: { follower_count: 280 }, backF: null, awayUntil: NOW, awaySince: AWAY, NOW: LATER });
+  const zh = strip(z.ttAwayHeadHtml(z.ttAlerts()));
+  check('and with only an older check (2 hours before), no follower figure rather than the live count', !/follower/.test(zh), zh);
 }
 
 console.log('\nthe card');

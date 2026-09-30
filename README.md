@@ -140,12 +140,15 @@ data/             recorded history, committed by the robots
   the 23- and 25-hour daylight-saving days, and it says so); the newest post with its grade
   or "Too early"; and the next milestone. **More about today** folds away yesterday's whole
   day, a typical day (the milestone's own pace), and where today already places. The
-  question chips sit under it, led by **Top mover**. Followers and likes are measured from
+  question chips sit under it, led by **Top mover** — also on the calendar day: the post that
+  gained the most views since midnight, and its share of the Today card's own figure (a post
+  that went up today counts from 0 at the moment it went up). Followers and likes are measured from
   the Worker's follower check that starts the day: it now takes one on its first tick after
   midnight in Australia/Melbourne (as well as every ~3 hours); a check up to 15 minutes
-  after midnight counts as midnight, otherwise the last one before midnight (within 3½
-  hours) is used and named ("since last night's 10:40 pm check"), otherwise the tile says
-  there is none. The page's controls (theme, refresh rate, sound, Refresh, Pause, One page,
+  after midnight counts as the start of the day (named by its time, "since 12:05 am", unless
+  it was within the minute), otherwise the last one before midnight (within 3½ hours) is used
+  and named ("since 10:40 pm", with a line under the tiles saying it was last night's check),
+  otherwise the tile says there is none. The page's controls (theme, refresh rate, sound, Refresh, Pause, One page,
   Sign out and the links to the other dashboards) live behind the **⋯** button
 - **Milestone moments** — cross a subscriber or view milestone and the page blurs, the
   number fills the screen, confetti falls and a party sound plays. Once per milestone ever

@@ -62,11 +62,11 @@ const SRC = `
   ${line('  const milestonePct = ')}
   ${arrow('  const liveFollowers = fh =>')}
   ${fnOf('projectMilestone')}
-  ${line('  const TT_GAP = ')}
+  ${line('  const TT_GAP = ')}${arrow('  const ttStoredBasis = ')}
   ${fnOf('ttGainBuckets')}${fnOf('recDayGains')}
   ${fnOf('ttGradeOf')}
   ${TODAY}
-  return { ttTodayModel, ttTodayWords, ttTodayMoreHtml, renderToday, recDayGains, projectMilestone, liveFollowers,
+  return { ttTodayModel, ttTodayWords, ttTodayMoreHtml, renderToday, recDayGains, ttPostToday, projectMilestone, liveFollowers,
            localMidnight, clockTxt, ttDayBase, milestonePct, els };`;
 const load = (NOW, hist, videos, me, scores) =>
   new Function('NOW', 'hist', 'videos', 'me', 'scores', SRC)(NOW, hist, videos, me, scores);
@@ -136,9 +136,11 @@ console.log('\na normal day (Wed 30 Sep, 8:23 am)');
   check('and counts the same hours of each day: 32 readings each', m.cmp.today === 384 && m.cmp.yday === 320, m.cmp.today + ' / ' + m.cmp.yday);
   check('64 more and 20% up is “Ahead of yesterday”', m.cmp.verdict === 'ahead' && w.pill[0] === 'Ahead of yesterday', w.pill);
   check('the sentence says what is compared, with both numbers', w.say.replace(/<[^>]*>/g, '') === 'By 8 am: 384 views today, 320 yesterday — 20% more.', w.say);
-  check('the views tile names the hour it compares with', w.cmpTile === 'yesterday by 8 am: 320', w.cmpTile);
+  check('the tiles carry no half of the comparison: it lives in the sentence, both figures together', w.cmpTile === undefined, w.cmpTile);
   check('followers run from the 12:04 am check to the live count', m.base.exact && m.followers === fol(NOW) - fol(at(2026, 9, 30, 0, 4)), m.followers);
-  check('and say “since midnight”', w.since === 'since midnight', w.since);
+  check('a check four minutes after midnight is named, not called midnight', w.since === 'since 12:04 am', w.since);
+  const onTheDot = mk(NOW, { flog: followerLog(NOW).concat([[at(2026, 9, 30) + 20e3, fol(at(2026, 9, 30)), lik(at(2026, 9, 30)), 30]]).sort((a, b) => a[0] - b[0]) });
+  check('a check within the minute after midnight is “since midnight”', onTheDot.ttTodayWords(onTheDot.ttTodayModel()).since === 'since midnight');
   check('likes use the same check', m.likes === lik(NOW) - lik(at(2026, 9, 30, 0, 4)), m.likes);
   check('yesterday’s followers run midnight to midnight', m.yFollowers === fol(at(2026, 9, 30, 0, 4)) - fol(at(2026, 9, 29, 0, 4)), m.yFollowers);
   const p = P.projectMilestone(P.liveFollowers(followerLog(NOW, { midnight: true })), 'followers', 'follower');
@@ -152,7 +154,7 @@ console.log('\na normal day (Wed 30 Sep, 8:23 am)');
     /Not ahead of any of the last 14 full days tracked yet — the day isn’t over\./.test(more), more);
   check('no record is claimed', w.record === null && !/cc-win/.test(P.ttTodayMoreHtml(m, w)));
   check('followers are ranked only against days with a midnight check at both ends, and only “so far”',
-    m.fDays === 14 && /So far, no more followers than on any of the last 14 days with a midnight check at both ends\./.test(more), more);
+    m.fDays === 14 && /So far, fewer followers than on any of the last 14 days with a midnight check at both ends\./.test(more) && !/no more/.test(more), more);
   const nomid = mk(NOW, { flog: followerLog(NOW) }).ttTodayModel();
   check('with no midnight checks there is no follower ranking at all', nomid.fAhead === null && nomid.fDays === 0);
   const lvl = P.ttTodayWords(mk(NOW, { rate: k => k === today ? 10.5 : 10 }).ttTodayModel());
@@ -165,6 +167,56 @@ console.log('\na normal day (Wed 30 Sep, 8:23 am)');
   check('half of yesterday is behind, in plain words', back.cmp.verdict === 'behind' && /— 50% fewer\./.test(P.ttTodayWords(back).say), P.ttTodayWords(back).say);
   const zero = mk(NOW, { rate: k => k === today ? 5 : 0 }).ttTodayModel();
   check('a yesterday of nothing gives no percentage', /yesterday had none by then\./.test(P.ttTodayWords(zero).say) && !/%/.test(P.ttTodayWords(zero).say), P.ttTodayWords(zero).say);
+}
+
+/* Probe P1 from the review: a post went up at 7:00, was first read at 7:03 with 400 views, and
+   then gained 10 every 15 minutes. At 9 am the Today card said +70 while the post's own
+   "views today" tile said 470. The moment it went up is its reading before the first (0
+   views, a fact), so its first 400 count, in the hour they came in. */
+console.log('\na post that went up today counts from 0 (probe P1)');
+{
+  const NOW = at(2026, 9, 30, 9, 0);
+  const born = at(2026, 9, 30, 7, 0);
+  const s = [];
+  for (let t = born + 3 * MIN, v = 400; t <= NOW; t += 15 * MIN, v += 10) s.push([t, v, 0, 0, 0]);
+  const hist = { videos: { ...viewsStore(NOW, () => 10), n: { create_time: born / 1000, title: 'New one', s } }, followers: followerLog(NOW, { midnight: true }) };
+  const newPost = { id: 'n', title: 'New one', create_time: born / 1000, view_count: s[s.length - 1][1], like_count: 3 };
+  const P = load(NOW, hist, [newPost, oldPost(NOW)], { follower_count: fol(NOW), likes_count: lik(NOW) }, {});
+  const m = P.ttTodayModel();
+  const tn = P.ttPostToday(newPost), tp = P.ttPostToday(oldPost(NOW));
+  check('(the fixture: first read at 7:03 with 400, 470 by 8:48)', s[0][1] === 400 && newPost.view_count === 470 && tn.state === 'new' && tn.gain === 470);
+  check('the Today card counts all 470 of the new post’s views', m.views === 36 * 10 + 470, m.views);
+  check('so the Today card is the sum of the post tiles', m.views === tn.gain + tp.gain, m.views + ' vs ' + tn.gain + ' + ' + tp.gain);
+  check('the first 400 are filed in the hour they came in (7–8 am), not lost', [...P.recDayGains(16).hours].some(([k, b]) => k === at(2026, 9, 30, 7) && b.gain === 400 + 3 * 10 + 4 * 10), JSON.stringify([...P.recDayGains(16).hours].filter(([k]) => k >= at(2026, 9, 30, 7)).map(([k, b]) => [new Date(k).getHours(), b.gain])));
+  // first read more than 75 minutes after it went up: those views came in across a hole
+  const late = s.filter(x => x[0] >= at(2026, 9, 30, 8, 30));
+  const P2 = load(NOW, { ...hist, videos: { ...hist.videos, n: { create_time: born / 1000, s: late } } }, [newPost, oldPost(NOW)], { follower_count: fol(NOW), likes_count: lik(NOW) }, {});
+  const m2 = P2.ttTodayModel();
+  check('first read 93 minutes after it went up: counted in the total, in no hour, and today says part wasn’t recorded',
+    m2.viewsPartial && P2.recDayGains(16).gaps.has(dayKey(NOW)), JSON.stringify([m2.views, m2.viewsPartial]));
+  // a post that went up before the window still counts from its first reading inside it
+  const P3 = load(NOW, { ...hist, videos: { ...hist.videos, n: { create_time: (at(2026, 9, 29, 7)) / 1000, s } } }, [oldPost(NOW)], { follower_count: fol(NOW), likes_count: lik(NOW) }, {});
+  check('a post that went up yesterday but was first read today is not counted from 0', P3.ttTodayModel().views === 36 * 10 + 70, P3.ttTodayModel().views);
+}
+
+console.log('\na profile older than the start-of-day check is not measured against it');
+{
+  const NOW = at(2026, 9, 30, 8, 23);
+  const P = mk(NOW, { me: { follower_count: fol(at(2026, 9, 29, 23)), likes_count: lik(at(2026, 9, 29, 23)), _at: at(2026, 9, 29, 23) } });
+  const m = P.ttTodayModel(), w = P.ttTodayWords(m);
+  check('followers and likes wait for a fresh count instead of printing a fall', m.meStale && m.followers === null && m.likes === null && w.noBase === 'waiting for a fresh count', JSON.stringify([m.followers, w.noBase]));
+  check('the fold says why', /Waiting for a fresh follower count/.test(P.ttTodayMoreHtml(m, w)));
+  const fresh = mk(NOW, { me: { follower_count: fol(NOW), likes_count: lik(NOW), _at: NOW - MIN } }).ttTodayModel();
+  check('a profile fetched after the check is used', !fresh.meStale && fresh.followers === fol(NOW) - fol(at(2026, 9, 30, 0, 4)));
+}
+
+console.log('\none follower is “follower”');
+{
+  const NOW = at(2026, 9, 30, 8, 23);
+  const P = mk(NOW, { me: { follower_count: fol(at(2026, 9, 30, 0, 4)) + 1, likes_count: lik(at(2026, 9, 30, 0, 4)) + 1 } });
+  P.renderToday();
+  const txt = P.els.todayMain.innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  check('+1 follower, +1 like', /\+1 follower since/.test(txt) && /\+1 like since/.test(txt), txt);
 }
 
 console.log('\nfewer posts kept than listed: the basis is named');
@@ -183,7 +235,15 @@ console.log('\nthe start of the day, when the midnight check is missing');
   const P = mk(NOW, { flog: followerLog(NOW) });
   const m = P.ttTodayModel(), w = P.ttTodayWords(m);
   check('the last check before midnight is used when it is within 3½ hours', m.base && !m.base.exact && P.clockTxt(m.base.s[0]) === '10:40 pm', m.base && P.clockTxt(m.base.s[0]));
-  check('and named by its real time', w.since === 'since last night’s 10:40 pm check', w.since);
+  check('and named by its real time, short enough for the tile', w.since === 'since 10:40 pm', w.since);
+  check('with the whole story said once under the tiles', w.sinceNote === 'Followers and likes are counted from your tracker’s 10:40 pm check last night, its last before midnight.', w.sinceNote);
+  P.renderToday();
+  check('(and painted there)', /<p class="today-note today-since">Followers and likes are counted from your tracker’s 10:40\u00a0pm check last night/.test(P.els.todayMain.innerHTML));
+  const paint = cut('  function paintToday(', '\n  }\n');
+  check('a tile says “yesterday: ±N” only when both days ran midnight to midnight (10:40 pm to 10:40 pm is the fold’s to name)',
+    /const dayExact = m\.base && m\.yBase && m\.base\.exact && m\.yBase\.exact;/.test(paint) &&
+    (paint.match(/m\.y(Followers|Likes) != null && dayExact \? 'yesterday: '/g) || []).length === 2 &&
+    (paint.match(/'yesterday: '/g) || []).length === 2, paint.match(/.*yesterday: .*/g));
   check('followers are live minus that check', m.followers === fol(NOW) - fol(at(2026, 9, 29, 22, 40)), m.followers);
   const more = P.ttTodayMoreHtml(m, w).replace(/<[^>]*>/g, '');
   check('two 10:40 pm checks are told apart by their day', /counted from 10:40 pm Monday to 10:40 pm Tuesday\./.test(more), more);
@@ -240,7 +300,7 @@ console.log('\ndaylight saving: Sun 4 Oct 2026 is 23 hours long');
   check('which ends at 8 am today and 7 am yesterday', P.clockTxt(m.cmp.tB) === '8 am' && P.clockTxt(m.cmp.yB) === '7 am');
   check('and the sentence says so, and why', w.say.replace(/<[^>]*>/g, '') ===
     'In the first 7 hours of each day: 280 views today (to 8 am), 280 yesterday (to 7 am) — exactly level. Hours are compared with hours because the clocks went forward an hour today.', w.say);
-  check('the tile says hours, not a clock time that would not match', w.cmpTile === 'yesterday’s first 7 hours: 280', w.cmpTile);
+  check('the tiles carry no half of the comparison on a short day either', w.cmpTile === undefined);
   check('views since midnight are 29 readings, not 33', m.views === 29 * 10, m.views);
   check('the midnight check on the DST morning counts', m.base && m.base.exact && m.followers === fol(NOW) - fol(at(2026, 10, 4, 0, 4)));
 
@@ -304,8 +364,10 @@ console.log('\nthe card itself');
   const txt = main.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
   check('the card is revealed', P.els.todayCard.style.display === 'block');
   check('three tiles, as the motion layer counts them (.tile .v)', (main.match(/<div class="tile">/g) || []).length === 3 && (main.match(/<div class="v[ "]/g) || []).length === 3);
-  check('views, followers and likes, each with its comparison', /\+396 views yesterday by 8 am: 320/.test(txt) && /followers since midnight a typical day: \+8\.0/.test(txt) &&
-    /likes since midnight a typical day: \+90/.test(txt), txt);
+  check('views, followers and likes, each saying what it counts from', /\+396 views since midnight \+3 followers since 12:04 am a typical day: \+8\.0/.test(txt) &&
+    /likes since 12:04 am a typical day: \+90/.test(txt), txt);
+  check('the views tile never sets yesterday’s whole-hour figure beside its own live one', !/views since midnight yesterday/.test(txt) && !/yesterday by/.test(txt) &&
+    /By 8 am: 384 views today, 320 yesterday — 20% more\./.test(txt), txt);
   check('the verdict leads', /Today so far/.test(txt) && /Ahead of yesterday/.test(txt));
   check('the newest post: caption without hashtags, its age, views and likes', /Slow tapping on a glass jar Posted 3h ago · 93 views · 7 likes/.test(txt) && !/#asmr/.test(txt), txt);
   check('it is “Too early”, for the report card’s reason', /Too early/.test(txt) && /Averaging 31 views an hour since it went up\. It gets a grade at 5 hours old \(about 2 hours to go\)\./.test(txt), txt);

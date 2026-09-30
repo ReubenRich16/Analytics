@@ -74,7 +74,7 @@ const SRC = `
   ${arrow('  const liveFollowers = fh =>')}
   ${fnOf('projectMilestone')}
   ${line('  const ALERT_DAYS = ')}
-  ${line('  const TT_GAP = ')}
+  ${line('  const TT_GAP = ')}${arrow('  const ttStoredBasis = ')}
   ${fnOf('ttGainBuckets')}${fnOf('recDayGains')}
   ${line('  let recTrendsRange = ')}
   ${TRENDS}
@@ -197,7 +197,15 @@ console.log('\nviews each day: bars, gaps left as gaps, the peak labelled');
   check('the first and last day are labelled', />16 Sept<\/text>/.test(svg) && />29 Sept<\/text>/.test(svg));
   check('the tallest day carries its exact figure', /<text class="val" [^>]*>4,800<\/text>/.test(svg), svg.match(/<text class="val[^>]*>[^<]*<\/text>/g));
   check('and the newest day its own, as a line’s endpoint would', /<text class="val dim" [^>]*text-anchor="end">960<\/text>/.test(svg));
-  check('a dashed line splits the two weeks, named on both sides', /class="refline"/.test(svg) && />the 7 before<\/text>/.test(svg) && />last 7 days<\/text>/.test(svg));
+  check('a dashed line splits the two weeks, named on both sides', /class="refline"/.test(svg) && />\u2190 the 7 before<\/text>/.test(svg) && />last 7 days \u2192<\/text>/.test(svg));
+  {
+    // the week names sit in their own row above the bars, not on the date row along the bottom
+    const wk = [...svg.matchAll(/<text class="ax wk" x="[\d.]+" y="([\d.]+)"/g)].map(m => +m[1]);
+    const dates = [...svg.matchAll(/<text class="ax" x="[\d.]+" y="([\d.]+)"[^>]*>\d+ Sept<\/text>/g)].map(m => +m[1]);
+    const top = Math.min(...[...svg.matchAll(/<rect x="[\d.]+" y="([\d.]+)"/g)].map(m => +m[1]));
+    check('the week names are above every bar, well clear of the dates', wk.length === 2 && wk.every(y => y < top - 8) && dates.length === 2 && dates.every(y => y > wk[0] + 150), JSON.stringify({ wk, dates, top }));
+    check('the bars are the neutral accent, not the “live” red', /style="fill:var\(--daybar, var\(--accent\)\)"/.test(svg) && !/fill:var\(--live\)/.test(svg));
+  }
   check('the chart counts whole views on its axis', /niceScale\(0, Math\.max\(1, max\), 4, true\)/.test(TRENDS));
   check('it says whose views it counts', /On your posts, one bar for each full day\. Tap a bar to see that day\./.test(text(h)), text(h).slice(0, 400));
   check('its aria-label names the span and the most', /aria-label="Views each day, 16 Sept to 29 Sept; the most was 4,800 on /.test(svg));
@@ -278,6 +286,32 @@ console.log('\nwhen people watch: the busiest and quietest three hours, from the
   check('the whole is the bars’ own total', t.includes('— out of ' + f0.format(bars.reduce((a, x) => a + x, 0)) + ' on the bars below.'));
   check('the clock is named: Melbourne time', /When people watch · Melbourne time/.test(t));
   check('the caveat stays, whole', /Views gained by hour of the day over the last 14 days, in your own local time\. A new post’s first hours land wherever it was published, so your posting times shape this as much as your audience’s habits\./.test(t));
+}
+
+/* Probe P2 from the review: views arrive only 9 am – 9 pm, except on the night of 27–28 Sept,
+   when the recording has a hole from 12:30 to 6:30 am and 300 views really came in across it.
+   Those views are in the fortnight's total but in no hour, so the hours 12–7 am may read 0
+   while views did arrive: "none between 9 pm and 9 am" would be false. */
+console.log('\nwhen people watch: an hour a hole touched is never called empty (probe P2)');
+{
+  const h0 = at(2026, 9, 28, 0, 30), h1 = at(2026, 9, 28, 6, 30);
+  const inHole = t => t > h0 && t < h1;
+  const P = mk(NOW, { rate: (id, k, t) => { const hr = new Date(t - 1).getHours(); return hr >= 9 && hr < 21 ? 10 : inHole(t - 1) ? 12.5 : 0; }, skip: inHole });
+  const t = text(render(P)).replace(/\u00a0/g, ' ');
+  check('(the fixture: 300 views came in across the hole)', 24 * 12.5 === 300);
+  check('it never says no views between 9 pm and 9 am', !/9 pm–9 am/.test(t) && !/none between 9 pm and 9 am/.test(t), t);
+  check('the stretch with none is only hours no hole touched: 9 pm–12 am', /No views: 9 pm–12 am/.test(t) && /none between 9 pm and 12 am/.test(t), t);
+  check('the busiest figure is said as views counted, and the gap is named',
+    /views were counted between/.test(t) && /Part of this fortnight had a gap in the recording: views that came in during a gap are in no hour, so the quietest hours are picked only from hours with no gap\./.test(t), t);
+  // every block touched by a hole: no quiet answer at all
+  const bad = new Set([...Array(24).keys()].filter(h => h % 3 === 0));
+  const hb = new Array(24).fill(0); for (let h = 9; h < 21; h++) hb[h] = 100;
+  const b = P.recHourBlocks(hb, bad);
+  check('when every three hours in a row touch a hole, no quiet block is named', b.quiet === null && b.floor, JSON.stringify(b.quiet));
+  const ht = text(P.recHourBlocksHtml(hb, bad)).replace(/\u00a0/g, ' ');
+  check('and the card says why, with the busiest pill only', !/Quietest|No views|none between/.test(ht) && /no hours can be called the quietest/.test(ht) && /Busiest:/.test(ht), ht);
+  // no hole: exactly as before
+  check('with no holes the answer is unchanged', JSON.stringify(P.recHourBlocks(hb)) === JSON.stringify(P.recHourBlocks(hb, new Set())) && P.recHourBlocks(hb).quiet.none);
 }
 
 console.log('\n“Today so far” is the Now room’s figure');

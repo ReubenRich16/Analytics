@@ -575,6 +575,9 @@ console.log('\nrecorded trends — the charts TikTok never provides');
 {
   check('the card lives in the Account room, revealed at sign-in',
     /id="recTrendsCard"/.test(TT) && /'breakdownCard', 'recTrendsCard'/.test(TT));
+  check('and leads it: the week against the week before is the first thing the Account room shows',
+    TT.indexOf('data-pane="account"') < TT.indexOf('id="recTrendsCard"') && TT.indexOf('id="recTrendsCard"') < TT.indexOf('id="breakdownCard"') &&
+    TT.indexOf('id="breakdownCard"') < TT.indexOf('data-pane="coach"'));
   const rt = TT.slice(TT.indexOf('function renderRecTrends('), TT.indexOf('\n  }\n', TT.indexOf('const rr = $(\'recRange\')')));
   check('it only shows once the recordings exist',
     /if \(!hist\) \{ card\.style\.display = 'none'; return; \}/.test(rt));

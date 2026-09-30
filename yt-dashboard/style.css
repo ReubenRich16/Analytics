@@ -234,6 +234,7 @@
   details.cc-more > summary::after { content:"▾"; content:"▾" / ""; font-size:13px; line-height:1;
     transition:transform .2s ease; }
   details.cc-more[open] > summary::after { transform:rotate(180deg); }
+  @media (hover:hover) { details.cc-more > summary:hover { text-decoration:underline; text-underline-offset:3px; } }
   details.cc-more > summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
   details.cc-more .cc-more-body { padding-top:10px; }
   @media (pointer:coarse) { details.cc-more > summary { min-height:44px; } }

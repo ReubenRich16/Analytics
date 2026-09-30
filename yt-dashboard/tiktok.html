@@ -60,7 +60,7 @@
   #alertsContent .away-quiet { margin:2px 0 0; }
   #alertsContent details.cc-more { margin-top:8px; }
   #alertsContent details.cc-more .cc-more-body { padding-top:4px; }
-  details.away-how > summary { color:var(--muted); font-weight:600; }
+  /* the ⓘ "How…" folds look as tappable as the others: the same accent, weight and ▾ */
   details.away-how .explain:last-child { margin-bottom:2px; }
   /* the detail drawer — everything else it needs is already in the shared stylesheet */
   #ttDrawer .cover { width:76px; flex:none; }
@@ -191,7 +191,7 @@
   /* on a wide screen the one chart stays chart-sized rather than filling a 1,400px card */
   .post-chart svg.chart { max-width:820px; }
   details.chart-how { margin-top:8px; border-top:0; }
-  details.chart-how > summary { color:var(--muted); font-weight:600; padding-top:4px; min-height:32px; }
+  details.chart-how > summary { padding-top:4px; }
   details.chart-how .cc-more-body { padding-top:4px; }
   details.post-more > summary { font-size:13px; }
   details.post-more > .cc-more-body > .dsection:first-child, details.post-more > .cc-more-body > div:first-child > .dsection { margin-top:4px; }
@@ -472,14 +472,9 @@
   <div class="room-pane" data-pane="account" id="pane-account" role="tabpanel" aria-labelledby="tab-account" tabindex="0">
   <div class="room-divider"><span>Account</span><hr></div>
 
-  <!-- ACCOUNT BREAKDOWN -->
-  <div class="card" id="breakdownCard" style="display:none">
-    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
-    <p class="explain" style="margin-top:8px">Totals and averages across your posts.</p>
-    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
-  </div>
-
   <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings.
+       First in the Account room, so the week against the week before is the first thing it
+       shows rather than 3,700px down under the breakdown.
        The last 7 days against the 7 before lead, then views each day, follower history and
        when people watch. Where the numbers come from is one tap away, at the foot: a static
        fold, so the poll's repaint of the content above never shuts it. -->
@@ -490,6 +485,13 @@
       <summary><span aria-hidden="true">&#9432;</span> Where these numbers come from</summary>
       <div class="cc-more-body"><p class="explain">TikTok keeps no history, so these charts come from your dashboard’s own tracker, as kept on this device. A gap in the recording is left out, not guessed.</p></div>
     </details>
+  </div>
+
+  <!-- ACCOUNT BREAKDOWN -->
+  <div class="card" id="breakdownCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Account breakdown — everything at a glance</div>
+    <p class="explain" style="margin-top:8px">Totals and averages across your posts.</p>
+    <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
   </div>
@@ -1675,6 +1677,7 @@
   async function boot() {
     setStatus('loading…');
     me = await api('/tiktok/me');
+    if (me) me._at = Date.now();
     // before any history is pulled: this is what decides whose store we are adding to
     loadHist(me && me.open_id);
     loadSeen();   // reads when this device last had the page open, then stamps now
@@ -1891,7 +1894,7 @@
       }
       listPartial = !!v.partial;
       videos = got;
-      me = u || me;
+      if (u) { u._at = Date.now(); me = u; takeAwayF(); }
       checkMilestones(me);
       // A long break with the tab alive (a locked phone) starts a fresh session, the same
       // rule a reload follows — the away card tells that story, not one giant bar.
@@ -2738,8 +2741,9 @@
      their values there, less the highest and the lowest quarter of them, rounded down — with
      4 to 7 launches that is the top one and the bottom one, with 8 the top two and the bottom
      two. So a line above the band beat most of your launches at that age, and one below it
-     trailed most of them. Each edge is a real launch's count, never an average of two, and
-     under TTC_BAND_MIN launches there is no band at that age at all. */
+     trailed most of them. Each edge is a real launch's recorded count — its last reading at or
+     before that age (ttcAtB), never a value read between two readings or an average of two —
+     and under TTC_BAND_MIN launches there is no band at that age at all. */
   const ttcBand = vals => {
     const s = vals.filter(x => x != null).sort((a, b) => a - b);
     if (s.length < TTC_BAND_MIN) return null;
@@ -2767,6 +2771,17 @@
       return pjAt(c, t);
     }
     return c[c.length - 1][1];
+  }
+  /* The band's reading: the launch's last recorded count at or before age t, by the same hole
+     rule as ttcAt (a reading older than max(PJ_GAP, t / 4) before t, with the next one after
+     it, is a hole and gives nothing). No interpolation: the band's edges are counts a launch
+     really had. */
+  function ttcAtB(c, t) {
+    if (!c || c.length < 2 || t < c[0][0] || t > c[c.length - 1][0] + 1e-6) return null;
+    let i = 0;
+    while (i + 1 < c.length && c[i + 1][0] <= t + 1e-6) i++;
+    if (i + 1 < c.length && c[i + 1][0] - c[i][0] > Math.max(PJ_GAP, t / 4)) return null;
+    return c[i][1];
   }
   const ttLaunchGrid = () => { const g = []; for (let t = 0; t <= TTC_SPAN; t += TTC_STEP) g.push(t); return g; };
 
@@ -2796,7 +2811,8 @@
       return vals.length >= TTC_MIN_VOTES ? pjMed(vals) : null;   // null, never 0 — a zero would draw
     });
     const fPts = focus ? grid.map(t => ttcAt(focus, t)) : grid.map(() => null);
-    const band = grid.map((t, i) => ttcBand(vPts.map(a => a[i])));
+    const vAtB = voters.map(c => grid.map(t => ttcAtB(c, t)));
+    const band = grid.map((t, i) => ttcBand(vAtB.map(a => a[i])));
     const hasBand = band.some(b => b);
     const ageM = Math.max(0, (Date.now() - v.create_time * 1000) / 60000);
     const tips = grid.map((t, i) =>
@@ -2835,6 +2851,13 @@
     const scTop = yMax ? niceScale(0, yMax, 4, true).hi : Infinity;
     const clipped = oPts.filter(a => peak(a) > scTop).length;
     const offTop = clipped ? '<p class="dnote" style="margin-top:6px">' + clipped + ' other post' + (clipped === 1 ? ' runs' : 's run') + ' off the top.</p>' : '';
+    // a young post can sit so low on a scale set by its elders that its line is a dot on the
+    // floor: said plainly, with its figure, rather than rescaling behind her back
+    // (its newest recorded reading inside the 48 hours, as recorded, not a value read off the line)
+    const fLast = hasFocus ? focus.filter(p => p[0] <= TTC_SPAN).pop() : null;
+    const tiny = fLast && isFinite(scTop) && peak(fPts) < scTop * 0.1
+      ? '<p class="dnote" style="margin-top:6px">This post had ' + fmt.format(Math.round(fLast[1])) + ' views at ' + fmtAge(Math.floor(fLast[0])).replace(/ 0m$/, '') +
+        ' old — too few to show on this scale yet, so its line runs along the bottom.</p>' : '';
     // no gold line is the one thing that empties the chart, so it says why where it shows
     const thin = voters.length < TTC_MIN_VOTES
       ? '<p class="dnote" style="margin-top:6px">No gold line yet — it needs at least ' + TTC_MIN_VOTES +
@@ -2844,7 +2867,7 @@
     // the band's own rule, with the numbers it is resting on here
     const most = band.reduce((b, x) => (x && (!b || x.n > b.n) ? x : b), null);
     const bandTxt = hasBand
-      ? 'The shaded band is your usual range: where your finished launches were at each age, leaving out the highest and lowest quarter of them' +
+      ? 'The shaded band is your usual range: the counts your finished launches had reached by each age (each one’s last reading by then), leaving out the highest and lowest quarter of them' +
         ' (of these ' + most.n + ', the top ' + most.k + ' and the bottom ' + most.k + '). Above it is a better start than most of your posts had; below it, a slower one.'
       : voters.length >= TTC_MIN_VOTES
         ? 'A shaded band of your usual range appears once ' + TTC_BAND_MIN + ' of these posts are tracked without gaps through their first 48 hours — ' + voters.length + ' so far.'
@@ -2852,7 +2875,7 @@
     const how = mount ? 'drawer-how' : 'card-how';
     holder.innerHTML = '<div class="dsection post-chart"><h4>First 48 hours vs your usual</h4>' +
       multiLineHtml(series, tips, { label: 'First 48 hours: this post against your usual post and your usual range', x0: 'posted', xMid: '24h', x1: '48h', int: true, yMax,
-        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null, legend }) + offTop + thin +
+        nowAt: ageM < TTC_SPAN ? ageM / TTC_STEP : null, legend }) + offTop + tiny + thin +
       // said where it shows, as well as in the fold: otherwise the chart looks as if this post is missing from it
       (hasFocus ? '' : '<p class="dnote" style="margin-top:6px">' + (videos.filter(x => (x.create_time || 0) > (v.create_time || 0)).length >= 20
         ? 'This page keeps the first 48 hours of your 20 newest posts, so this one\u2019s own line isn\u2019t drawn \u2014 only your usual.'
@@ -3378,9 +3401,12 @@
     let html = '<p class="post-verdict"><span class="today-pill' + (vd.pc ? ' ' + vd.pc : '') + (vd.win ? ' cc-win' : '') + '">' +
       (vd.win ? '\u2605 ' : '') + esc(vd.pill) + '</span> ' + nb(esc(why)) + '</p>';
 
-    // Views, against your usual post
+    /* Views, against your usual post. "Your usual: N views" is a count of views, so it is the
+       middle of your finished posts only — at least 48 hours old, each its real total. A
+       younger post's figure is an estimate of its first 48 hours, which is not a view count.
+       Needs 4 of them, as the grade does. */
     const mine = scoreOf(v);
-    const pool = videos.filter(x => x.id !== v.id).map(scoreOf).filter(x => x != null);
+    const pool = videos.filter(x => x.id !== v.id && (now - (x.create_time || 0) * 1000) / 60000 >= PJ_HORIZON).map(scoreOf).filter(x => x != null);
     const usual = pool.length >= 4 ? pjMed(pool) : null;
     const uTxt = usual != null ? fmt.format(Math.round(usual)) : '';
     let vc1 = '', vc2 = '';
@@ -3421,7 +3447,10 @@
     } else if (td.state === 'ok') {
       tv = '+' + fmt.format(td.gain); tcls = td.gain > 0 ? 'up' : '';
       tc1 = td.partial ? 'part of today wasn’t recorded' : 'since midnight' + (now - td.last > 20 * 60e3 ? ', to ' + clockTxt(td.last) : '');
-      if (td.today != null) tc2 = (clockTxt(td.tB) === clockTxt(td.yB) ? 'yesterday by ' + clockTxt(td.yB) : 'yesterday’s first ' + td.n + ' hours') + ': ' + fmt.format(td.yday);
+      // the comparison runs to a whole hour, so both of its figures are given, never
+      // yesterday's alone beside a figure that runs to the newest reading
+      if (td.today != null) tc2 = (clockTxt(td.tB) === clockTxt(td.yB) ? 'by ' + clockTxt(td.tB) : 'first ' + td.n + ' hours') + ': ' +
+        fmt.format(td.today) + ' today, ' + fmt.format(td.yday) + ' yesterday';
       else if (td.cmpWhy === 'early') tc2 = 'compared with yesterday from 1 am';
       else if (td.cmpWhy === 'posted') tc2 = 'it went up yesterday at ' + clockTxt(td.t0);
       else if (td.cmpWhy === 'yesterday') tc2 = 'yesterday wasn’t fully tracked';
@@ -3455,7 +3484,7 @@
   /* No "Today" chip here any more. It measured a rolling 24 hours, and at 2 am those were
      mostly yesterday; the Today so far card above now answers that question on the calendar
      day, and carries everything the chip said (the usual day, the day before, and where
-     today places among recent days). Top mover leads instead. */
+     today places among recent days). Top mover leads instead, on the same calendar day. */
   const ANSWER_CHIPS = ['Top mover', 'Newest', 'Last 5', 'Like rate', 'Milestone', 'Next post'];
   let answerChip = 0;
 
@@ -3614,49 +3643,43 @@
     put('ttFollowersSpark', series(1), 'var(--up)');
   }
 
-  /* Mover — which post did the work in the last day, from the Worker's own recordings.
-     Same rules as the YouTube page: gains scaled to a 24-hour rate because the sampling
-     windows are elastic, a count that went backwards is skipped, and a post not sampled
-     in the last six hours doesn't get to claim "today". A post that has scrolled out of
-     the 60 newest posts the page fetches abstains — there is no caption left to name it by. */
+  /* Top mover — which post did the work today: the calendar day on this device's clock, since
+     local midnight, on exactly the Today card's rules and from the very same hours. Each
+     post's figure is its share of those hours (ttGainBuckets' byPost), so the shares add up to
+     the Today card's views figure, and the pool is every post the tracker recorded, named by
+     its recorded caption when it has scrolled out of TikTok's list. A post that went up today
+     counts from 0 at the moment it went up. A rolling 24 hours is gone from here as it is from
+     the Today card: at 2 am those hours were mostly yesterday. */
   function answerMover() {
-    const rec = (hist && hist.videos) || {};
-    const now = Date.now();
-    let total = 0, best = null, n = 0;
-    for (const [id, r] of Object.entries(rec)) {
-      const arr = r && r.s;
-      if (!arr || !arr.length) continue;
-      const v = videos.find(x => x.id === id);
-      if (!v) continue;
-      const latest = arr[arr.length - 1];
-      if (now - latest[0] > 6 * 3600e3) continue;
-      // a post born inside the window starts from zero at the moment it went up — a fact,
-      // not an estimate — so a launch in its first day can be the Mover, and its views
-      // count towards the total instead of silently inflating everyone else's share
-      const born = (v.create_time || 0) * 1000;
-      let a = ATB(arr, now - 864e5), whole = false;
-      if (!a && born > now - 864e5) { a = [born, 0]; whole = true; }
-      if (!a || a === latest) continue;
-      const spanH = (latest[0] - a[0]) / 3600e3;
-      if (!whole && (spanH < 12 || spanH > 36)) continue;
-      const gain = whole ? latest[1] : Math.round((latest[1] - a[1]) / spanH * 24);
-      if (gain < 0) continue;
-      n++;
-      total += gain;
-      if (gain > 0 && (!best || gain > best.gain)) best = { id, gain, v, whole, born };
+    const now = Date.now(), tMid = localMidnight(now);
+    // the Today card's own call, and today's hours out of it: the same figure, to the view
+    const day = recDayGains(16), tk = new Date(now).toLocaleDateString('en-CA');
+    const per = new Map();
+    let total = 0;
+    for (const [at, b] of day.hours) {
+      if (new Date(at).toLocaleDateString('en-CA') !== tk) continue;
+      total += b.gain;
+      for (const [id, x] of b.byPost) per.set(id, (per.get(id) || 0) + x);
     }
-    if (!best || !total) return { h: 'A quiet 24 hours.', f: '—', p: 'No new views tracked on your newest posts in the last 24 hours — or the tracker hasn’t checked in recently.' };
-    const share = Math.round(best.gain / total * 100);
+    const gap = day.gaps.has(tk) ? ' Part of today wasn’t recorded, so these are the views that were counted.' : '';
+    let id = null, best = 0;
+    for (const [k, x] of per) if (x > best) { id = k; best = x; }
+    if (!id || !total) return { h: 'Nothing counted yet today.', f: '—',
+      p: 'No new views recorded on your posts since midnight yet — or the tracker hasn’t checked in since.' + gap };
+    const share = Math.round(best / total * 100);
     const verdict = share >= 60 ? 'One post is doing the lifting.' : share >= 35 ? 'A clear front-runner.' : 'The gains are spread out.';
-    const cap = shortCap(capOf(best.v), 60, '');
-    const q = cap ? '“' + cap + '”' : 'One post';
-    // the pool is the posts the Worker is still recording (the newest, up to 60 days old),
-    // not every post — a resurfacing older one can't be seen here, so say which posts
-    const of = share + '% of the ~' + fmt.format(total) + ' gained by the ' + (n === 1 ? 'one post' : n + ' newest posts') + ' being tracked.';
-    return { h: verdict, f: '+' + fmt.format(best.gain) + ' views in 24h',
-      p: best.whole
-        ? q + ' has gained ' + fmt.format(best.gain) + ' views since it went up ' + fmtAgo(best.born) + ' — ' + of
-        : q + ' gained about ' + fmt.format(best.gain) + ' views over the last 24 hours — ' + of };
+    const rec = hist && hist.videos && hist.videos[id], live = videos.find(x => x.id === id);
+    const full = ((rec && rec.title) || '').trim() || (live ? capOf(live) : '');
+    const name = feedCap(full, 60, '');
+    const q = name ? '“' + name + '”' : 'A post with no caption';
+    const born = ((live && live.create_time) || (rec && rec.create_time) || 0) * 1000;
+    const stored = ttStoredBasis();
+    const of = (share === 100 ? 'all' : share + '%') + ' of the ' + fmt.format(total) + ' views your ' +
+      (stored ? stored + ' newest posts' : 'posts') + ' gained today, the Today so far figure.';
+    return { h: verdict, f: '+' + fmt.format(best) + ' views today',
+      p: q + ' has gained ' + fmt.format(best) + ' views since midnight' +
+        (born >= tMid ? ' (it went up at ' + clockTxt(born) + ')' : '') + ' — ' + of + gap,
+      t: full };
   }
   /* Hit rate — run or cold patch, from the same fair scores as every ranking: each post's
      total so far, or its projection while a launch is still running, and an unscoreable
@@ -3703,7 +3726,9 @@
     let a;
     try { a = [answerMover, answerNewest, answerHitRate, answerEngagement, answerMilestone, answerNext][answerChip](); }
     catch (e) { a = { h: 'Couldn’t work that one out.', f: '—', p: 'The numbers behind this chip aren’t loaded yet.' }; }
-    el.innerHTML = '<div class="ah">' + esc(a.h) + '</div><div class="af">' + esc(a.f) + '</div><p class="ap">' + esc(a.p) + '</p>';
+    // `t`: the full caption of a post the sentence names without its hashtags
+    el.innerHTML = '<div class="ah">' + esc(a.h) + '</div><div class="af">' + esc(a.f) + '</div><p class="ap"' +
+      (a.t ? ' title="' + escAttr(a.t) + '"' : '') + '>' + esc(a.p) + '</p>';
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
   }
 
@@ -3930,7 +3955,19 @@
      question, and another device's answer would be a lie here. */
   /* awayUntil is when this device came back — the moment loadSeen ran. The absence is
      printed as awayUntil − awaySince, so the '(19h)' stops growing while she reads. */
-  let awaySince = null, awayUntil = null;
+  /* awayF is the follower count at that moment — the profile as it was fetched when she came
+     back — so the headline's followers figure ends where its views end, not at a live count
+     that keeps moving while she reads. null until a count fetched within 2 minutes of
+     awayUntil exists (on a resumed tab it arrives with the poll that follows). */
+  let awaySince = null, awayUntil = null, awayF = null;
+  const AWAY_F_FRESH = 2 * 60e3;
+  // when `me` was last fetched: stamped on the object itself, so an older one kept after a
+  // failed refresh is known to be older
+  const meAt = () => (me && me._at) || 0;
+  function takeAwayF() {
+    if (awayF == null && awayUntil && me && me.follower_count != null && Math.abs(meAt() - awayUntil) <= AWAY_F_FRESH)
+      awayF = +me.follower_count;
+  }
   const seenKey = () => 'tt_seen:' + ((me && me.open_id) || '');
   function touchSeen() {
     if (!me || !me.open_id) return;
@@ -3943,6 +3980,8 @@
       awaySince = v > 0 && v < Date.now() ? v : null;
     } catch (e) { awaySince = null; }
     awayUntil = Date.now();
+    awayF = null;
+    takeAwayF();
     touchSeen();
   }
 
@@ -3957,7 +3996,14 @@
          up has gained nothing, so a revision, and its rebound, never votes. After a real
          downward revision, gains count again once the old peak is passed.
        · A post's first reading inside the window counts from that reading, so a rise
-         between a reading before `from` and one after it is not counted.
+         between a reading before `from` and one after it is not counted — except for a post
+         that went up inside the window. It had 0 views when it went up, which is a fact,
+         not an estimate, so the moment it went up is its reading before the first: the views
+         it had by its first reading are counted, filed like any other gain (in that
+         reading's hour, or as a hole when the first reading came more than TT_GAP after it
+         went up). Without this, a post that went up at 7:00 and was first read at 7:03 with
+         400 views never counted those 400, and the Today card fell short of the post's own
+         'views today' tile.
        · A rise across a hole in the recording (readings more than TT_GAP apart) belongs to
          no single hour. It is kept in `total`, because those views really came in, but
          goes in no hour, and every local day the hole touches is returned in `incomplete`,
@@ -3965,19 +4011,30 @@
      Each gain is filed under the hour just before its reading (arr[i][0] − 1), because a
      reading taken at 3:00 carries the views that came in before 3:00. */
   const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's hourly tier
+  // how many posts the recorded figures rest on, when that is not every post TikTok lists
+  // (0 when the store holds all of them). Every card that names its basis asks this one test.
+  const ttStoredBasis = () => {
+    const kept = (hist && hist.videos) || {};
+    return videos.every(v => kept[v.id]) ? 0 : Object.keys(kept).length;
+  };
   // `onlyId`: one post's hours and holes, by exactly the same rules (the post card's "views
-  // today" tile reads it, so a post's figure is its own share of the Today card's)
-  function ttGainBuckets(from, onlyId) {
+  // today" tile reads it, so a post's figure is its own share of the Today card's).
+  // `to`: readings after this instant are left out (the away card stops at the moment she
+  // came back, so its figures cover exactly the absence its label names)
+  function ttGainBuckets(from, onlyId, to) {
     const vids = (hist && hist.videos) || {};
-    const now = Date.now();
+    const now = to != null ? Math.min(to, Date.now()) : Date.now();
     const hours = new Map();     // hourStartMs → { gain, byPost: Map(id → gain) }
     const incomplete = new Set();  // local days (en-CA) a hole in some post's recording touches
     const holes = [];              // [from, to] of each hole a gain crossed, for hour-level checks
     let total = 0;
     for (const [id, rec] of Object.entries(vids)) {
       if (onlyId != null && id !== onlyId) continue;
-      const arr = (rec && rec.s) || [];
+      let arr = (rec && rec.s) || [];
       if (!arr.length) continue;
+      // a post that went up inside the window starts from 0 at the moment it went up
+      const born = rec.create_time ? rec.create_time * 1000 : 0;
+      if (born >= from && born < arr[0][0]) arr = [[born, 0]].concat(arr);
       // the high-water mark as it stood at `from`, so the same reading gains the same
       // amount whichever window asks
       let hi = arr[0][1] || 0, i = 1;
@@ -4115,29 +4172,34 @@
     // a big number: [data-count] so motion.js counts it up (and always lands on this text)
     const num = (v, k, cls) => '<div class="anum"><b class="v' + (cls ? ' ' + cls : '') + '" data-count>' + v +
       '</b><span class="k">' + k + '</span></div>';
-    const g = ttGainBuckets(awaySince);
+    // every figure stops at awayUntil, the moment she came back: the label says '19h', so
+    // the views, followers and milestones are those 19 hours and no more
+    const g = ttGainBuckets(awaySince, null, until);
     // the store keeps the newest posts only, so the headline names its basis when that is
     // fewer than the posts TikTok lists
-    const stored = Object.keys((hist && hist.videos) || {}).length;
+    const stored = ttStoredBasis();
     if (g.total > 0) {
       bits.push('<b>+' + fmt.format(g.total) + ' views</b> on your ' +
-        (stored < videos.length ? stored + ' newest posts' : 'posts'));
+        (stored ? stored + ' newest posts' : 'posts'));
       nums.push(num('+' + fmt.format(g.total), 'views', 'up'));
     }
-    /* Followers run from the snapshot at or before the moment she left to the live count in
-       the header — and only when that snapshot is within three hours of her leaving, so the
-       figure is about the absence and not about the morning before it. */
+    /* Followers run from the snapshot at or before the moment she left to the count when she
+       came back (awayF: the profile as fetched then; failing that, a follower check within 2
+       minutes before it) — and only when the first snapshot is within three hours of her
+       leaving, so the figure is about the absence and not about the morning before it. */
     const f = fseries();
     const a = ATB(f, awaySince);
-    if (a && me && me.follower_count != null && awaySince - a[0] <= 3 * 3600e3) {
-      const df = (me.follower_count || 0) - (a[1] || 0);
+    const bk = ATB(f, until);
+    const back = awayF != null ? awayF : bk && until - bk[0] <= AWAY_F_FRESH && bk[1] != null ? +bk[1] : null;
+    if (a && back != null && awaySince - a[0] <= 3 * 3600e3) {
+      const df = back - (a[1] || 0);
       if (df) {
         bits.push('<b>' + (df > 0 ? '+' : '−') + fmt.format(Math.abs(df)) + ' follower' + (Math.abs(df) === 1 ? '' : 's') + '</b>');
         nums.push(num((df > 0 ? '+' : '−') + fmt.format(Math.abs(df)), 'follower' + (Math.abs(df) === 1 ? '' : 's'), df > 0 ? 'up' : 'down'));
       }
     }
     // the milestones are the feed's own NEW lines, one per post or account total
-    const crossed = list.filter(x => x.at >= awaySince).length;
+    const crossed = list.filter(x => x.at >= awaySince && x.at <= until).length;
     if (crossed) {
       bits.push('<b>' + crossed + '</b> milestone' + (crossed === 1 ? '' : 's') + ' passed');
       nums.push(num(String(crossed), 'milestone' + (crossed === 1 ? '' : 's')));
@@ -4173,7 +4235,8 @@
     const rows = [];
     const from = awaySince && (awayUntil || Date.now()) - awaySince >= AWAY_MIN ? awaySince : Date.now() - 864e5;
     const label = from === awaySince ? 'Busiest hour since you last looked' : 'Busiest hour in the last 24 hours';
-    const g = ttGainBuckets(from);
+    // the absence ends when she came back, as the headline's figures do
+    const g = ttGainBuckets(from, null, from === awaySince ? awayUntil || Date.now() : null);
     let bestAt = 0, best = null;
     for (const [at, b] of g.hours) if (!best || b.gain > best.gain) { best = b; bestAt = at; }
     if (best && best.gain >= 30) {
@@ -4421,26 +4484,54 @@
   /* The busiest and the quietest three hours in a row on the hour-of-day clock, from the very
      buckets its bars are drawn from, so each figure is the sum of three bars. The clock wraps:
      11 pm to 2 am is three hours in a row. A tie is said, never broken silently. When some three
-     hours had no views at all, the quiet answer is the whole stretch with none. */
-  function recHourBlocks(hb) {
+     hours had no views at all, the quiet answer is the whole stretch with none.
+
+     `bad` is the clock hours a hole in the recording overlapped. Views that came in across a
+     hole are real but belong to no hour, so an hour a hole touched may show fewer than it
+     had — or none. Such an hour can never be quiet on this evidence: a quiet block, or a
+     stretch with no views, is looked for only among hours no hole touched, and if every
+     block touches one there is no quiet answer at all. The busiest figure stands, as the
+     views that were counted in those hours (`floor` says some were not). */
+  function recHourBlocks(hb, bad) {
+    bad = bad || new Set();
     const s3 = h => hb[h % 24] + hb[(h + 1) % 24] + hb[(h + 2) % 24];
+    const clean3 = h => !bad.has(h % 24) && !bad.has((h + 1) % 24) && !bad.has((h + 2) % 24);
     const sums = hb.map((_, h) => s3(h));
     const total = hb.reduce((a, b) => a + b, 0);
-    const hi = Math.max(...sums), lo = Math.min(...sums);
+    const hi = Math.max(...sums);
     const at = v => sums.flatMap((x, h) => x === v ? [h] : []);
-    const out = { total, busy: { v: hi, at: at(hi), n: 3 }, quiet: { v: lo, at: at(lo), n: 3 } };
+    const cl = sums.flatMap((x, h) => clean3(h) ? [x] : []);
+    const lo = cl.length ? Math.min(...cl) : null;
+    const out = { total, busy: { v: hi, at: at(hi), n: 3 }, floor: bad.size > 0,
+      quiet: lo == null ? null : { v: lo, at: sums.flatMap((x, h) => x === lo && clean3(h) ? [h] : []), n: 3 } };
     if (lo === 0 && total > 0) {
-      // the runs of hours with nothing, around the clock, starting just after an hour with views
-      const p = hb.findIndex(x => x > 0), runs = [];
+      // the runs of hours with nothing and no hole, around the clock, starting just after an
+      // hour that had views or a hole
+      const stop = h => hb[h] > 0 || bad.has(h);
+      const p = hb.findIndex((x, h) => stop(h)), runs = [];
       let s = -1, len = 0;
       for (let i = 1; i <= 24; i++) {
         const h = (p + i) % 24;
-        if (!hb[h]) { if (s < 0) s = h; len++; }
+        if (!stop(h)) { if (s < 0) s = h; len++; }
         else if (s >= 0) { runs.push([s, len]); s = -1; len = 0; }
       }
       const most = Math.max(...runs.map(r => r[1]));
       const longest = runs.filter(r => r[1] === most).sort((x, y) => x[0] - y[0]);
       out.quiet = { v: 0, at: longest.map(r => r[0]), n: most, none: true };
+    }
+    return out;
+  }
+  // the clock hours (0–23) the holes in a recording overlapped, from `from` on
+  function recHoleHours(holes, from) {
+    const out = new Set();
+    for (const [p, q] of holes || []) {
+      let t = Math.max(p, from);
+      while (t < q && out.size < 24) {
+        const d = new Date(t);
+        out.add(d.getHours());
+        // on to the start of the next hour, taken off the instant (as ttGainBuckets does)
+        t = t - (d.getMinutes() * 60e3 + d.getSeconds() * 1e3 + d.getMilliseconds()) + 3600e3;
+      }
     }
     return out;
   }
@@ -4450,24 +4541,28 @@
     const e = (s + n) % 24, same = recMer(s) === recMer(e) && e > s;
     return ((same ? recHr(s) : recHr(s) + ' ' + recMer(s)) + (join || '–') + recHr(e) + ' ' + recMer(e)).replace(/ (am|pm)/g, '\u00a0$1');
   };
-  function recHourBlocksHtml(hb) {
-    const b = recHourBlocks(hb);
+  function recHourBlocksHtml(hb, bad) {
+    const b = recHourBlocks(hb, bad);
     // three views across a fortnight make a busiest hour of nothing much: it waits for some
     if (b.total < 50) return '<p class="dnote tr-sub">The busiest and quietest hours show once 50 views have been counted by hour.</p>';
-    if (b.busy.v === b.quiet.v) return '<p class="dnote tr-sub">Every three hours in a row had the same views, so none is busiest.</p>';
+    if (b.quiet && b.busy.v === b.quiet.v && !b.floor) return '<p class="dnote tr-sub">Every three hours in a row had the same views, so none is busiest.</p>';
     const tied = x => x.at.length > 1;
     const between = (s, n) => 'between ' + recBlock(s, n, ' and ');
     const others = x => x.at.slice(1, 3).map(s => between(s, x.n)).join(' or ');
     const busy = b.busy, quiet = b.quiet;
-    let say = 'In the last ' + ALERT_DAYS + ' days, <b>' + fmt.format(busy.v) + '</b> views came in ' + between(busy.at[0], 3) +
-      (tied(busy) ? ' (as many as ' + others(busy) + ')' : '') + ', and ' +
-      (quiet.none ? 'none ' + quiet.at.slice(0, 3).map(s => between(s, quiet.n)).join(' or ')
-        : '<b>' + fmt.format(quiet.v) + '</b> ' + between(quiet.at[0], 3) + (tied(quiet) ? ' (as few as ' + others(quiet) + ')' : '')) +
-      ' — out of ' + fmt.format(b.total) + ' on the bars below.';
+    // a quiet block the busiest one ties is no quieter than it: said as no quiet answer
+    const q = quiet && quiet.v < busy.v ? quiet : null;
+    let say = 'In the last ' + ALERT_DAYS + ' days, <b>' + fmt.format(busy.v) + '</b> views ' + (b.floor ? 'were counted ' : 'came in ') + between(busy.at[0], 3) +
+      (tied(busy) ? ' (as many as ' + others(busy) + ')' : '') +
+      (!q ? '' : ', and ' + (q.none ? 'none ' + q.at.slice(0, 3).map(s => between(s, q.n)).join(' or ')
+        : '<b>' + fmt.format(q.v) + '</b> ' + between(q.at[0], 3) + (tied(q) ? ' (as few as ' + others(q) + ')' : ''))) +
+      ' — out of ' + fmt.format(b.total) + ' on the bars below.' +
+      (b.floor ? ' Part of this fortnight had a gap in the recording: views that came in during a gap are in no hour, so ' +
+        (q ? 'the quietest hours are picked only from hours with no gap.' : 'no hours can be called the quietest.') : '');
     return '<div class="tr-pills">' +
       '<span class="today-pill up">Busiest: ' + recBlock(busy.at[0], 3) + (tied(busy) ? ' (tied)' : '') + '</span>' +
-      '<span class="today-pill mute">' + (quiet.none ? 'No views: ' + recBlock(quiet.at[0], quiet.n)
-        : 'Quietest: ' + recBlock(quiet.at[0], 3) + (tied(quiet) ? ' (tied)' : '')) + '</span></div>' +
+      (q ? '<span class="today-pill mute">' + (q.none ? 'No views: ' + recBlock(q.at[0], q.n)
+        : 'Quietest: ' + recBlock(q.at[0], 3) + (tied(q) ? ' (tied)' : '')) + '</span>' : '') + '</div>' +
       '<p class="explain tr-sub">' + say + '</p>';
   }
 
@@ -4480,7 +4575,10 @@
      both sides, ties the bars to the two tiles above when both weeks have room for a name. */
   function recDayBarsHtml(slots, opts) {
     opts = opts || {};
-    const g = { w: 620, h: 200, L: 66, R: 18, T: 30, B: 30 };
+    // the two weeks are named in a row of their own above the bars, so the names never run
+    // into the dates along the bottom ('the 7 before last 7 days' read as one phrase)
+    const splitOn = opts.split >= 4 && opts.split < slots.length;
+    const g = { w: 620, h: splitOn ? 214 : 200, L: 66, R: 18, T: splitOn ? 44 : 30, B: 30 };
     const base = g.h - g.B, n = slots.length, slot = (g.w - g.L - g.R) / n;
     const max = Math.max(0, ...slots.filter(s => s.v != null).map(s => s.v));
     const sc = niceScale(0, Math.max(1, max), 4, true);
@@ -4496,11 +4594,11 @@
     if (opts.x0) out += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(opts.x0) + '</text>';
     if (opts.x1) out += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
     out += '<rect class="cband" y="' + g.T + '" height="' + (base - g.T) + '" style="display:none"/>';
-    if (opts.split >= 4 && opts.split < n) {
+    if (splitOn) {
       const sx = (g.L + slot * opts.split).toFixed(1);
-      out += '<line class="refline" x1="' + sx + '" y1="' + g.T + '" x2="' + sx + '" y2="' + base + '"/>' +
-        '<text class="ax" x="' + (+sx - 6) + '" y="' + (g.h - 8) + '" text-anchor="end">the 7 before</text>' +
-        '<text class="ax" x="' + (+sx + 6) + '" y="' + (g.h - 8) + '">last 7 days</text>';
+      out += '<line class="refline" x1="' + sx + '" y1="' + (g.T - 26) + '" x2="' + sx + '" y2="' + base + '"/>' +
+        '<text class="ax wk" x="' + (+sx - 8) + '" y="' + (g.T - 16) + '" text-anchor="end">\u2190 the 7 before</text>' +
+        '<text class="ax wk" x="' + (+sx + 8) + '" y="' + (g.T - 16) + '">last 7 days \u2192</text>';
     }
     const bw = Math.min(26, Math.max(3, slot * 0.66));
     let peak = -1;
@@ -4513,7 +4611,7 @@
       if (!(s.v > 0)) return;
       const y = Math.min(Y(s.v), base - 2);
       out += '<rect x="' + (X(i) - bw / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + (base - y).toFixed(1) +
-        '" rx="3" style="fill:' + (opts.color || 'var(--live)') + '"/>';
+        '" rx="3" style="fill:' + (opts.color || 'var(--daybar, var(--accent))') + '"/>';
     });
     // the tallest day's exact figure over its bar, and the newest day's at the right-hand end
     // (as the endpoint of a line would carry it) unless the two labels would sit on each other
@@ -4548,8 +4646,8 @@
     const dk = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('en-CA'); };
     const last7 = doneKeys.filter(k => k >= dk(7) && k <= dk(1)), prev7 = doneKeys.filter(k => k >= dk(14) && k <= dk(8));
     const wkSub = ks => ks.length === 7 ? 'all 7 days recorded' : ks.length + ' of 7 days recorded';
-    const kept = (hist && hist.videos) || {};
-    const who = videos.length && videos.every(v => kept[v.id]) ? 'your posts' : 'your ' + Object.keys(kept).length + ' newest posts';
+    const stored = ttStoredBasis();
+    const who = !stored ? 'your posts' : 'your ' + stored + ' newest posts';
 
     // the pulse: the whole account in one tile row, every cell honest about its basis
     const f = fseries();
@@ -4660,7 +4758,9 @@
     // and quietest three hours in a row said on top (from these same buckets)
     const hb = new Array(24).fill(0);
     let hbAny = false;
-    for (const [at2, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
+    const hbFrom = Date.now() - ALERT_DAYS * 864e5, hbG = ttGainBuckets(hbFrom);
+    const hbBad = recHoleHours(hbG.holes, hbFrom);
+    for (const [at2, b] of hbG.hours) {
       hb[new Date(at2).getHours()] += b.gain;
       if (b.gain > 0) hbAny = true;
     }
@@ -4671,7 +4771,7 @@
       try { tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').split('/').pop().replace(/_/g, ' '); } catch (e) {}
       html += '<div class="dsection tr-when"><h4>When people watch <span class="tr-tz">· ' +
         (tz && tz !== 'UTC' ? esc(tz) + ' time' : 'your local time') + '</span></h4>' +
-        recHourBlocksHtml(hb) +
+        recHourBlocksHtml(hb, hbBad) +
         '<div class="bars" style="justify-content:space-between">' +
         hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — ' + recBlock(h2, 1) + '"></div>').join('') +
         '</div>' +
@@ -4736,9 +4836,8 @@
     const kOf = t => new Date(t).toLocaleDateString('en-CA');
     const tk = kOf(tMid), yk = kOf(yMid);
     const day = recDayGains(16);             // Trends' own call — its "Today so far" reads this map
-    const stored = Object.keys((hist && hist.videos) || {}).length;
-    const m = { now, tMid, yMid, tk, yk, todayH: (nMid - tMid) / H, yH: (tMid - yMid) / H,
-      stored: stored < videos.length ? stored : 0 };
+    // the basis is named when the store is missing any post TikTok lists — Trends' own test
+    const m = { now, tMid, yMid, tk, yk, todayH: (nMid - tMid) / H, yH: (tMid - yMid) / H, stored: ttStoredBasis() };
     m.views = day.has(tk) ? day.get(tk) : null;
     m.viewsPartial = day.gaps.has(tk);
     m.yViews = day.has(yk) ? day.get(yk) : null;
@@ -4777,8 +4876,11 @@
     const tb = ttDayBase(f, tMid), yb = ttDayBase(f, yMid);
     m.hasLog = f.length > 0;
     m.base = tb; m.yBase = yb;
-    m.liveF = me && me.follower_count != null ? +me.follower_count : null;
-    m.liveL = me && me.likes_count != null ? +me.likes_count : null;
+    // a profile fetched before the start-of-day check (a refresh whose /tiktok/me failed kept
+    // the older one) would be measured against a newer count: waiting, not a figure
+    m.meStale = !!(tb && me && me._at && me._at < tb.s[0]);
+    m.liveF = me && me.follower_count != null && !m.meStale ? +me.follower_count : null;
+    m.liveL = me && me.likes_count != null && !m.meStale ? +me.likes_count : null;
     m.followers = tb && m.liveF != null && col(tb.s, 1) != null ? m.liveF - col(tb.s, 1) : null;
     m.likes = tb && m.liveL != null && col(tb.s, 2) != null ? m.liveL - col(tb.s, 2) : null;
     m.yFollowers = tb && yb && col(tb.s, 1) != null && col(yb.s, 1) != null ? col(tb.s, 1) - col(yb.s, 1) : null;
@@ -4804,6 +4906,7 @@
     }
     m.fDays = fd.length;
     m.fAhead = tb && tb.exact && m.followers != null && fd.length >= 3 ? fd.filter(g => g < m.followers).length : null;
+    m.fLow = fd.length ? Math.min(...fd) : null;
 
     m.newest = videos.length ? videos.slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0))[0] : null;
     return m;
@@ -4824,24 +4927,28 @@
         ? (d === 0 ? ' — exactly level.' : a < TODAY_NOISE_MIN ? ' — only ' + fmt.format(a) + ' apart, so level.' : ' — within 10%, so level.')
         : c.yday === 0 ? ' — yesterday had none by then.'
         : ' — ' + (pct <= 10 ? 'just over 10%' : pct + '%') + (d > 0 ? ' more.' : ' fewer.');
-      w.cmpTile = (same ? 'yesterday by ' + clockTxt(c.yB) : 'yesterday’s first ' + c.n + ' hours') + ': ' + fmt.format(c.yday);
       w.say = (same
         ? 'By ' + clockTxt(c.tB) + ': <b>' + fmt.format(c.today) + '</b> views today, <b>' + fmt.format(c.yday) + '</b> yesterday'
         : 'In the first ' + c.n + ' hours of each day: <b>' + fmt.format(c.today) + '</b> views today (to ' + clockTxt(c.tB) + '), <b>' +
           fmt.format(c.yday) + '</b> yesterday (to ' + clockTxt(c.yB) + ')') + tail +
         (!same && clocks ? ' Hours are compared with hours because ' + clocks + '.' : '');
     } else {
-      w.cmpTile = c.why === 'early' ? 'compared with yesterday from 1 am' : c.why === 'stale' ? 'no reading since midnight yet'
-        : c.why === 'yesterday' ? 'yesterday wasn’t fully tracked' : 'part of today wasn’t recorded';
       w.say = c.why === 'early' ? 'It’s just after midnight. Today is compared with yesterday from 1 am.'
         : c.why === 'stale' ? 'Your tracker hasn’t sent a reading since midnight yet, so there’s nothing to compare.'
         : c.why === 'yesterday' ? 'Yesterday wasn’t fully tracked up to ' + clockTxt(c.yB) + ', so there’s nothing fair to compare today with.'
         : 'Part of today wasn’t recorded, so today’s count up to ' + clockTxt(c.tB) + ' would be short and isn’t compared.';
     }
     if (m.stored) w.say += ' Views are counted on your ' + m.stored + ' newest posts.';
-    // since when followers and likes are counted
-    w.since = !m.base ? null : m.base.exact ? 'since midnight' : 'since last night’s ' + clockTxt(m.base.s[0]) + ' check';
-    w.noBase = !m.hasLog ? 'no follower checks yet' : 'no check near midnight';
+    // since when followers and likes are counted: "midnight" only when the check really was
+    // at midnight (within the minute); a retry at 12:05 am is named, since the followers
+    // gained in those five minutes are not in the figure. Short, for a narrow tile — the fold
+    // says it in full
+    const b0 = m.base && m.base.s[0];
+    w.since = !m.base ? null : m.base.exact && b0 - m.tMid < 60e3 ? 'since midnight' : 'since ' + clockTxt(b0);
+    // a check from before midnight is said once, in full, under the tiles
+    w.sinceNote = m.base && !m.base.exact && (m.followers != null || m.likes != null)
+      ? 'Followers and likes are counted from your tracker’s ' + clockTxt(b0) + ' check last night, its last before midnight.' : null;
+    w.noBase = m.meStale ? 'waiting for a fresh count' : !m.hasLog ? 'no follower checks yet' : 'no check near midnight';
     // a record only when it is exactly one: ahead of every full day, with a few to beat
     w.record = m.views > 0 && m.rankN >= 3 && m.rankAhead === m.rankN
       ? 'Already your best day of the last ' + m.rankN + ' full days tracked.' : null;
@@ -4878,12 +4985,30 @@
     }
     r.pill = 'Grade ' + g.grade;
     r.pc = g.grade[0] === 'A' ? 'up' : g.grade[0] === 'B' ? '' : g.grade[0] === 'C' ? 'warn' : 'down';
-    r.why = g.rank
-      ? (g.beats === 100 ? 'Beats all ' + g.rank.n + ' of your other posts on reach' : 'Beats ' + g.beats + '% of your ' + g.rank.n + ' other posts on reach') +
-        (g.ageM < PJ_HORIZON ? ', going by its estimated first 48 hours.' : '.')
-      : 'Beats ' + g.engBeats + '% of your other posts on like rate. A reach grade needs at least 4 other posts to compare with.';
-    // an estimate that beats everything is not a record yet; real counts that do, are
-    r.win = g.beats === 100 && (g.rank ? g.ageM >= PJ_HORIZON : true);
+    /* "All" is a strict count — ahead of every one of them, not a rounded 100%: with a pool of
+       100 or more a post tied at the top rounds up to 100. A percentage that rounds to 100
+       without being ahead of all of them is held at 99. */
+    const others = videos.filter(x => x.id !== v.id);
+    const reach = others.map(x => ({ s: scoreOf(x), old: (Date.now() - (x.create_time || 0) * 1000) / 60000 >= PJ_HORIZON })).filter(x => x.s != null);
+    const aheadAll = g.rank ? reach.length > 0 && reach.every(x => g.mine > x.s) : null;
+    // every one it beats has its real count too (48 hours or older), not an estimate
+    const allReal = reach.every(x => x.old);
+    const pct = b => Math.min(b, 99);
+    if (g.rank) {
+      r.why = (aheadAll ? 'Beats all ' + g.rank.n + ' of your other posts on reach' : 'Beats ' + pct(g.beats) + '% of your ' + g.rank.n + ' other posts on reach') +
+        (g.ageM < PJ_HORIZON ? ', going by its estimated first 48 hours.'
+          : aheadAll && !allReal ? ' (some of them are under 2 days old, so they count by their estimated first 48 hours).' : '.');
+    } else {
+      // like rate is a ratio of real counts, so ahead of every post on it is a record now
+      const eng = others.filter(x => (x.view_count || 0) > 0).map(engOf);
+      r.win = eng.length > 0 && eng.every(x => engOf(v) > x);
+      r.why = (r.win ? 'Beats all ' + eng.length + ' of your other posts on like rate' : 'Beats ' + pct(g.engBeats) + '% of your other posts on like rate') +
+        '. A reach grade needs at least 4 other posts to compare with.';
+      return r;
+    }
+    // a record is a record on real counts: this post's and every post it beats. An estimate
+    // on either side can still move, and the star would vanish when it did
+    r.win = !!aheadAll && g.ageM >= PJ_HORIZON && allReal;
     return r;
   }
 
@@ -4941,15 +5066,24 @@
     let html = '<div class="today-head"><div><span class="today-lbl">Today so far</span><div class="today-date">' +
       esc(new Date(m.now).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })) + '</div></div>' +
       '<span class="today-pill' + (w.pill[1] ? ' ' + w.pill[1] : '') + '">' + w.pill[0] + '</span></div>';
+    // 'follower' for ±1, 'followers' otherwise; likes and views the same
+    const unit = (x, one) => x != null && Math.abs(x) === 1 ? one : one + 's';
+    // "yesterday: +24" only when yesterday ran midnight to midnight; any other span is the
+    // fold's to name
+    const dayExact = m.base && m.yBase && m.base.exact && m.yBase.exact;
+    /* The views tile is since midnight, to the newest reading. The comparison with yesterday
+       runs to a whole hour, so its figures sit in the sentence under the tiles, both of them
+       ("By 8 pm: 524 views today, 495 yesterday") — never one of them beside this figure. */
     html += '<div class="today-tiles">' +
-      tile(m.views == null ? '—' : '+' + fmt.format(m.views), tone(m.views), 'views',
-        m.views == null ? 'nothing recorded yet' : m.viewsPartial ? 'part of today wasn’t recorded' : '', esc(w.cmpTile)) +
-      tile(num(m.followers), tone(m.followers), 'followers', m.followers == null ? w.noBase : w.since,
-        m.typFollowers != null ? 'a typical day: ' + paceTxt(m.typFollowers) : m.yFollowers != null ? 'yesterday: ' + signedN(m.yFollowers) : '') +
-      tile(num(m.likes), tone(m.likes), 'likes', m.likes == null ? w.noBase : w.since,
-        m.typLikes != null ? 'a typical day: ' + paceTxt(m.typLikes) : m.yLikes != null ? 'yesterday: ' + signedN(m.yLikes) : '') +
+      tile(m.views == null ? '—' : '+' + fmt.format(m.views), tone(m.views), unit(m.views, 'view'),
+        m.views == null ? 'nothing recorded yet' : m.viewsPartial ? 'part of today wasn’t recorded' : 'since midnight', '') +
+      tile(num(m.followers), tone(m.followers), unit(m.followers, 'follower'), m.followers == null ? w.noBase : w.since,
+        m.typFollowers != null ? 'a typical day: ' + paceTxt(m.typFollowers) : m.yFollowers != null && dayExact ? 'yesterday: ' + signedN(m.yFollowers) : '') +
+      tile(num(m.likes), tone(m.likes), unit(m.likes, 'like'), m.likes == null ? w.noBase : w.since,
+        m.typLikes != null ? 'a typical day: ' + paceTxt(m.typLikes) : m.yLikes != null && dayExact ? 'yesterday: ' + signedN(m.yLikes) : '') +
       '</div>';
     html += '<p class="today-say">' + nb(w.say) + '</p>';
+    if (w.sinceNote) html += '<p class="today-note today-since">' + nb(w.sinceNote) + '</p>';
     if (w.record) html += '<p class="today-say"><span class="cc-win">' + w.record + '</span></p>';
 
     // the newest post, graded by the report card's own rules
@@ -5018,7 +5152,8 @@
     let f = '';
     if (m.followers != null) f += P(B(fmt.format(m.liveF)) + ' now, ' + B(fmt.format(m.base.s[1])) + ' at your tracker’s ' + clockTxt(m.base.s[0]) +
       ' check' + (m.base.exact ? '' : ' last night') + ': ' + B(signedN(m.followers)) + ' today.');
-    else f += P(!m.hasLog ? 'Your tracker hasn’t checked your follower count yet.'
+    else f += P(m.meStale ? 'Waiting for a fresh follower count: the last one this page fetched is older than today’s start-of-day check, so it would be measured against a newer count.'
+      : !m.hasLog ? 'Your tracker hasn’t checked your follower count yet.'
       : 'Your tracker has no follower check between ' + clockTxt(m.tMid - TODAY_NEAR) + ' and ' + clockTxt(m.tMid + TODAY_EXACT) +
         ', so there’s no start-of-day count to measure from. The latest Worker also checks just after midnight, which fills this in.');
     f += m.typFollowers != null
@@ -5026,8 +5161,14 @@
       : P('Not enough whole days of follower counts yet to say what a typical day brings.');
     if (m.yFollowers != null) f += P('Yesterday: ' + B(signedN(m.yFollowers)) + (m.base.exact && m.yBase.exact ? ', midnight to midnight.' : ', counted ' + span(m.yBase, m.base) + '.'));
     // "so far", not "already": unfollows can still take today back down
-    if (m.fAhead != null) f += P('So far, ' + (m.fAhead === m.fDays ? 'more followers than on any' : m.fAhead === 0 ? 'no more followers than on any'
-      : 'more followers than on ' + m.fAhead) + ' of the last ' + m.fDays + ' days with a midnight check at both ends.');
+    const fOf = ' of the last ' + m.fDays + ' days with a midnight check at both ends';
+    if (m.fAhead != null) f += P('So far, ' + (m.fAhead === m.fDays ? 'more followers than on any' + fOf
+      : m.fAhead > 0 ? 'more followers than on ' + m.fAhead + fOf
+      : m.followers < m.fLow ? 'fewer followers than on any' + fOf
+      : 'as many followers as the quietest' + fOf) + '.');
+    else if (m.followers != null)
+      f += P('Where today’s followers rank among recent days shows once your tracker has checked just after midnight at both ends of at least 3 days' +
+        (m.fDays ? ' (' + m.fDays + ' so far)' : '') + (m.base.exact ? '' : ', and just after this midnight') + '.');
     let l = '';
     if (m.likes != null) l += P(B(fmt.format(m.liveL)) + ' now, ' + B(fmt.format(m.base.s[2])) + ' at the same check: ' + B(signedN(m.likes)) + ' today.');
     else l += P(m.base ? 'Your tracker’s check has no likes count, so there’s nothing to measure from.' : 'No start-of-day count to measure from, as for followers.');
