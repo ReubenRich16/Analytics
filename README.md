@@ -114,9 +114,17 @@ data/             recorded history, committed by the robots
   a reason rather than for want of building it: TikTok's API exposes no audience data of
   any kind, so it could only ever be empty. The missing Trends room used to be justified
   the same way — TikTok publishes no daily series of its own — but the Worker's recordings
-  outgrew that: the Account room now carries a **Trends — from your own recordings** card
-  (a pulse tile row, views per day with week-vs-week, 400 days of follower history, and a
-  when-views-arrive clock), every number built from the recordings rather than fetched.
+  outgrew that: the Account room now carries a **Trends — from your own recordings** card,
+  every number built from the recordings rather than fetched. It leads with **the last 7 days
+  against the 7 before** as two big tiles (each with its dates and how many days it rests on)
+  and the sentence comparing them — and when one post brought in more than half of a week's
+  views, it names that post with its exact share. Then **Today so far** (the Now room's own
+  figure) and followers over the week; **views each day** as bars, one per calendar day, where
+  a day the recording can't vouch for is left empty and marked "no data", the tallest day
+  carries its exact figure and every bar has a tip; 400 days of **follower history** (30 / 90 /
+  All); and **when people watch** — the 24 hour-of-day bars with the busiest and quietest three
+  hours in a row on top, from those same bars. How each chart is counted, and where the numbers
+  come from, fold away one tap below them.
   **Everything TikTok's API can support is built on both pages** — what separates them
   is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card

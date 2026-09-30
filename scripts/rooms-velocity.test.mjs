@@ -583,7 +583,10 @@ console.log('\nrecorded trends — the charts TikTok never provides');
   check('weeks say how many recorded days they rest on', /' of 7 days recorded'/.test(rt));
   check('weeks are calendar weeks, not the last seven days that happen to have data',
     /k >= dk\(7\) && k <= dk\(1\)/.test(rt) && /k >= dk\(14\) && k <= dk\(8\)/.test(rt) && !/doneKeys\.slice\(-7\)/.test(rt));
-  check('the views-per-day line breaks across a missing day', /maxGap: 1\.5 \* 864e5/.test(rt));
+  // views each day are bars now (tt-trends.test.mjs runs them): a missing day is an empty
+  // slot that says "no data", so nothing is ever drawn across it
+  check('the views-each-day bars leave a missing day empty, marked “no data”',
+    /\{ k, v: null, tip: recDayLong\(k\) \+ ': no data — '/.test(rt) && /">no data<\/text>'/.test(TT));
   check('a stale follower snapshot is not labelled "now"', /fNowStale\(\) \? fmtAgo\(fNow\[0\]\) : 'now'/.test(rt) && /'last checked ' \+ fmtAgo/.test(rt));
   check('the day chart says whose views it counts and where they are kept', /from the counts kept on this device/.test(rt));
   check('week-vs-week only speaks with five recorded days on each side',

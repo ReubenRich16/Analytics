@@ -203,6 +203,22 @@
   /* the question chips sit under Today so far now, a size smaller */
   #answerCard .achips { gap:5px; margin-bottom:10px; }
   #answerCard .achips button { font-size:11.5px; padding:6px 11px; }
+  /* ---- Trends: the two weeks as big tiles, then the charts, each with its answer on top ---- */
+  .tr-week { margin-top:12px; }
+  .tr-week > .today-lbl { display:block; }
+  .today-tiles.tr-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .tr-tiles .tile .v { font-size:24px; }
+  .tr-tiles .tile .k { color:var(--muted); }
+  .tr-week .today-say { margin:10px 0 0; }
+  .tr-pulse { margin:14px 0 18px; }
+  .tr-sub { margin-bottom:8px; }
+  .tr-pills { display:flex; flex-wrap:wrap; gap:6px 8px; margin:6px 0 8px; }
+  .tr-tz { font-weight:500; color:var(--muted); }
+  .tr-hours { display:flex; justify-content:space-between; margin-top:4px; }
+  .tr-when .explain:last-child { margin:8px 0 0; }
+  svg.chart text.nodata { fill:var(--muted); opacity:.8; }
+  body[data-theme="cloud"] .tr-pills .today-pill { border-radius:999px; }
+  @media (max-width:380px) { .tr-tiles .tile .v { font-size:20px; } }
 </style>
 </head>
 <body>
@@ -463,11 +479,17 @@
     <div id="breakdownContent"><p class="dnote">compiling…</p></div>
   </div>
 
-  <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings -->
+  <!-- RECORDED TRENDS — the charts TikTok never provides, built from the Worker's recordings.
+       The last 7 days against the 7 before lead, then views each day, follower history and
+       when people watch. Where the numbers come from is one tap away, at the foot: a static
+       fold, so the poll's repaint of the content above never shuts it. -->
   <div class="card" id="recTrendsCard" style="display:none">
     <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Trends — tracked by your dashboard</div>
-    <p class="explain" style="margin-top:8px">TikTok keeps no history, so these charts come from your dashboard’s own tracker, as kept on this device. A gap in the recording is left out, not guessed.</p>
     <div id="recTrendsContent"><p class="dnote">compiling…</p></div>
+    <details class="cc-more" id="recTrendsHow">
+      <summary><span aria-hidden="true">&#9432;</span> Where these numbers come from</summary>
+      <div class="cc-more-body"><p class="explain">TikTok keeps no history, so these charts come from your dashboard’s own tracker, as kept on this device. A gap in the recording is left out, not guessed.</p></div>
+    </details>
   </div>
 
   </div>
@@ -4352,6 +4374,166 @@
     return out;
   }
   const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  const recDayLong = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+  // a run of calendar days as a reader says it: '24–30 Sept', or '28 Aug – 3 Sept' across a month
+  const recSpan = (a, b) => {
+    const A = new Date(a + 'T12:00:00'), B = new Date(b + 'T12:00:00');
+    return A.getMonth() === B.getMonth() && A.getFullYear() === B.getFullYear()
+      ? A.getDate() + '–' + recDayLabel(b) : recDayLabel(a) + ' – ' + recDayLabel(b);
+  };
+
+  /* Which post carried a week, if one did. A week's figure is the sum of its days and each day
+     is the sum of its hours (recDayGains), so those same hours split by post (ttGainBuckets'
+     byPost) add up to exactly the tile's number: the share is counted, not estimated. "Most"
+     means more than half. */
+  function recWeekTop(day, keys) {
+    const want = new Set(keys), per = new Map();
+    let total = 0;
+    for (const [at, b] of day.hours || []) {
+      if (!want.has(new Date(at).toLocaleDateString('en-CA'))) continue;
+      total += b.gain;
+      for (const [id, x] of b.byPost) per.set(id, (per.get(id) || 0) + x);
+    }
+    let id = null, v = 0;
+    for (const [k, x] of per) if (x > v) { id = k; v = x; }
+    return id != null && total > 0 && v * 2 > total ? { id, v, total } : null;
+  }
+  // a post's name for a sentence: its caption without the hashtags, from the recording or the list
+  const recPostName = id => {
+    const rec = hist && hist.videos && hist.videos[id], live = videos.find(x => x.id === id);
+    return feedCap(((rec && rec.title) || '').trim() || (live ? capOf(live) : ''), 40, '');
+  };
+  // the sentence(s) naming the post that carried a week — both weeks, one, or none. With only
+  // one post recorded, every view is that post's, which says nothing
+  function recCarryTxt(day, last7, prev7) {
+    if (Object.keys((hist && hist.videos) || {}).length < 2) return '';
+    const a = last7.length ? recWeekTop(day, last7) : null, b = prev7.length ? recWeekTop(day, prev7) : null;
+    const who = t => { const n = recPostName(t.id); return n ? '“' + esc(n) + '”' : 'a post with no caption'; };
+    const part = t => t.v === t.total ? 'all ' + fmt.format(t.total) : fmt.format(t.v) + ' of ' + fmt.format(t.total);
+    const one = (t, when) => (t.v === t.total ? 'All of the views in ' : 'Most of the views in ') + when + ' came from ' + who(t) +
+      (t.v === t.total ? '.' : ': ' + fmt.format(t.v) + ' of ' + fmt.format(t.total) + '.');
+    if (a && b && a.id === b.id)
+      return a.v === a.total && b.v === b.total ? 'All of the views in both weeks came from ' + who(a) + '.'
+        : 'Most of the views in both weeks came from ' + who(a) + ': ' + part(a) + ' in the last 7 days, and ' + part(b) + ' in the 7 before.';
+    return [a && one(a, 'your last 7 days'), b && one(b, 'the 7 days before')].filter(Boolean).join(' ');
+  }
+
+  /* The busiest and the quietest three hours in a row on the hour-of-day clock, from the very
+     buckets its bars are drawn from, so each figure is the sum of three bars. The clock wraps:
+     11 pm to 2 am is three hours in a row. A tie is said, never broken silently. When some three
+     hours had no views at all, the quiet answer is the whole stretch with none. */
+  function recHourBlocks(hb) {
+    const s3 = h => hb[h % 24] + hb[(h + 1) % 24] + hb[(h + 2) % 24];
+    const sums = hb.map((_, h) => s3(h));
+    const total = hb.reduce((a, b) => a + b, 0);
+    const hi = Math.max(...sums), lo = Math.min(...sums);
+    const at = v => sums.flatMap((x, h) => x === v ? [h] : []);
+    const out = { total, busy: { v: hi, at: at(hi), n: 3 }, quiet: { v: lo, at: at(lo), n: 3 } };
+    if (lo === 0 && total > 0) {
+      // the runs of hours with nothing, around the clock, starting just after an hour with views
+      const p = hb.findIndex(x => x > 0), runs = [];
+      let s = -1, len = 0;
+      for (let i = 1; i <= 24; i++) {
+        const h = (p + i) % 24;
+        if (!hb[h]) { if (s < 0) s = h; len++; }
+        else if (s >= 0) { runs.push([s, len]); s = -1; len = 0; }
+      }
+      const most = Math.max(...runs.map(r => r[1]));
+      const longest = runs.filter(r => r[1] === most).sort((x, y) => x[0] - y[0]);
+      out.quiet = { v: 0, at: longest.map(r => r[0]), n: most, none: true };
+    }
+    return out;
+  }
+  // '6–9 am', '11 am–2 pm', '10 pm–1 am', never breaking before its am or pm
+  const recHr = h => h % 12 || 12, recMer = h => h < 12 ? 'am' : 'pm';
+  const recBlock = (s, n, join) => {
+    const e = (s + n) % 24, same = recMer(s) === recMer(e) && e > s;
+    return ((same ? recHr(s) : recHr(s) + ' ' + recMer(s)) + (join || '–') + recHr(e) + ' ' + recMer(e)).replace(/ (am|pm)/g, '\u00a0$1');
+  };
+  function recHourBlocksHtml(hb) {
+    const b = recHourBlocks(hb);
+    // three views across a fortnight make a busiest hour of nothing much: it waits for some
+    if (b.total < 50) return '<p class="dnote tr-sub">The busiest and quietest hours show once 50 views have been counted by hour.</p>';
+    if (b.busy.v === b.quiet.v) return '<p class="dnote tr-sub">Every three hours in a row had the same views, so none is busiest.</p>';
+    const tied = x => x.at.length > 1;
+    const between = (s, n) => 'between ' + recBlock(s, n, ' and ');
+    const others = x => x.at.slice(1, 3).map(s => between(s, x.n)).join(' or ');
+    const busy = b.busy, quiet = b.quiet;
+    let say = 'In the last ' + ALERT_DAYS + ' days, <b>' + fmt.format(busy.v) + '</b> views came in ' + between(busy.at[0], 3) +
+      (tied(busy) ? ' (as many as ' + others(busy) + ')' : '') + ', and ' +
+      (quiet.none ? 'none ' + quiet.at.slice(0, 3).map(s => between(s, quiet.n)).join(' or ')
+        : '<b>' + fmt.format(quiet.v) + '</b> ' + between(quiet.at[0], 3) + (tied(quiet) ? ' (as few as ' + others(quiet) + ')' : '')) +
+      ' — out of ' + fmt.format(b.total) + ' on the bars below.';
+    return '<div class="tr-pills">' +
+      '<span class="today-pill up">Busiest: ' + recBlock(busy.at[0], 3) + (tied(busy) ? ' (tied)' : '') + '</span>' +
+      '<span class="today-pill mute">' + (quiet.none ? 'No views: ' + recBlock(quiet.at[0], quiet.n)
+        : 'Quietest: ' + recBlock(quiet.at[0], 3) + (tied(quiet) ? ' (tied)' : '')) + '</span></div>' +
+      '<p class="explain tr-sub">' + say + '</p>';
+  }
+
+  /* Views each day, one column per calendar day. A day the recording can vouch for is a bar (a
+     watched day with no rise is a real +0 and draws nothing above the baseline); a day it can't
+     is left empty with "no data" written in its slot, so a gap never reads as a quiet day and is
+     never guessed at. The tallest day carries its exact figure. Rects inside svg.chart, so
+     motion.js grows them from the baseline, and one tip per slot for the tooltip engine's bar
+     arithmetic. `split` is the slot where the last 7 days begin: a dashed line there, named on
+     both sides, ties the bars to the two tiles above when both weeks have room for a name. */
+  function recDayBarsHtml(slots, opts) {
+    opts = opts || {};
+    const g = { w: 620, h: 200, L: 66, R: 18, T: 30, B: 30 };
+    const base = g.h - g.B, n = slots.length, slot = (g.w - g.L - g.R) / n;
+    const max = Math.max(0, ...slots.filter(s => s.v != null).map(s => s.v));
+    const sc = niceScale(0, Math.max(1, max), 4, true);
+    const Y = v => base - (base - g.T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
+    const X = i => g.L + slot * (i + 0.5);
+    let out = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) out += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      out += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
+    }
+    out += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    if (opts.x0) out += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(opts.x0) + '</text>';
+    if (opts.x1) out += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(opts.x1) + '</text>';
+    out += '<rect class="cband" y="' + g.T + '" height="' + (base - g.T) + '" style="display:none"/>';
+    if (opts.split >= 4 && opts.split < n) {
+      const sx = (g.L + slot * opts.split).toFixed(1);
+      out += '<line class="refline" x1="' + sx + '" y1="' + g.T + '" x2="' + sx + '" y2="' + base + '"/>' +
+        '<text class="ax" x="' + (+sx - 6) + '" y="' + (g.h - 8) + '" text-anchor="end">the 7 before</text>' +
+        '<text class="ax" x="' + (+sx + 6) + '" y="' + (g.h - 8) + '">last 7 days</text>';
+    }
+    const bw = Math.min(26, Math.max(3, slot * 0.66));
+    let peak = -1;
+    slots.forEach((s, i) => { if (s.v > 0 && (peak < 0 || s.v >= slots[peak].v)) peak = i; });
+    slots.forEach((s, i) => {
+      if (s.v == null) {
+        out += '<text class="ax nodata" transform="translate(' + X(i).toFixed(1) + ',' + (base - 6) + ') rotate(-90)" dominant-baseline="central">no data</text>';
+        return;
+      }
+      if (!(s.v > 0)) return;
+      const y = Math.min(Y(s.v), base - 2);
+      out += '<rect x="' + (X(i) - bw / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + (base - y).toFixed(1) +
+        '" rx="3" style="fill:' + (opts.color || 'var(--live)') + '"/>';
+    });
+    // the tallest day's exact figure over its bar, and the newest day's at the right-hand end
+    // (as the endpoint of a line would carry it) unless the two labels would sit on each other
+    let px = null, py = null;
+    if (peak >= 0) {
+      px = Math.min(g.w - g.R - 34, Math.max(g.L + 34, X(peak)));
+      py = Y(slots[peak].v) - 8;
+      out += '<text class="val" x="' + px.toFixed(1) + '" y="' + py.toFixed(1) + '" text-anchor="middle">' + esc(fmt.format(slots[peak].v)) + '</text>';
+    }
+    let last = -1;
+    slots.forEach((s, i) => { if (s.v != null) last = i; });
+    if (last >= 0 && last !== peak) {
+      const ly = Math.min(Y(slots[last].v), base - 2) - 8, lw = 11 * String(fmt.format(slots[last].v)).length;
+      if (py == null || g.w - g.R - lw > px + 34 || Math.abs(ly - py) >= 20)
+        out += '<text class="val dim" x="' + (g.w - g.R) + '" y="' + ly.toFixed(1) + '" text-anchor="end">' + esc(fmt.format(slots[last].v)) + '</text>';
+    }
+    const ci = chartPush({ tips: slots.map(s => s.tip), L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, bars: true, slot });
+    return '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(opts.label || 'Views each day') + '">' + out + '</svg>';
+  }
+
   function renderRecTrends() {
     const card = $('recTrendsCard'), el = $('recTrendsContent');
     if (!card || !el) return;
@@ -4365,7 +4547,9 @@
     // days that have data" could reach back a fortnight and still call itself a week.
     const dk = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString('en-CA'); };
     const last7 = doneKeys.filter(k => k >= dk(7) && k <= dk(1)), prev7 = doneKeys.filter(k => k >= dk(14) && k <= dk(8));
-    const wkSub = ks => ks.length === 7 ? '7 days' : ks.length + ' of 7 days recorded';
+    const wkSub = ks => ks.length === 7 ? 'all 7 days recorded' : ks.length + ' of 7 days recorded';
+    const kept = (hist && hist.videos) || {};
+    const who = videos.length && videos.every(v => kept[v.id]) ? 'your posts' : 'your ' + Object.keys(kept).length + ' newest posts';
 
     // the pulse: the whole account in one tile row, every cell honest about its basis
     const f = fseries();
@@ -4377,18 +4561,14 @@
     const fBase = (f.length ? ATB(f, Date.now() - 7 * 864e5) : null) || (f.length > 1 ? f[0] : null);
     const dF = fNow && fBase && fNow !== fBase ? (fNow[1] || 0) - (fBase[1] || 0) : null;
     const fSpanD = dF != null ? Math.max(1, Math.round((fNow[0] - fBase[0]) / 864e5)) : 0;
-    // no like-rate tile here: it was read from the live post list, not from anything the
-    // Worker recorded, inside a card that promises recordings only — and the Account
-    // room's "Overall like rate" already carries the same figure
-    let html = '<div class="metric-grid">' +
-      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—',
-        day.gaps.has(tk) ? 'part of today wasn’t recorded' : day.has(tk) ? 'views gained' : 'nothing recorded yet') +
-      mcell('Last 7 days', last7.length ? '+' + fmt.format(sum(last7)) : '—', last7.length ? wkSub(last7) : 'no full days recorded') +
-      mcell('Prior 7 days', prev7.length ? '+' + fmt.format(sum(prev7)) : '—', prev7.length ? wkSub(prev7)
-        : day.notKept && day.coverFrom > new Date(dk(8) + 'T00:00:00').getTime() ? 'older days aren’t kept on this device' : 'no full days recorded') +
-      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)),
-        fNowStale() ? 'last checked ' + fmtAgo(fNow[0]) : 'from your follower count') : '') +
-      '</div>';
+
+    /* The last 7 days against the 7 before: two big tiles (the pulse's Last 7 / Prior 7, the
+       same figures on the same calendar weeks, each with its dates and how many days it rests
+       on), the sentence comparing them, and — when one post brought in most of a week — which. */
+    const wkTile = (ks, k, from, to, none) => '<div class="tile"><div class="v' + (ks.length ? '' : ' none') + '">' +
+      (ks.length ? '+' + fmt.format(sum(ks)) : '—') + '</div><div class="k">' + k + '</div>' +
+      '<div class="c">' + esc(recSpan(dk(from), dk(to))) + '</div><div class="c">' + (ks.length ? wkSub(ks) : none) + '</div></div>';
+    let say = '';
     // week against week, only when both weeks have enough days to be a claim. The weeks
     // are calendar weeks, so one can hold fewer recorded days than the other: the compare is
     // per recorded day, and the sentence says so when a week is short, otherwise 5 days
@@ -4398,27 +4578,65 @@
       const full = last7.length === 7 && prev7.length === 7;
       const lead = full ? 'Your last 7 days gained '
         : 'Per recorded day (' + last7.length + ' of the last 7, ' + prev7.length + ' of the 7 before), your last 7 days gained ';
-      html += '<p class="explain" style="margin-bottom:14px">' + lead +
-        (Math.abs(d) < 8 ? 'about the same views as the 7 before.'
-          : '<b>' + Math.abs(d) + '% ' + (d > 0 ? 'more' : 'fewer') + ' views</b> than the 7 before.') + '</p>';
+      say = lead + (Math.abs(d) < 8 ? 'about the same views as the 7 before.'
+        : '<b>' + Math.abs(d) + '% ' + (d > 0 ? 'more' : 'fewer') + ' views</b> than the 7 before.');
     }
+    const carry = recCarryTxt(day, last7, prev7);
+    let html = '<div class="tr-week"><span class="today-lbl">Last 7 days vs the 7 before</span>' +
+      '<div class="today-tiles tr-tiles">' +
+      wkTile(last7, 'views, last 7 days', 7, 1, 'no full days recorded') +
+      wkTile(prev7, 'views, the 7 before', 14, 8,
+        day.notKept && day.coverFrom > new Date(dk(8) + 'T00:00:00').getTime() ? 'older days aren’t kept on this device' : 'no full days recorded') +
+      '</div>' + (say || carry ? '<p class="today-say">' + [say, carry].filter(Boolean).join(' ') + '</p>' : '') + '</div>';
 
-    // views per day — the daily series TikTok never provides
-    if (doneKeys.length >= 3) {
-      const ks = doneKeys.slice(-14);
-      const pts = ks.map(k => day.get(k) || 0);
-      const at = ks.map(k => new Date(k + 'T12:00:00').getTime());
-      const tips = ks.map(k => '+' + fmt.format(day.get(k) || 0) + ' views — ' +
-        new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }));
-      const kept = (hist && hist.videos) || {};
-      const who = videos.length && videos.every(v => kept[v.id]) ? 'your posts' : 'your ' + Object.keys(kept).length + ' newest posts';
-      html += '<div class="dsection"><h4>Views per day</h4>' +
+    // today so far (the Now room's figure, from the same recDayGains call) and followers
+    // no like-rate tile here: it was read from the live post list, not from anything the
+    // Worker recorded, inside a card that promises recordings only — and the Account
+    // room's "Overall like rate" already carries the same figure
+    html += '<div class="metric-grid tr-pulse">' +
+      mcell('Today so far', day.has(tk) ? '+' + fmt.format(day.get(tk)) : '—',
+        day.gaps.has(tk) ? 'part of today wasn’t recorded' : day.has(tk) ? 'views since midnight' : 'nothing recorded yet') +
+      (dF != null ? mcell('Followers, ' + fSpanD + ' day' + (fSpanD === 1 ? '' : 's'), (dF >= 0 ? '+' : '−') + fmt.format(Math.abs(dF)),
+        fNowStale() ? 'last checked ' + fmtAgo(fNow[0]) : 'from your follower count') : '') +
+      '</div>';
+
+    /* views each day — the daily series TikTok never provides, as bars across the fortnight the
+       two tiles cover: from the first day this device has a recording for, to yesterday. Today
+       joins once it's over. */
+    const span = [];
+    for (let n = 14; n >= 1; n--) span.push(dk(n));
+    // days before the first one this device can speak for are left off the front; a hole
+    // after it stays in, marked
+    const first = span.findIndex(k => day.has(k) || day.gaps.has(k));
+    const ks = first < 0 ? [] : span.slice(first);
+    const recN = ks.filter(k => day.has(k)).length;
+    if (recN >= 3) {
+      // the days the clocks change are 23 and 25 hours long, and their tips say so
+      const dst = k => {
+        const a = new Date(k + 'T00:00:00'), b = new Date(a); b.setDate(b.getDate() + 1);
+        const hrs = Math.round((b - a) / 3600e3);
+        return hrs === 24 ? '' : ' (a ' + hrs + '-hour day: the clocks went ' + (hrs < 24 ? 'forward' : 'back') + ')';
+      };
+      const slots = ks.map(k => day.has(k)
+        ? { k, v: day.get(k), tip: recDayLong(k) + ': +' + fmt.format(day.get(k)) + ' views' + dst(k) }
+        : { k, v: null, tip: recDayLong(k) + ': no data — ' + (day.gaps.has(k) ? 'part of the day wasn’t recorded, so it isn’t shown short' : 'not recorded on this device') });
+      const gaps = slots.some(s => s.v == null);
+      const top = slots.reduce((b, s) => s.v != null && (!b || s.v >= b.v) ? s : b, null);
+      // yesterday ahead of every other day on the chart is a record, and said as one
+      const yv = day.has(dk(1)) ? day.get(dk(1)) : null;
+      const best = yv > 0 && recN >= 3 && slots.every(s => s.k === dk(1) || s.v == null || s.v < yv);
+      html += '<div class="dsection"><h4>Views each day</h4>' +
+        '<p class="explain tr-sub">On ' + who + ', one bar for each full day. Tap a bar to see that day.</p>' +
+        recDayBarsHtml(slots, { x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]), split: ks.indexOf(dk(7)),
+          label: 'Views each day, ' + recDayLabel(ks[0]) + ' to ' + recDayLabel(ks[ks.length - 1]) +
+            (top && top.v > 0 ? '; the most was ' + fmt.format(top.v) + ' on ' + recDayLong(top.k) : '') }) +
+        (best ? '<p class="dnote" style="margin-top:6px"><span class="cc-win">Yesterday was your best day of the ' + recN + ' on this chart.</span></p>' : '') +
+        '<details class="cc-more chart-how"' + foldAttr('trends-days-how') + '><summary><span aria-hidden="true">\u24d8</span> How this is counted</summary><div class="cc-more-body">' +
         '<p class="explain">Views ' + who + ' gained each full day, from the counts kept on this device. Today joins once it’s over. A missing day is a gap in the recording, not a zero.</p>' +
-        // a line is never drawn across a missing day: more than a day and a half between
-        // two points breaks the path
-        lineChart(pts, 'var(--live)', 'Views per day', { at, tips, int: true, maxGap: 1.5 * 864e5, x0: recDayLabel(ks[0]), x1: recDayLabel(ks[ks.length - 1]) }) + '</div>';
+        (gaps ? '<p class="dnote">“No data” marks a day this device can’t fully account for — a hole in the recording, or a day from before what it keeps — so it’s left empty rather than drawn short.</p>' : '') +
+        '</div></details></div>';
     } else {
-      html += '<p class="dnote">The views-per-day chart appears after 3 full days of tracking — it fills in by itself.</p>';
+      html += '<p class="dnote">The views-each-day chart appears after 3 full days of tracking — it fills in by itself.</p>';
     }
 
     // follower history — 400 days of snapshots that only ever powered a sparkline
@@ -4438,7 +4656,8 @@
       }
     }
 
-    // when views actually arrive — hour of the day, the viewer's own clock
+    // when views actually arrive — hour of the day, the viewer's own clock, with the busiest
+    // and quietest three hours in a row said on top (from these same buckets)
     const hb = new Array(24).fill(0);
     let hbAny = false;
     for (const [at2, b] of ttGainBuckets(Date.now() - ALERT_DAYS * 864e5).hours) {
@@ -4447,12 +4666,17 @@
     }
     if (hbAny) {
       const max = Math.max(...hb, 1);
-      html += '<div class="dsection"><h4>When views actually arrive</h4>' +
-        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>. A new post’s first hours land wherever it was published, so your posting times shape this as much as your audience’s habits.</p>' +
+      // the clock's own place name when the device has one ('Australia/Melbourne' → Melbourne)
+      let tz = '';
+      try { tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').split('/').pop().replace(/_/g, ' '); } catch (e) {}
+      html += '<div class="dsection tr-when"><h4>When people watch <span class="tr-tz">· ' +
+        (tz && tz !== 'UTC' ? esc(tz) + ' time' : 'your local time') + '</span></h4>' +
+        recHourBlocksHtml(hb) +
         '<div class="bars" style="justify-content:space-between">' +
-        hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — around ' + (h2 % 12 || 12) + (h2 < 12 ? 'am' : 'pm') + '"></div>').join('') +
+        hb.map((v, h2) => '<div class="bar' + (v === 0 ? ' zero' : '') + '" style="height:' + Math.max(3, Math.round(v / max * 100)) + '%" title="+' + fmt.format(v) + ' views — ' + recBlock(h2, 1) + '"></div>').join('') +
         '</div>' +
-        '<div class="dnote" style="display:flex;justify-content:space-between;margin-top:4px"><span>12am</span><span>12pm</span><span>11pm</span></div></div>';
+        '<div class="dnote tr-hours"><span>12 am</span><span>12 pm</span><span>11 pm</span></div>' +
+        '<p class="explain">Views gained by hour of the day over the last ' + ALERT_DAYS + ' days, in <b>your own local time</b>. A new post’s first hours land wherever it was published, so your posting times shape this as much as your audience’s habits.</p></div>';
     }
     el.innerHTML = html;
     const rr = $('recRange');

@@ -421,7 +421,7 @@ for (const [page, src] of [['tiktok.html', TT], ['index.html', YT]]) {
   check(page + ': and a 2.5 step becomes 2', !ns(0, 9, 4, true).ticks.some(t => t % 1), ns(0, 9, 4, true).ticks.join(','));
 }
 check('every TikTok count chart asks for whole ticks',
-  /'Views per day', \{ at, tips, int: true/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
+  /niceScale\(0, Math\.max\(1, max\), 4, true\)/.test(TT) && /'Follower history', \{ at, tips, int: true/.test(TT) &&
   /at, tips, int: true, x0: lifeAgeTxt/.test(TT) && /int: true, yMax/.test(TT) && /at: rec\.s\.map\(s => s\[0\]\), int: true/.test(TT) &&
   /niceScale\(0, ceil, 4, true\)/.test(TT));
 
