@@ -219,6 +219,10 @@
   svg.chart text.nodata { fill:var(--muted); opacity:.8; }
   body[data-theme="cloud"] .tr-pills .today-pill { border-radius:999px; }
   @media (max-width:380px) { .tr-tiles .tile .v { font-size:20px; } }
+  /* ---- Baseline: a launching post is a hollow dashed dot; a post above the chart's top is a ▲ ---- */
+  svg.chart circle.pt.est { stroke-dasharray:3 2; }
+  svg.chart polygon.clip { fill:var(--accent); stroke:var(--ink); stroke-width:1.5; }
+  .bl-chart .legend { margin-top:8px; }
 </style>
 </head>
 <body>
@@ -485,6 +489,15 @@
       <summary><span aria-hidden="true">&#9432;</span> Where these numbers come from</summary>
       <div class="cc-more-body"><p class="explain">TikTok keeps no history, so these charts come from your dashboard’s own tracker, as kept on this device. A gap in the recording is left out, not guessed.</p></div>
     </details>
+  </div>
+
+  <!-- BASELINE — is the typical post getting bigger? The one question a viral spike can't
+       answer: the middle post of the newest few against the middle of the few before, on
+       the same 48-hour stretch of every post's life, from the launches the Worker recorded. -->
+  <div class="card" id="baselineCard" style="display:none">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)">Baseline — is your typical post getting bigger?</div>
+    <p class="explain" style="margin-top:8px">A viral post is one thing; a rising baseline is the other, and the better sign. This compares what your <b>typical</b> post gets in its first 48 hours — the same stretch for every post — newest against the ones before.</p>
+    <div id="baselineContent"><p class="dnote">compiling…</p></div>
   </div>
 
   <!-- ACCOUNT BREAKDOWN -->
@@ -1688,7 +1701,7 @@
     $('setupPanel').style.display = 'none';
     // the cards and the panes hide independently: these reveals say "there is an account
     // now", the room panes say "this is the part you are looking at"
-    ['answerCard', 'todayCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
+    ['answerCard', 'todayCard', 'profileBanner', 'statsGrid', 'velocityPanel', 'alertsCard', 'latestCard', 'tableCard', 'baselineCard', 'breakdownCard', 'recTrendsCard', 'tagsCard', 'coachCard', 'ideasCard'].forEach(id => {
       $(id).style.display = id === 'statsGrid' ? 'grid' : (id === 'profileBanner' ? 'flex' : 'block');
     });
     $('roomBar').style.display = 'flex';
@@ -1947,7 +1960,7 @@
       buildScores();
       buildAccel();
       renderToday();
-      renderTable(); showSlot(slotIdx); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
+      renderTable(); showSlot(slotIdx); renderBaseline(); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
@@ -4435,6 +4448,181 @@
     out.holes = g.holes;
     out.notKept = oldKept >= resume;   // the older days are missing because they aren't kept here
     return out;
+  }
+  /* ---------- Baseline: is your typical post getting bigger? ----------
+     A viral post and a rising channel are different things, and the rest of this page is
+     mostly about the first. This card is about the second: what your TYPICAL post gets,
+     and whether that is going up.
+
+     The measure is each post's views in its FIRST 48 HOURS, read off the launch the Worker
+     recorded — the same slice of every post's life. The Report Card's figure for a finished
+     post is its lifetime count, which is fine in a grade (the tail after hour 48 is under
+     half a percent a day) and wrong in a chart whose x axis IS time: an older post has had
+     more weeks of tail, so lifetime counts tilt the line downward by themselves — about a
+     quarter over two months. A post qualifies on the projection's own admission rule
+     (pjRef: a clean curve reaching 44 hours), so the dots here are the very launches the
+     plateau card projects from, and a launch with a hole is left out rather than guessed.
+
+     The answer is a median, not a mean, so one hit moves it a little and never carries it:
+     the middle post of the newest N against the middle of the N before, and the same
+     trailing median drawn as a line through the dots. N is 5 once ten launches are in, 4
+     from eight, 3 from six; under six the card says how many more it needs rather than
+     comparing two posts with three and calling it a trend.
+
+     What is left out is said on the card: a post still inside its first 48 hours (drawn
+     hollow at its estimate, not counted), a finished post whose launch has a hole or was
+     never recorded, and anything older than the newest recordings this device keeps. */
+  const BL_WINDOW = n => n >= 10 ? 5 : n >= 8 ? 4 : n >= 6 ? 3 : 0;
+  const BL_NEED = 6;
+  const blDate = t => new Date(t * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  function blModel() {
+    const vids = (hist && hist.videos) || {};
+    const live = new Map((videos || []).map(v => [v.id, v]));
+    const posts = [];
+    let skipped = 0;
+    for (const [id, rec] of Object.entries(vids)) {
+      if (!rec || !rec.create_time) continue;
+      const c = pjCurveOf(id, rec.create_time, rec);
+      const age = Math.max(0, Math.round((Date.now() - rec.create_time * 1000) / 60000));
+      const r = pjRef(c);
+      const lv = live.get(id);
+      const name = feedCap(rec.title || (lv && lv.title) || '', 40, '');
+      if (r) { posts.push({ id, t: rec.create_time, name, v: r.final, done: true }); continue; }
+      if (age < PJ_HORIZON) {
+        // still launching: its estimate is the projection's own mid, when it has one
+        const est = lv ? scoreOf(lv) : null;
+        posts.push({ id, t: rec.create_time, name, v: est > 0 ? est : null, done: false });
+        continue;
+      }
+      skipped++;
+    }
+    posts.sort((a, b) => a.t - b.t);
+    const done = posts.filter(p => p.done);
+    const n = BL_WINDOW(done.length);
+    // the trailing median: at each finished post, the middle of it and the (w − 1) before it
+    const w = n || Math.min(3, done.length);
+    const med = done.map((p, i) => i >= w - 1 && w > 0 ? pjMed(done.slice(i - w + 1, i + 1).map(x => x.v)) : null);
+    const now = n ? pjMed(done.slice(-n).map(p => p.v)) : null;
+    const before = n ? pjMed(done.slice(-2 * n, -n).map(p => p.v)) : null;
+    const delta = n && before > 0 ? Math.round((now / before - 1) * 100) : null;
+    return { posts, done, n, w, med, now, before, delta, skipped, launching: posts.filter(p => !p.done).length };
+  }
+  /* One slot per post, oldest to newest — the unit here is a post, not a day, so the slots
+     are even (a time axis would stretch a quiet fortnight and squeeze a busy week, and the
+     question is "post by post", not "week by week"). Finished posts are dots, the trailing
+     median a line through them, a launching post a hollow dot at its estimate.
+
+     The axis is set for the baseline, not the hit. A post at ten times your typical would
+     flatten every other dot onto the floor — exactly when the baseline matters most — so the
+     scale stops at three times the highest median, and any dot above that is drawn at the
+     top edge as a ▲ with its figure beside it. */
+  function blChartHtml(m) {
+    const pts = m.posts.filter(p => p.v != null);
+    if (!pts.length) return { html: '', clipped: 0 };
+    const g = { w: 620, h: 200, L: 66, R: 18, T: 24, B: 30 };
+    const base = g.h - g.B, n = pts.length, slot = (g.w - g.L - g.R) / n;
+    const X = i => g.L + slot * (i + 0.5);
+    const vals = pts.map(p => p.v);
+    const medMax = Math.max(0, ...m.med.filter(v => v != null));
+    let top = Math.max(1, ...vals);
+    if (medMax > 0 && top > 3 * medMax) top = 3 * medMax;
+    const sc = niceScale(0, top, 4, true);
+    const Y = v => base - (base - g.T) * ((v - sc.lo) / (sc.hi - sc.lo || 1));
+    let out = '';
+    for (const t of sc.ticks) {
+      const y = Y(t);
+      if (Math.abs(y - base) > 0.5) out += '<line class="grid-line" x1="' + g.L + '" y1="' + y.toFixed(1) + '" x2="' + (g.w - g.R) + '" y2="' + y.toFixed(1) + '"/>';
+      out += '<text class="ax" x="' + (g.L - 8) + '" y="' + (y + 3.4).toFixed(1) + '" text-anchor="end">' + esc(axisNum(t)) + '</text>';
+    }
+    out += '<line class="axis-line" x1="' + g.L + '" y1="' + base + '" x2="' + (g.w - g.R) + '" y2="' + base + '"/>';
+    const x0 = blDate(pts[0].t), x1 = blDate(pts[n - 1].t);
+    out += '<text class="ax" x="' + g.L + '" y="' + (g.h - 8) + '">' + esc(x0) + '</text>';
+    if (n > 1 && x1 !== x0) out += '<text class="ax" x="' + (g.w - g.R) + '" y="' + (g.h - 8) + '" text-anchor="end">' + esc(x1) + '</text>';
+    out += '<line class="cline" y1="' + g.T + '" y2="' + base + '" style="display:none"/>';
+    // the median line runs through the finished posts only, where there is one
+    const di = new Map(m.done.map((p, i) => [p.id, i]));
+    const lp = [];
+    pts.forEach((p, i) => { const k = di.get(p.id); if (k != null && m.med[k] != null) lp.push(X(i).toFixed(1) + ',' + Y(m.med[k]).toFixed(1)); });
+    if (lp.length > 1) out += '<path class="line anim" pathLength="1" d="M' + lp.join(' L') + '" style="fill:none;stroke:var(--accent);stroke-width:2"/>';
+    else if (lp.length === 1) out += '<path class="line anim" pathLength="1" d="M' + lp[0] + ' L' + lp[0] + '" style="fill:none;stroke:var(--accent);stroke-width:2"/>';
+    const xs = [], ys = [], tips = [];
+    let clipped = 0, newest = -1;
+    pts.forEach((p, i) => { if (p.done) newest = i; });
+    pts.forEach((p, i) => {
+      const cx = X(i), over = p.v > sc.hi, cy = over ? g.T : Y(p.v);
+      xs.push(cx); ys.push(cy);
+      const who = p.name ? '“' + p.name + '”' : 'a post with no caption';
+      tips.push(blDate(p.t) + ' — ' + who + ': ' + (p.done
+        ? fmt.format(p.v) + ' views in its first 48 hours'
+        : 'heading for ~' + fmt.format(Math.round(p.v)) + ' (estimate — not counted yet)'));
+      if (over) {
+        clipped++;
+        out += '<polygon class="clip" data-i="' + i + '" points="' + (cx - 5).toFixed(1) + ',' + (g.T + 5) + ' ' + (cx + 5).toFixed(1) + ',' + (g.T + 5) + ' ' + cx.toFixed(1) + ',' + (g.T - 4) + '"/>' +
+          '<text class="val" x="' + (cx + 8).toFixed(1) + '" y="' + (g.T + 4) + '">' + esc(axisNum(p.v)) + '</text>';
+        return;
+      }
+      out += '<circle class="pt' + (p.done ? '' : ' est') + '" data-i="' + i + '" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (i === newest ? 5.5 : 4.5) + '" style="' +
+        (p.done ? 'fill:' + (i === newest ? 'var(--accent)' : 'var(--muted)') + ';stroke:var(--ink);stroke-width:2' : 'fill:var(--ink);stroke:var(--accent);stroke-width:2') + '"/>';
+    });
+    // the newest finished post carries its figure, as a line's endpoint would
+    if (newest >= 0 && !(pts[newest].v > sc.hi)) {
+      const lx = Math.min(g.w - g.R, X(newest) + 9), ly = Math.max(g.T + 10, ys[newest] - 9);
+      out += '<text class="val" x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="' + (X(newest) > g.w - g.R - 50 ? 'end' : 'start') + '">' + esc(fmt.format(pts[newest].v)) + '</text>';
+    }
+    out += '<circle class="cdot" r="5" style="display:none;fill:var(--accent);stroke:var(--ink);stroke-width:2"/>';
+    const ci = chartPush({ tips, xs, ys, L: g.L, R: g.R, w: g.w, T: g.T, B: g.B, h: g.h, color: 'var(--accent)' });
+    const label = 'Each post’s first 48 hours, oldest to newest, with the middle of the last ' + m.w + ' as a line';
+    return { html: '<svg class="chart" data-ci="' + ci + '" viewBox="0 0 ' + g.w + ' ' + g.h + '" role="img" aria-label="' + esc(label) + '">' + out + '</svg>', clipped, estimated: pts.filter(p => !p.done).length };
+  }
+  function renderBaseline() {
+    const card = $('baselineCard'), el = $('baselineContent');
+    if (!card || !el) return;
+    if (!hist) { card.style.display = 'none'; return; }   // no recordings, no card
+    card.style.display = 'block';
+    const m = blModel();
+    if (!m.done.length) {
+      el.innerHTML = '<p class="dnote">' + (m.launching ? 'Your newest post is still inside its first 48 hours. ' : '') +
+        'This card fills in by itself as your tracker records whole launches — the first finished one appears here' + (m.launching ? ' in a day or two' : '') + '.</p>';
+      return;
+    }
+    const span = ps => !ps.length ? '' : blDate(ps[0].t) === blDate(ps[ps.length - 1].t) ? blDate(ps[0].t) : blDate(ps[0].t) + ' – ' + blDate(ps[ps.length - 1].t);
+    const tile = (v, k, c1, c2) => '<div class="tile"><div class="v' + (v == null ? ' none' : '') + '">' + (v == null ? '—' : fmt.format(Math.round(v))) +
+      '</div><div class="k">' + k + '</div><div class="c">' + esc(c1) + '</div><div class="c">' + esc(c2) + '</div></div>';
+    let html = '<div class="tr-week"><span class="today-lbl">Your typical post — newest vs the ones before</span><div class="today-tiles tr-tiles">';
+    let say;
+    if (m.n) {
+      const a = m.done.slice(-m.n), b = m.done.slice(-2 * m.n, -m.n);
+      html += tile(m.now, 'views in its first 48 hours, newest ' + m.n + ' posts', span(a), 'the middle of ' + m.n) +
+        tile(m.before, 'views in its first 48 hours, the ' + m.n + ' before', span(b), 'the middle of ' + m.n);
+      say = m.delta == null ? null
+        : Math.abs(m.delta) < 8 ? 'Your typical post gets <b>about the same views</b> in its first 48 hours as the ' + m.n + ' before did.'
+        : 'Your typical post now gets <b>' + Math.abs(m.delta) + '% ' + (m.delta > 0 ? 'more' : 'fewer') + ' views</b> in its first 48 hours than the ' + m.n + ' before did' +
+          (m.delta > 0 ? ' — <span class="cc-win">your baseline is rising</span>.' : '.');
+    } else {
+      const need = BL_NEED - m.done.length;
+      html += tile(pjMed(m.done.map(p => p.v)), 'views in its first 48 hours, your ' + (m.done.length === 1 ? 'one' : m.done.length) + ' recorded post' + (m.done.length === 1 ? '' : 's'),
+          span(m.done), m.done.length === 1 ? 'one post' : 'the middle of ' + m.done.length) +
+        tile(null, 'the posts before', '', 'needs ' + need + ' more finished launch' + (need === 1 ? '' : 'es'));
+      say = 'Comparing newest against earlier needs ' + BL_NEED + ' finished launches — ' + m.done.length + ' recorded so far' +
+        (m.launching ? ', ' + m.launching + ' still running' : '') + '. It fills in by itself.';
+    }
+    html += '</div>' + (say ? '<p class="today-say">' + say + '</p>' : '') + '</div>';
+    const ch = blChartHtml(m);
+    if (ch.html) {
+      const legend = [{ dot: true, color: 'var(--muted)', name: 'a post’s first 48 hours' }, { color: 'var(--accent)', name: 'middle of the last ' + m.w + ' — your baseline' }];
+      if (ch.estimated) legend.push({ dot: true, color: 'var(--accent)', opacity: .55, name: 'still launching — estimate, not counted' });
+      html += '<div class="dsection bl-chart"><h4>Each post’s first 48 hours, oldest to newest</h4>' +
+        '<p class="explain tr-sub">One dot per post. The line is the middle of the last ' + m.w + ' at each point — your baseline. Tap a dot to read it.</p>' +
+        ch.html + legendHtml(legend) +
+        (ch.clipped ? '<p class="dnote" style="margin-top:6px">▲ a post above the top of the chart — its figure is beside it. The scale is set for your baseline, not the hit.</p>' : '') +
+        '<details class="cc-more chart-how"' + foldAttr('baseline-how') + '><summary><span aria-hidden="true">ⓘ</span> How this is counted</summary><div class="cc-more-body">' +
+        '<p class="explain">Each dot is one post’s views in its first 48 hours, read from the launch your tracker recorded — the same stretch of every post’s life, so an older post gets no credit for the weeks it has had since. The line and the two tiles are the middle (median) of the last ' + m.w + ' posts, so one hit moves them a little and never carries them.</p>' +
+        (m.launching ? '<p class="explain">A post still inside its first 48 hours is drawn hollow at its estimate and not counted yet' + (m.launching > ch.estimated ? '; one too new to estimate is not drawn' : '') + '.</p>' : '') +
+        (m.skipped ? '<p class="dnote">' + (m.skipped === 1 ? 'One finished post can’t' : m.skipped + ' finished posts can’t') + ' be compared — launched before the tracker was watching, or with a hole in the recording — and ' + (m.skipped === 1 ? 'is' : 'are') + ' left out.</p>' : '') +
+        '<p class="dnote">This device keeps your newest recordings (up to 20), so the chart reaches back that far.</p>' +
+        '</div></details></div>';
+    }
+    el.innerHTML = html;
   }
   const recDayLabel = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   const recDayLong = k => new Date(k + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
