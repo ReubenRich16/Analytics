@@ -124,7 +124,18 @@ data/             recorded history, committed by the robots
   carries its exact figure and every bar has a tip; 400 days of **follower history** (30 / 90 /
   All); and **when people watch** — the 24 hour-of-day bars with the busiest and quietest three
   hours in a row on top, from those same bars. How each chart is counted, and where the numbers
-  come from, fold away one tap below them.
+  come from, fold away one tap below them. Above Trends sits **Baseline — is your typical post
+  getting bigger?**, the one question a viral spike can't answer: the middle (median) post of
+  your newest five against the middle of the five before, measured on the **same 48-hour
+  stretch of every post's life** — its views at hour 48, read from the launch the Worker
+  recorded, never the lifetime count, which would credit older posts for the weeks they have
+  had since. Two tiles, a sentence ("your typical post now gets 40% more views in its first 48
+  hours than the 5 before did — your baseline is rising"), and one dot per post, oldest to
+  newest, with that trailing median as a line. A post still launching is hollow at its
+  estimate and not counted; a hit far above the baseline is drawn at the top edge as ▲ with its
+  figure, so it can't flatten the rest; launches with a hole, or from before the tracker was
+  watching, are left out and counted in the fold. Under six finished launches it says how many
+  more it needs (five from ten, four from eight, three from six).
   **Everything TikTok's API can support is built on both pages** — what separates them
   is only what TikTok does not publish to any third-party app at all. Both
   pages carry the same **One page** switch that turns the rooms off and stacks every card
@@ -572,6 +583,15 @@ it in the OAuth URL). Only `TIKTOK_CLIENT_SECRET` is a secret.
 - **Impressions & CTR** — no API provides these. YouTube Studio → Analytics →
   Advanced mode → Export CSV, then **Import Studio CSV** at the bottom of the
   dashboard.
+- **Export the recorded data** — Actions → *Export the recorded data (read-only)* → **Run
+  workflow**, then download the zip from that run's **Artifacts** (kept 14 days). It reads
+  everything D1 holds — every reading for the last 60 days (`samples.csv`), the posts
+  (`videos.csv`), one row per post with its views at 1h / 6h / 24h / 48h / 7d (`posts.csv`),
+  the TikTok follower log (`followers.csv`) and a `README.txt` of the columns. This is the
+  **whole** record, which the dashboard's own *Export saved data* is not: that is the browser's
+  copy (launch curves plus whatever three-day windows the device pulled), so days 3–60 of a
+  post's life are only here. Nothing is interpolated, and the TikTok open_id is cut to the four
+  characters the peek prints (see [`scripts/d1-export.mjs`](scripts/d1-export.mjs)).
 - **Search keywords** — edit [`data/keywords.json`](data/keywords.json). Each search page
   costs 100 quota units and a keyword can page up to 8 deep, so the weekly run works from a
   shared page budget and rotates keywords when it can't cover them all (see `rank.mjs`).
@@ -613,7 +633,7 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ```
 yt-dashboard/   index.html · tiktok.html · compare.html · style.css · motion.js · stickers.js · privacy.html · terms.html · publish.sh
 worker/         worker.js · wrangler.toml · schema.sql · *.test.mjs
-scripts/        snapshot.mjs · rank.mjs · test-all.mjs · *.test.mjs
+scripts/        snapshot.mjs · rank.mjs · d1-export.mjs · test-all.mjs · *.test.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json
 docs/           tiktok-setup.md · youtube-ideas.md
 brand/          icon.svg + PNG renders · PHILOSOPHY.md
