@@ -1743,14 +1743,15 @@
 
        The floor has to clear the sampler's SLOWEST DELIBERATE cadence, which is a
        different number from "a couple of missed samples". The Worker records every minute
-       for 48 hours, then every 15 minutes to day 14, then hourly to day 60 — a planned
+       for 48 hours, then every 15 minutes to day 14, then every 30 minutes to day 60 — a planned
        step down, not an outage. At the old 6e5 (10 minutes) every single sample past hour
        48 exceeded the threshold, so each one became a one-point segment; an SVG subpath
        that is a bare moveto is not stroked, so a whole day of real samples rendered as
        nothing at all, the area fill stopped dead with a hard vertical edge at the 48-hour
        mark, and the end dot — drawn unconditionally at the last point — floated on its own
        at the right-hand edge. That is the "data stopped at 48 hours" report, and the data
-       had not stopped. 75 minutes clears the hourly tier with slack. */
+       had not stopped. 75 minutes clears the cool tier with slack — even the hourly one it
+       used to be, so one missed cool reading at today's 30 minutes never breaks the line. */
     let maxGap = Infinity;
     if (at && n > 2) {
       const dts = []; for (let i = 1; i < n; i++) dts.push(at[i] - at[i - 1]);
@@ -4912,7 +4913,7 @@
 
      This is the only place the tracker's long tail is visible. It records every video for
      60 days — minute by minute for the first 48 hours, every fifteen minutes to day 14,
-     hourly to day 60 — but everything else on this page reads the three-day bundle, and the
+     every 30 minutes to day 60 — but everything else on this page reads the three-day bundle, and the
      minute race throws a video away once it is a week old. Days 3 to 60 were being written,
      held for two months, pruned, and never once read.
 

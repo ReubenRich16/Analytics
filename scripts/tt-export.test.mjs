@@ -81,7 +81,7 @@ console.log('\nthe file');
   check('the follower log is normalised and junk dropped', JSON.stringify(f.followers) === JSON.stringify([[NOW - D, 4000, 50000, 2], [NOW, 4100, 51000, 3]]));
   check('the about block explains the fields, the sampler, the grace and the scope',
     /views_1h/.test(f.about.posts) && /within 10 minutes/.test(f.about.posts) && /never a guess/.test(f.about.posts) &&
-    /every minute for a post’s first 48 hours, every 15 minutes to day 14, hourly to day 60/.test(f.about.readings) &&
+    /every minute for a post’s first 48 hours, every 15 minutes to day 14, every 30 minutes to day 60/.test(f.about.readings) &&
     /Gaps are gaps/.test(f.about.readings) && /\[ts, followers, total_likes, post_count\]/.test(f.about.followers) &&
     /Australia\/Melbourne/.test(f.about.times) && /only the account named/.test(f.about.scope) && /id is not written/.test(f.about.scope));
   check('no account id anywhere in the file', !JSON.stringify(f).includes('open-') && !JSON.stringify(f).includes('tt:'));

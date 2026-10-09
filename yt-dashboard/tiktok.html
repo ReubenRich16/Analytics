@@ -879,7 +879,7 @@
 
        The floor has to clear the sampler's SLOWEST DELIBERATE cadence, which is a different
        number from "a couple of missed minutes". The Worker records every minute for 48
-       hours, then every 15 minutes to day 14, then hourly to day 60 — a planned step down,
+       hours, then every 15 minutes to day 14, then every 30 minutes to day 60 — a planned step down,
        not an outage. At the old 6e5 (10 minutes) every single sample past hour 48 exceeded
        the threshold, so each one became a one-point segment; an SVG subpath that is a bare
        moveto is not stroked, so a whole day of real samples rendered as nothing at all, the
@@ -887,7 +887,8 @@
        — drawn unconditionally at the last point — floated on its own at the right-hand
        edge. That is exactly the "data stopped at 48 hours" report, and the data had not
        stopped: it was in D1, it was served, it was merged, and then it was drawn as
-       nothing. 75 minutes clears the hourly tier with slack. */
+       nothing. 75 minutes clears the cool tier with slack — even the hourly one it used to
+       be, so one missed cool reading at today's 30 minutes never breaks the line. */
     // opts.maxGap: a caller whose points have a known spacing (one a day) says what a
     // gap is outright, rather than leaving it to four times the median spacing
     let maxGap = Infinity;
@@ -4024,7 +4025,7 @@
          so a day with a hole is left out rather than shown short or ranked.
      Each gain is filed under the hour just before its reading (arr[i][0] − 1), because a
      reading taken at 3:00 carries the views that came in before 3:00. */
-  const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's hourly tier
+  const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's cool tier, even with one reading missed
   // how many posts the recorded figures rest on, when that is not every post TikTok lists
   // (0 when the store holds all of them). Every card that names its basis asks this one test.
   const ttStoredBasis = () => {
@@ -5942,7 +5943,7 @@
       account: who || '', kept_days: keepDays,
       about: {
         posts: 'One entry per post the tracker has recorded, oldest first. views_1h … views_7d are the post’s views at that age: the last reading at or before it, only if that reading is within 10 minutes of the age (an hour for 7d). null means no reading sits close enough — never a guess. views_48h is the figure the dashboard grades every post on: the same stretch of every post’s life.',
-        readings: 'Every reading the tracker took of that post, as [ts, views, likes, comments, shares]; ts is milliseconds since 1970 UTC. The tracker reads every minute for a post’s first 48 hours, every 15 minutes to day 14, hourly to day 60, then prunes. A launch is recorded only from the moment the tracker was watching, so a post published before the account was connected has no early readings. Gaps are gaps: a missed reading leaves no row, never a repeated one.',
+        readings: 'Every reading the tracker took of that post, as [ts, views, likes, comments, shares]; ts is milliseconds since 1970 UTC. The tracker reads every minute for a post’s first 48 hours, every 15 minutes to day 14, every 30 minutes to day 60, then prunes. A launch is recorded only from the moment the tracker was watching, so a post published before the account was connected has no early readings. Gaps are gaps: a missed reading leaves no row, never a repeated one.',
         followers: 'The account’s follower log, checked every ~3 hours for up to 400 days: [ts, followers, total_likes, post_count].',
         times: '*_utc fields are ISO 8601. *_local fields are the clock of the device that exported (' + (tz || 'local time') + '), which is the clock the dashboard cuts its days on.',
         scope: 'This file holds only the account named in “account”, as served to its own signed-in session. Nothing from any other account is in it, and the account’s id is not written.'
