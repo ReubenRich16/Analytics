@@ -184,6 +184,7 @@ can sign in, so it stays private to the two of you.
 | `/tiktok/ai` | Idea Studio, using the existing Gemini key |
 | `/tiktok/launches` | the recorded launches, age-indexed — the projection's reference curves |
 | `/tiktok/life` | one post's whole recorded life, hour by hour |
+| `/tiktok/export` | the page's **Export recordings**: this account's post roster and follower log, then one post's raw readings per `?id=` |
 | `/tiktok/disconnect` | sign an account out and stop the cron polling it |
 
 The client secret never leaves the Worker — the browser only ever holds a random

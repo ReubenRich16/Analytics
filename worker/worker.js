@@ -441,6 +441,36 @@ async function d1Life(env, platform, id) {
   };
 }
 
+/* --- the export: everything recorded for ONE account, for the page's "Export recordings" ---
+
+   The only way to get the record out used to be a GitHub workflow that dumped the whole
+   database — every connected account in one artifact, downloadable by anyone signed in to
+   GitHub, since the repo is public. This serves the record to the account it belongs to:
+   the session names the open_id, the open_id names the partition, and nothing from any
+   other partition can be asked for.
+
+   Served per post, raw, because the page assembles the file and the Worker is on the free
+   plan. One post is at most ~5,100 rows (minute by minute for 48 hours, then the taper) —
+   a few milliseconds to read and serialise — where the whole partition at once can be
+   300,000 rows and would run past the 10 ms CPU allowance. The page asks for the roster,
+   then each post in turn, and writes one file. Nothing here is bucketed or interpolated:
+   this is the record itself. Both reads seek on the samples primary key (platform,
+   video_id, ts), so an export reads exactly the rows it returns. */
+async function d1ExportRoster(env, platform) {
+  const vres = await env.DB.prepare(
+    'SELECT video_id, published_at, title, cover, first_seen FROM videos WHERE platform = ? ORDER BY published_at'
+  ).bind(platform).all();
+  return (vres.results || []).map(v => ({
+    id: v.video_id, create_time: Math.round(v.published_at / 1000), title: v.title || '', cover: v.cover || '', first_seen: v.first_seen || 0
+  }));
+}
+async function d1ExportPost(env, platform, id) {
+  const sres = await env.DB.prepare(
+    'SELECT ts, views, likes, comments, shares FROM samples WHERE platform = ? AND video_id = ? ORDER BY ts'
+  ).bind(platform, String(id)).all();
+  return (sres.results || []).map(r => [r.ts, r.views, r.likes, r.comments, r.shares]);
+}
+
 async function d1Launches(env, platform, vids) {
   if (!vids) vids = await d1Finished(env, platform);
   if (!vids.length) return { curves: {} };
@@ -1379,6 +1409,22 @@ async function ttHandler(request, env, url) {
   // the sticker drawer's list — it needs the session, not a TikTok token, so it sits before
   // the token fetch (a slow or failed refresh never costs you your stickers)
   if (p === '/tiktok/stickers') return stickersRoute(request, env, 'tt:stickers:' + openId);
+
+  // The page's "Export recordings": with no id, the roster of this account's posts and its
+  // follower log; with ?id=, that one post's raw readings. Session-locked and partition-
+  // scoped — see d1ExportRoster. Before the token fetch for the same reason the stickers
+  // are: the recordings are the account's own measurement history, and an expired TikTok
+  // token is no reason to withhold them.
+  if (p === '/tiktok/export') {
+    if (!env.DB) return json({ error: 'This Worker has no database to export from.' }, 503);
+    const id = url.searchParams.get('id') || '';
+    try {
+      if (id) return json({ id, s: await d1ExportPost(env, ttKey(openId), id) });
+      let followers = [];
+      try { followers = JSON.parse(await env.MINUTE.get('tt:followers:' + openId) || '[]'); } catch (e) { followers = []; }
+      return json({ videos: await d1ExportRoster(env, ttKey(openId)), followers: Array.isArray(followers) ? followers : [], keepDays: D1_KEEP_DAYS });
+    } catch (e) { return json({ error: 'D1 read failed: ' + String((e && e.message) || e) }, 502); }
+  }
 
   // Genuinely disconnect the account, as opposed to the page forgetting its session id.
   // Clearing localStorage left the stored refresh token and the tt:accounts entry in
