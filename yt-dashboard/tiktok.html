@@ -220,6 +220,32 @@
   body[data-theme="cloud"] .tr-pills .today-pill { border-radius:999px; }
   @media (max-width:380px) { .tr-tiles .tile .v { font-size:20px; } }
   /* ---- Baseline: a launching post is a hollow dashed dot; a post above the chart's top is a ▲ ---- */
+  /* ---- Posts as a grid: thumbnails three to a row, as on a TikTok profile. The views sit
+     bottom-left like TikTok's play count; what the list is sorted by, when it isn't views,
+     sits bottom-right; a post gaining since the last refresh wears a green +N; a post in
+     its first 48 hours says NEW, or ⚡ if it is speeding up. Wider screens fit more across. ---- */
+  .view-toggle { display:inline-flex; gap:4px; flex:none; }
+  .view-toggle button { padding:6px 12px; font-size:12px; min-height:0; }
+  .view-toggle button[aria-pressed="true"] { color:var(--text); border-color:var(--accent); }
+  .ttgrid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:3px; padding:3px; }
+  @media (min-width:641px) { .ttgrid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:4px; padding:4px; } }
+  .ttile { position:relative; display:block; width:100%; aspect-ratio:3 / 4; padding:0; margin:0; border:0; border-radius:6px; overflow:hidden;
+    background:var(--panel-2); cursor:pointer; color:#fff; font:inherit; text-align:left; -webkit-tap-highlight-color:transparent; }
+  .ttile img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; }
+  .ttile .noimg { position:absolute; inset:0; display:flex; align-items:flex-start; padding:8px; font-size:11px; line-height:1.3; color:var(--muted);
+    background:linear-gradient(160deg, var(--panel-2), var(--ink)); }
+  .ttile::after { content:''; position:absolute; left:0; right:0; bottom:0; height:46%; background:linear-gradient(to top, rgba(0,0,0,.6), transparent); pointer-events:none; }
+  .ttile .tv, .ttile .tk, .ttile .tgain, .ttile .tnew { position:absolute; z-index:1; text-shadow:0 1px 3px rgba(0,0,0,.85); }
+  .ttile .tv { left:6px; bottom:5px; display:inline-flex; align-items:center; gap:4px; font-family:var(--f-num); font-size:12.5px; font-weight:700; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+  .ttile .tv::before { content:'\25B6'; font-size:8px; }
+  .ttile .tk { right:6px; bottom:5px; font-size:11px; font-weight:600; }
+  .ttile .tgain { top:5px; right:5px; padding:2px 6px; border-radius:999px; background:var(--up); color:var(--ink); font-size:10.5px; font-weight:700; text-shadow:none; }
+  .ttile .tnew { top:5px; left:5px; padding:2px 6px; border-radius:999px; background:rgba(0,0,0,.6); font-size:10px; font-weight:700; letter-spacing:.06em; }
+  .ttile:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .tablecard.grid-on .tscroll, .tablecard.grid-on .listnote { display:none; }
+  .tablecard:not(.grid-on) .ttgrid, .tablecard:not(.grid-on) .gridnote { display:none; }
+  .tablecard .gridnote { padding:8px 12px 10px; }
+  @media (max-width:640px) { .tablecard .thead-bar .view-toggle { order:1; } .tablecard .thead-bar .label { flex:1 1 100%; } }
   svg.chart circle.pt.est { stroke-dasharray:3 2; }
   svg.chart polygon.clip { fill:var(--accent); stroke:var(--ink); stroke-width:1.5; }
   .bl-chart .legend { margin-top:8px; }
@@ -437,7 +463,11 @@
   <!-- VIDEO TABLE -->
   <div class="card tablecard" id="tableCard" style="display:none">
     <div class="thead-bar">
-      <div class="label" id="tableLabel">Posts — tap a row for the full breakdown</div>
+      <div class="label" id="tableLabel">Posts — tap a post for the full breakdown</div>
+      <div class="view-toggle" role="group" aria-label="How to show your posts">
+        <button class="ghost" id="viewGrid" aria-pressed="true" title="Thumbnails, three to a row, as on your TikTok profile">Grid</button>
+        <button class="ghost" id="viewList" aria-pressed="false" title="Every stat in a table — cards on a phone">List</button>
+      </div>
       <select id="sortMode" title="Or tap a column heading to sort by it (wider screens)">
         <option value="newest" selected>Sort: newest</option>
         <option value="views">Sort: most views</option>
@@ -452,6 +482,9 @@
         <option value="" disabled>— or tap a column heading on a wider screen —</option>
       </select>
     </div>
+    <!-- the grid: one tile per post in the sort order above, three to a row on a phone -->
+    <div class="ttgrid" id="ttGrid"></div>
+    <p class="dnote gridnote">Tap a post for its full breakdown. The number is its views; a green +N is views gained since the last refresh; ⚡ means speeding up; NEW is a post still in its first 48 hours. Sorting by likes, comments, shares or another figure writes that figure on each post too.</p>
     <div class="tscroll">
       <table>
         <thead><tr id="thRow">
@@ -469,7 +502,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="dnote" style="padding:10px 16px">+Since refresh is views since the last refresh; +This visit is views since you opened the page (a reload within 30 minutes carries on). ⚡ means speeding up — 1.5× the views of the 24 hours before and 50+ in the last 24. TikTok shares only views, likes, comments and shares for your newest 60 posts — not watch time or who’s watching.</p>
+    <p class="dnote listnote" style="padding:10px 16px">+Since refresh is views since the last refresh; +This visit is views since you opened the page (a reload within 30 minutes carries on). ⚡ means speeding up — 1.5× the views of the 24 hours before and 50+ in the last 24. TikTok shares only views, likes, comments and shares for your newest 60 posts — not watch time or who’s watching.</p>
   </div>
   </div>
 
@@ -2013,8 +2046,9 @@
     // "newest 60 of 312" only when the list really is cut short; otherwise it is all of them
     const shown = rows.length >= 60 && me && (me.video_count || 0) > rows.length
       ? 'newest ' + rows.length + ' of ' + fmt.format(me.video_count) : 'showing ' + rows.length;
-    $('tableLabel').textContent = 'Posts \u2014 ' + shown + ' \u00b7 tap a row for details, \u2197 opens it on TikTok' +
+    $('tableLabel').textContent = 'Posts \u2014 ' + shown + (postsView === 'grid' ? ' \u00b7 tap a post for details' : ' \u00b7 tap a row for details, \u2197 opens it on TikTok') +
       (listPartial ? ' \u00b7 TikTok sent only part of the list' : '');
+    renderGrid(rows);
     const tb = $('tbody'); tb.innerHTML = '';
     for (const v of rows) {
       const tr = document.createElement('tr');
@@ -2048,6 +2082,75 @@
       tb.appendChild(tr);
     }
   }
+
+  /* ---------- the Posts grid: thumbnails three to a row, as on a TikTok profile ----------
+     The table shows every stat and became a stack of cards on a phone — honest, and nothing
+     like the profile page she is used to scanning. The grid is that profile: one tile per
+     post in the chosen sort order, the cover with the views bottom-left, three to a row on a
+     phone and more on a wider screen. Tap a tile and the same drawer opens as from a row.
+
+     Nothing the table shows is gone: the List button brings it back, the sort control
+     drives both, and the choice is remembered on this device. What a tile carries beyond
+     the cover: the views (TikTok's own play count), the figure the list is sorted by when
+     that isn't views, a green +N for views gained since the last refresh, and NEW or ⚡ for
+     a post inside its first 48 hours or speeding up. */
+  const TT_VIEW_KEY = 'tt_posts_view';
+  let postsView = 'grid';
+  try { postsView = localStorage.getItem(TT_VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch (e) {}
+  // the figure written bottom-right when the list is sorted by something other than views
+  const TILE_KEY = {
+    likes: v => '♥ ' + axisNum(v.like_count || 0),
+    comments: v => '\u{1F4AC} ' + axisNum(v.comment_count || 0),
+    shares: v => '↗ ' + axisNum(v.share_count || 0),
+    eng: v => engOf(v).toFixed(1) + '%',
+    pace: v => paceOf(v) == null ? '' : axisNum(Math.round(paceOf(v))) + '/day',
+    tickV: v => (perPost[v.id] && perPost[v.id].tickV > 0) ? '+' + axisNum(perPost[v.id].tickV) : '',
+    sessV: v => (perPost[v.id] && perPost[v.id].sessV > 0) ? '+' + axisNum(perPost[v.id].sessV) : ''
+  };
+  function tileHtml(v) {
+    const d = perPost[v.id] || {};
+    const cap = capOf(v);
+    const key = TILE_KEY[tableSort.key] ? TILE_KEY[tableSort.key](v) : '';
+    const young = Date.now() - (v.create_time || 0) * 1000 < PJ_HORIZON * 60000;
+    // named as the away card names a post: the caption without its tags, cut at a word
+    const label = (feedCap(cap, 80, '') || 'a post with no caption') + ' — ' + fmt.format(v.view_count || 0) + ' views' +
+      (d.tickV > 0 ? ', +' + fmt.format(d.tickV) + ' since the last refresh' : '') + (accelSet.has(v.id) ? ', speeding up' : '');
+    return '<button type="button" class="ttile' + (d.tickV > 0 ? ' mover' : '') + '" data-id="' + escAttr(v.id) + '" aria-label="' + escAttr(label) + '">' +
+      (v.cover_image_url ? '<img alt="" loading="lazy" src="' + escAttr(v.cover_image_url) + '">'
+        : '<span class="noimg">' + esc(feedCap(cap, 48, 'No cover yet')) + '</span>') +
+      (accelSet.has(v.id) ? '<span class="tnew" title="Speeding up — gaining at least ' + ACCEL_RATIO + '× as fast as the previous 24 hours">⚡</span>'
+        : young ? '<span class="tnew">NEW</span>' : '') +
+      '<span class="tv">' + esc(axisNum(v.view_count || 0)) + '</span>' +
+      (key ? '<span class="tk">' + esc(key) + '</span>' : '') +
+      (d.tickV > 0 ? '<span class="tgain">+' + esc(axisNum(d.tickV)) + '</span>' : '') +
+      '</button>';
+  }
+  // the rows renderTable already sorted — one order, two views
+  function renderGrid(rows) {
+    const g = $('ttGrid');
+    if (g) g.innerHTML = rows.map(tileHtml).join('');
+  }
+  function applyPostsView() {
+    const card = $('tableCard');
+    if (!card) return;
+    card.classList.toggle('grid-on', postsView === 'grid');
+    $('viewGrid').setAttribute('aria-pressed', String(postsView === 'grid'));
+    $('viewList').setAttribute('aria-pressed', String(postsView === 'list'));
+  }
+  function setPostsView(v) {
+    postsView = v === 'list' ? 'list' : 'grid';
+    try { localStorage.setItem(TT_VIEW_KEY, postsView); } catch (e) {}
+    applyPostsView();
+    if (videos.length) renderTable();   // the label says which kind of thing to tap
+  }
+  $('viewGrid').addEventListener('click', () => setPostsView('grid'));
+  $('viewList').addEventListener('click', () => setPostsView('list'));
+  // one listener for the whole grid: the tiles are rebuilt on every refresh
+  $('ttGrid').addEventListener('click', e => {
+    const t = e.target.closest ? e.target.closest('.ttile') : null;
+    if (t) ttdOpen(t.dataset.id, t);
+  });
+  applyPostsView();
 
   /* ---------- plateau projection: where is this one heading? ----------
      No curve fitting. Every growth curve tried here fit the tail well and the first
