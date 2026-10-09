@@ -428,7 +428,7 @@ console.log('\nthe per-post drawer');
   check('and clicking that anchor does not also open the drawer',
     /if \(e\.target && e\.target\.closest && e\.target\.closest\('a'\)\) return;/.test(TT));
   check('the drawer header carries the same way out', /id="ttdOpen"/.test(TT));
-  check('the label tells you what a row does now', /tap a row for the full breakdown/.test(TT));
+  check('the label tells you what a row does now', /tap a post for the full breakdown/.test(TT) && /tap a row for details, \\u2197 opens it on TikTok/.test(TT));
   check('rows are reachable by keyboard, which they were not before',
     /tr\.tabIndex = 0;/.test(TT) && /e\.key !== 'Enter' && e\.key !== ' '/.test(TT));
 

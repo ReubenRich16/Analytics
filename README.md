@@ -439,8 +439,13 @@ of TikTok. Free, no card.
 **The long tail, and how to see it**
 
 The tracker records every video for 60 days — minute by minute for the first 48 hours,
-every fifteen minutes to day 14, hourly to day 60 (on TikTok, only while the post is among
-your 20 and then 60 newest — see the cadence note below). For a long time nothing *served* more
+every fifteen minutes to day 14, every thirty minutes to day 60 (on TikTok, only while the
+post is among your 20 and then 60 newest — see the cadence note below). The last tier was
+hourly until October 2026: the scheduler skips about one minute in seventy, and one skipped
+minute on the hour left every post older than two weeks with a two-hour gap, which the pages
+rightly count as a hole — so most days read as "part of today wasn't recorded" and the Today
+card refused its day-against-day comparison. At thirty minutes a single miss can't make a
+hole. For a long time nothing *served* more
 than the last three days of that: both bundles cut on an absolute `KEEP_DAYS` window, the
 YouTube page discarded any video over a week old, and no caller ever passed `?days=`. Days
 3–60 were written, held for two months, pruned, and never read. On TikTok that was the
@@ -485,10 +490,10 @@ months. A tapering cadence now carries it the whole way:
 |---|---|---|
 | 0–48h | every minute | a launch moves by the minute |
 | 2–14 days | every 15 min | it still moves, but not that fast |
-| 14–60 days | hourly | a month out, minute sampling would record that nothing happened |
+| 14–60 days | every 30 minutes | a month out, minute sampling would record that nothing happened; hourly let one skipped minute open a two-hour hole |
 
 TikTok: its list API pages 20 posts at a time, so the 15-minute tier covers your 20 newest
-posts and the hourly tier your 60 newest — about 8 days and 3½ weeks at 2–3 posts a day.
+posts and the 30-minute tier your 60 newest — about 8 days and 3½ weeks at 2–3 posts a day.
 Older posts are not recorded.
 
 Measured against this account's real publish rate — 2.2 uploads a day on YouTube, ~2.5

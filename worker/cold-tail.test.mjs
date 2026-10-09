@@ -37,8 +37,13 @@ console.log('\n1. the cadence');
   check('and not in between', [1, 7, 14, 16, 44].every(m => !W.coldDue(warm, m)));
 
   const cool = 30 * D;
-  check('a thirty-day-old video is due once an hour', W.coldDue(cool, 0));
-  check('and not at the quarter hours', [15, 30, 45].every(m => !W.coldDue(cool, m)));
+  check('a thirty-day-old video is due on the hour and the half hour', W.coldDue(cool, 0) && W.coldDue(cool, 30));
+  check('and not at the quarter hours', [15, 45].every(m => !W.coldDue(cool, m)));
+  /* Why every 30 minutes and not every hour: the dashboards treat a gap over 75 minutes
+     between two readings as a hole, and one skipped cron minute on the hour used to leave
+     every post older than two weeks with a two-hour gap — one miss, and the whole day read
+     as partly unrecorded. A single miss at this cadence leaves 60 minutes, inside the rule. */
+  check('one missed tick leaves a gap the pages still accept (under 75 minutes)', 2 * W.COLD_COOL_MIN < 75, 2 * W.COLD_COOL_MIN + ' minutes');
 
   check('the warm/cool boundary is where the constant says',
     W.coldDue((W.COLD_WARM_DAYS - 0.01) * D, 15) && !W.coldDue((W.COLD_WARM_DAYS + 0.01) * D, 15));
@@ -75,30 +80,29 @@ console.log('\n2. the arithmetic the comment promises');
   const W_PER = 1 + idx;
   // TikTok's side of the table, which this file cannot derive: its cadence is set by the
   // list API's 20-a-page cap rather than by coldDue, and by her posting rate
-  // tail: ~15 posts in the 20 newest at 15 min (×96) + ~40 more of the 60 newest hourly (×24)
-  const ttHot = 7200, ttTail = 15 * 96 + 40 * 24;
+  // tail: ~15 posts in the 20 newest at 15 min (×96) + ~40 more of the 60 newest at 30 min (×48)
+  const ttHot = 7200, ttTail = 15 * 96 + 40 * (mins / W.COLD_COOL_MIN);
   const samples = hot + warm + cool + ttHot + ttTail;
   const rowWrites = samples * W_PER;
   check('YouTube hot is about 6,300 samples a day', Math.abs(hot - 6336) < 300, Math.round(hot));
   check('the tail adds a few thousand, not tens of thousands', warm + cool < 8000, Math.round(warm + cool));
-  check('both platforms come to the ~20,900 samples/day the table claims',
-    Math.abs(samples - 20900) < 700, Math.round(samples));
+  check('both platforms come to the ~24,300 samples/day the table claims',
+    Math.abs(samples - 24300) < 700, Math.round(samples));
   check('the schema keeps exactly one index on samples', idx === 1, idx + ' found');
   check('the redundant prune index is dropped rather than created',
     /DROP INDEX IF EXISTS idx_samples_prune/.test(schema) &&
     !/CREATE INDEX[^;]*idx_samples_prune/i.test(schema));
-  check('so the sampler costs the ~42,000 row-writes/day the comment claims',
-    Math.abs(rowWrites - 42000) < 2000, Math.round(rowWrites));
+  check('so the sampler costs the ~48,600 row-writes/day the comment claims',
+    Math.abs(rowWrites - 48600) < 2000, Math.round(rowWrites));
   check('the hot windows alone are about 27,000 of it',
     Math.abs((hot + ttHot) * W_PER - 27000) < 2000, Math.round((hot + ttHot) * W_PER));
   check('the total fits the 100,000/day row-write allowance with room to spare',
     rowWrites < 70000, Math.round(rowWrites) + ' row-writes/day');
-  /* The live database still carries the extra index — the deploy's schema step has been
-     failing since the API token lost its D1 permission, so the DROP above is queued rather
-     than applied. Until it lands the real bill is a third higher, which is the number that
-     has to fit, not the one the schema wants. */
-  check('and would still fit even while the extra index is still live',
-    samples * (W_PER + 1) < 70000, Math.round(samples * (W_PER + 1)) + ' row-writes/day');
+  /* The extra index was dropped on 31 Aug 2026, when the schema step first ran. Were it
+     ever to come back, the bill would be a third higher again — still inside the
+     allowance, but no longer with the margin the line above asks for. */
+  check('and would still fit even if the extra index came back',
+    samples * (W_PER + 1) < 100000, Math.round(samples * (W_PER + 1)) + ' row-writes/day');
   // and the thing that would NOT fit, which is why the cadence tapers at all.
   // YouTube against YouTube — the flat figure here has no TikTok in it, so the tapered
   // side must not either, or the ratio quietly compares two different channels.

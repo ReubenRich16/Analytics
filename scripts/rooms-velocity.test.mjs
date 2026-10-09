@@ -101,17 +101,17 @@ console.log('\nthe tab bar copes with six of them');
 /* ---------- 2. the gap floor ---------- */
 console.log('\nthe break threshold clears the sampler\'s slowest cadence');
 {
-  // COLD_COOL_MIN — the hourly tier from day 14 to day 60 — is the number to clear
+  // COLD_COOL_MIN — the cool tier from day 14 to day 60, every 30 minutes — is the number to clear
   const worker = fs.readFileSync(new URL('../worker/worker.js', import.meta.url), 'latin1');
   const cool = +(worker.match(/COLD_COOL_MIN\s*=\s*(\d+)/) || [])[1];
   const warm = +(worker.match(/COLD_WARM_MIN\s*=\s*(\d+)/) || [])[1];
-  check('the worker still steps down to a 15-minute then hourly cadence', warm === 15 && cool === 60,
+  check('the worker still steps down to a 15-minute then 30-minute cadence', warm === 15 && cool === 30,
     warm + '/' + cool);
   for (const [src, page] of [[YT, 'index.html'], [TT, 'tiktok.html']]) {
     const floors = [...src.matchAll(/maxGap = Math\.max\(4 \* dts\[dts\.length >> 1\], ([^)]+)\)/g)].map(m => m[1].trim());
     check(page + ' sets a floor at all', floors.length === 1, floors.join(' | '));
     const ms = floors.length ? Function('return ' + floors[0])() : 0;
-    check(page + ' clears the hourly tier with slack', ms > cool * 60e3, ms + 'ms vs ' + cool * 60e3);
+    check(page + ' clears the cool tier with slack, even with one reading missed', ms > 2 * cool * 60e3, ms + 'ms vs ' + 2 * cool * 60e3);
     check(page + ' no longer uses the ten-minute floor that hid a day of samples', !floors.includes('6e5'));
     // and the belt-and-braces half: an isolated sample must still leave a mark
     check(page + ' draws a lone sample as a zero-length subpath, not a bare moveto',

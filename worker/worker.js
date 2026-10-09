@@ -60,16 +60,18 @@ const HOT_HOURS   = 48;
 
      YouTube  hot    0–48h   every minute    4.4 videos     6,336 samples/day
               warm   2–14d   every 15 min     26 videos     2,534
-              cool  14–60d   every hour      101 videos     2,429
+              cool  14–60d   every 30 min    101 videos     4,858
      TikTok   hot    0–48h   every minute      5 posts      7,200
-              tail   2–60d   15 min / hour   ~55 posts      2,400   (~15 × 96 + ~40 × 24)
+              tail   2–60d   15 / 30 min     ~55 posts      3,360   (~15 × 96 + ~40 × 48)
                                                            ─────────
-                                                            ~20,900 samples/day
+                                                            ~24,300 samples/day
 
    D1 bills a row-write for the table row AND one for every index on it, so the cost per
    sample is 1 + (indexes on samples). schema.sql keeps exactly one, which puts this at
-   about 42,000 of the 100,000/day allowance, against roughly 27,000 for the hot windows
-   alone.
+   about 48,600 of the 100,000/day allowance, against roughly 27,000 for the hot windows
+   alone. (The cool tier was hourly until 9 Oct 2026, ~42,000 all in; see COLD_COOL_MIN
+   for why it is every 30 minutes now. The live bill measured that day — this account
+   posts less than the plan assumes — was about 25,000 before the change.)
 
    Two caveats worth knowing. This comment said a flat "two row-writes" while samples
    carried a second index, and undercounted the whole thing by a third — the arithmetic is
@@ -86,10 +88,10 @@ const HOT_HOURS   = 48;
    every row outside the launch window.
 
    TikTok's tail is capped by its own API rather than by this cadence — the list call
-   returns 20 posts a page, so the hourly pass asks for 60 and the minute passes ask for
-   20. So on TikTok the 15-minute tier covers only the 20 newest posts (about 8 days at her
-   rate) and the hourly tier the 60 newest (about three and a half weeks); an older post is
-   not recorded at all.
+   returns 20 posts a page, so the half-hourly pass asks for 60 and the minute passes ask
+   for 20. So on TikTok the 15-minute tier covers only the 20 newest posts (about 8 days at
+   her rate) and the 30-minute tier the 60 newest (about three and a half weeks); an older
+   post is not recorded at all.
 
    A tapering cadence used to be rejected here on the grounds that it "makes the gap
    between consecutive samples vary, which silently breaks any chart that plots by array
@@ -97,7 +99,16 @@ const HOT_HOURS   = 48;
    both dashboards' line charts now take the sample times and plot against real time. */
 const COLD_WARM_DAYS = 14;
 const COLD_WARM_MIN  = 15;
-const COLD_COOL_MIN  = 60;
+/* 30, not 60. At hourly, one skipped cron minute on the hour left every post older than
+   two weeks with a two-hour gap — past the dashboards' 75-minute "hole" rule — so one
+   missed tick marked the whole day as partly unrecorded and switched off the Today card's
+   day-against-day comparison. Measured on the live database (9 Oct 2026): about 1.5% of
+   ticks are skipped, the same count on both platforms, so they are scheduler misses, not
+   API faults. At every 30 minutes a single miss leaves a 60-minute gap, inside the rule.
+   Cost: the cool tier doubles, from ~24 to ~48 samples a day per post — see the budget
+   table above; the live bill was ~25,000 row-writes a day before this, so even the plan's
+   worst case stays under half the 100,000 allowance. */
+const COLD_COOL_MIN  = 30;
 // Is a video of this age due a sample at this minute past the hour? Clock-derived, like
 // the scan cadence, so it needs no stored state and a missed tick simply waits for the
 // next boundary instead of drifting.
@@ -387,7 +398,7 @@ async function d1Finished(env, platform) {
 /* One video's whole recorded life, publish to now.
 
    The pool this exists to spend. The tracker records every video for D1_KEEP_DAYS — minute
-   by minute for the first 48 hours, every fifteen minutes to day 14, hourly to day 60 — but
+   by minute for the first 48 hours, every fifteen minutes to day 14, every 30 minutes to day 60 — but
    until this route nothing served more than the last three days of it. Every read defaulted
    to the KEEP_DAYS bundle, the YouTube page discarded anything over a week old, and no
    caller ever passed ?days=. So days 3-60 of every video were written, held for two months,
@@ -1610,9 +1621,10 @@ async function ttTick(env) {
 
     let vids = [], fetchErr = null;
     try {
-      // 60 on the hour so the cool tier reaches back about three and a half weeks; 20 the
-      // rest of the time, since only the launch window and the warm tier are due then
-      const r = await ttFetchVideos(token, new Date(now).getUTCMinutes() === 0 ? 60 : 20);
+      // 60 on the hour and the half hour, when the cool tier is due, so it reaches back
+      // about three and a half weeks; 20 the rest of the time, since only the launch window
+      // and the warm tier are due then
+      const r = await ttFetchVideos(token, new Date(now).getUTCMinutes() % COLD_COOL_MIN === 0 ? 60 : 20);
       vids = r.videos;
       if (r.error) fetchErr = r.error.slice(0, 160);
     } catch (e) { fetchErr = String((e && e.message) || e).slice(0, 160); }
@@ -1622,7 +1634,12 @@ async function ttTick(env) {
     // that is precisely the question that could not be answered when D1 turned out to
     // hold no TikTok rows at all. Record the outcome, and persist it when it CHANGES, so
     // the two can be told apart without costing a write every minute.
-    const health = fetchErr ? 'error: ' + fetchErr : 'ok: listed ' + vids.length;
+    // The count is capped at one page, because the half-hourly pass asks for 60 posts and
+    // the minute passes for 20: "listed 60" then "listed 20" is not a change in health, and
+    // recording it as one cost a snapshot write every time the page size flipped — twice an
+    // hour per account, four now that the 60-post pass runs on the half hour as well. What
+    // the string exists to tell apart is an error, an empty list and a full one.
+    const health = fetchErr ? 'error: ' + fetchErr : 'ok: listed ' + (vids.length >= 20 ? '20+' : vids.length);
     const healthChanged = snap.ttHealth !== health;
     if (healthChanged) { snap.ttHealth = health; snap.ttHealthAt = now; }
     if (fetchErr) {

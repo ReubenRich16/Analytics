@@ -1,7 +1,7 @@
 // One video's whole recorded life — the /life and /tiktok/life routes.
 //
 // What this is for. The tracker records every video for 60 days: minute by minute for the
-// first 48 hours, every fifteen minutes to day 14, hourly to day 60. Nothing served more
+// first 48 hours, every fifteen minutes to day 14, every 30 minutes to day 60. Nothing served more
 // than the last three days of that. The bundles cut on an absolute KEEP_DAYS window, the
 // YouTube page threw away anything over a week old, and no caller ever passed ?days= — so
 // days 3-60 of every video were written, held for two months, pruned, and never read. On
