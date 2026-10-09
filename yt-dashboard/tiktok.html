@@ -551,6 +551,7 @@
     <span id="ttDataNote" title="Everything this page has saved in this browser"></span>
     <button class="ghost" id="ttExportBtn">Export saved data</button>
     <button class="ghost" id="ttImportBtn">Import saved data</button>
+    <button class="ghost" id="ttExportRecBtn" title="Everything your tracker has recorded for this account — every reading for the last 60 days — as one file">Export recordings</button>
     <input type="file" id="ttImportFile" accept="application/json" style="display:none">
   </div>
 
@@ -5890,6 +5891,101 @@
     rd.readAsText(f);
     e.target.value = '';
   });
+  /* ---------- Export recordings — everything the Worker recorded for THIS account ----------
+     "Export saved data" above is this browser's copy: its settings, and the launch curves and
+     three-day windows it happened to pull. The Worker holds the record itself — every reading
+     for 60 days — and the only way to get it out used to be a GitHub workflow that dumped every
+     connected account into one artifact on a public repo. This asks the Worker for the account
+     that is signed in, post by post (it serves one post per call so the free plan's CPU
+     allowance is never in question), and writes one JSON file:
+       posts[]      one per post, oldest first — caption, publish time, the views at 1h / 6h /
+                    24h / 48h / 7d (the comparable figures; null where no reading sits close
+                    enough), the latest counts, and every reading as
+                    [ts, views, likes, comments, shares]
+       followers[]  the follower log: [ts, followers, total likes, post count]
+       about        what each field means and how the sampler runs, for whoever reads it
+                    next — a person, or an AI being asked to analyse it
+     The open_id is never written: the file says whose it is by display name. */
+  const TTX_AGES = [['1h', 3600e3], ['6h', 6 * 3600e3], ['24h', 24 * 3600e3], ['48h', 48 * 3600e3], ['7d', 7 * 864e5]];
+  // the last reading at or before the age, within grace (10 minutes to 48h, an hour at a week) — never a guess
+  const ttxViewsAt = (s, t0, age) => {
+    const t = t0 + age, grace = age > 48 * 3600e3 ? 3600e3 : 600e3;
+    let best = null;
+    for (const r of s) { if (r[0] <= t) best = r; else break; }
+    return best && best[0] >= t - grace ? best[1] : null;
+  };
+  const ttxIso = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const ttxLocal = ms => new Date(ms).toLocaleString('en-AU', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  function ttxFile(roster, readingsOf, followers, who, keepDays, now) {
+    let tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+    // oldest first whatever order the roster arrived in
+    const posts = (roster || []).slice().sort((x, y) => (x.create_time || 0) - (y.create_time || 0)).map(v => {
+      const s = (readingsOf[v.id] || []).filter(r => Array.isArray(r) && r[0] > 0).sort((a, b) => a[0] - b[0]);
+      const t0 = (v.create_time || 0) * 1000, last = s[s.length - 1];
+      const p = {
+        id: v.id, caption: v.title || '', published_utc: ttxIso(t0), published_local: ttxLocal(t0),
+        age_hours: Math.round((now - t0) / 3600e3 * 10) / 10, samples: s.length,
+        first_sample_utc: s.length ? ttxIso(s[0][0]) : null, last_sample_utc: last ? ttxIso(last[0]) : null
+      };
+      for (const [k, ms] of TTX_AGES) p['views_' + k] = ttxViewsAt(s, t0, ms);
+      p.views_latest = last ? last[1] : null;
+      p.likes_latest = last ? last[2] : null;
+      p.comments_latest = last ? last[3] : null;
+      p.shares_latest = last ? last[4] : null;
+      p.readings = s;
+      return p;
+    });
+    return {
+      format: 'channel-command/tiktok-recordings/1',
+      exported_utc: ttxIso(now), exported_local: ttxLocal(now), timezone: tz,
+      account: who || '', kept_days: keepDays,
+      about: {
+        posts: 'One entry per post the tracker has recorded, oldest first. views_1h … views_7d are the post’s views at that age: the last reading at or before it, only if that reading is within 10 minutes of the age (an hour for 7d). null means no reading sits close enough — never a guess. views_48h is the figure the dashboard grades every post on: the same stretch of every post’s life.',
+        readings: 'Every reading the tracker took of that post, as [ts, views, likes, comments, shares]; ts is milliseconds since 1970 UTC. The tracker reads every minute for a post’s first 48 hours, every 15 minutes to day 14, hourly to day 60, then prunes. A launch is recorded only from the moment the tracker was watching, so a post published before the account was connected has no early readings. Gaps are gaps: a missed reading leaves no row, never a repeated one.',
+        followers: 'The account’s follower log, checked every ~3 hours for up to 400 days: [ts, followers, total_likes, post_count].',
+        times: '*_utc fields are ISO 8601. *_local fields are the clock of the device that exported (' + (tz || 'local time') + '), which is the clock the dashboard cuts its days on.',
+        scope: 'This file holds only the account named in “account”, as served to its own signed-in session. Nothing from any other account is in it, and the account’s id is not written.'
+      },
+      posts,
+      followers: (Array.isArray(followers) ? followers : []).filter(x => Array.isArray(x) && x[0] > 0).map(x => [x[0], x[1] || 0, x[2] || 0, x[3] || 0])
+    };
+  }
+  async function ttxExport() {
+    const btn = $('ttExportRecBtn');
+    if (!session) { ttNote('sign in first'); showError('Sign in with TikTok first — the recordings belong to the account that is signed in.'); return; }
+    btn.disabled = true;
+    try {
+      ttNote('asking your tracker…');
+      const head = await api('/tiktok/export');
+      const roster = Array.isArray(head.videos) ? head.videos : [];
+      const readingsOf = {};
+      // four at a time: the Worker serves one post per call, so the pace is the round trip
+      for (let i = 0; i < roster.length; i += 4) {
+        ttNote('collecting ' + Math.min(i + 4, roster.length) + ' of ' + roster.length + ' posts…');
+        await Promise.all(roster.slice(i, i + 4).map(async v => {
+          const q = '/tiktok/export?id=' + encodeURIComponent(v.id);
+          let r;
+          try { r = await api(q); } catch (e) { r = await api(q); }   // one retry, then the error surfaces
+          readingsOf[v.id] = Array.isArray(r && r.s) ? r.s : [];
+        }));
+      }
+      const now = Date.now();
+      const file = ttxFile(roster, readingsOf, head.followers, me && (me.display_name || me.username), head.keepDays || 60, now);
+      const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'tiktok-recordings-' + new Date(now).toLocaleDateString('en-CA') + '.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      const n = file.posts.reduce((t, x) => t + x.samples, 0);
+      ttNote('exported ' + roster.length + ' post' + (roster.length === 1 ? '' : 's') + ', ' + fmt.format(n) + ' readings');
+    } catch (e) {
+      ttNote('export failed');
+      showError('Could not export the recordings: ' + ((e && e.message) || e));
+    } finally { btn.disabled = false; }
+  }
+  $('ttExportRecBtn').addEventListener('click', ttxExport);
   /* A phone tab usually RESUMES rather than reloads, so the away stamp is re-read when the
      page comes back — but only after a real absence. A ten-second app switch to answer a
      message must not wipe the away summary she has not finished reading. */

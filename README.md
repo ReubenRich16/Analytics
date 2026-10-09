@@ -583,15 +583,18 @@ it in the OAuth URL). Only `TIKTOK_CLIENT_SECRET` is a secret.
 - **Impressions & CTR** — no API provides these. YouTube Studio → Analytics →
   Advanced mode → Export CSV, then **Import Studio CSV** at the bottom of the
   dashboard.
-- **Export the recorded data** — Actions → *Export the recorded data (read-only)* → **Run
-  workflow**, then download the zip from that run's **Artifacts** (kept 14 days). It reads
-  everything D1 holds — every reading for the last 60 days (`samples.csv`), the posts
-  (`videos.csv`), one row per post with its views at 1h / 6h / 24h / 48h / 7d (`posts.csv`),
-  the TikTok follower log (`followers.csv`) and a `README.txt` of the columns. This is the
-  **whole** record, which the dashboard's own *Export saved data* is not: that is the browser's
-  copy (launch curves plus whatever three-day windows the device pulled), so days 3–60 of a
-  post's life are only here. Nothing is interpolated, and the TikTok open_id is cut to the four
-  characters the peek prints (see [`scripts/d1-export.mjs`](scripts/d1-export.mjs)).
+- **Export recordings** (TikTok page, at the foot, beside *Export saved data*) — everything
+  the Worker has recorded for the **signed-in account**, as one JSON file: every reading for
+  the last 60 days per post, each post's views at 1h / 6h / 24h / 48h / 7d (the comparable
+  figures; `null` where no reading sits close enough — nothing is interpolated), the latest
+  counts, the follower log, and an `about` block saying what each field means, for whoever
+  reads it next — you, a spreadsheet, or an AI you ask to analyse it. This is the **whole**
+  record, which *Export saved data* is not: that is the browser's copy (launch curves plus
+  whatever three-day windows the device pulled), so days 3–60 of a post's life are only here.
+  The Worker serves it one post per call to the session that owns the account, so the file
+  can only ever hold that account's data, and never its id. There is deliberately no
+  server-side or GitHub export: this repo is public, and a dump of the whole database would
+  put every connected account in one downloadable file.
 - **Search keywords** — edit [`data/keywords.json`](data/keywords.json). Each search page
   costs 100 quota units and a keyword can page up to 8 deep, so the weekly run works from a
   shared page budget and rotates keywords when it can't cover them all (see `rank.mjs`).
@@ -610,6 +613,9 @@ it in the OAuth URL). Only `TIKTOK_CLIENT_SECRET` is a secret.
 - **Read-only.** Nothing can post, edit or delete on either platform.
 - The session token is excluded from export/sync, and so is any personal Gemini
   key.
+- **Export recordings** is served to the signed-in session only, from that account's own
+  partition of the database. Nothing from any other connected account can be asked for,
+  and the account id is never written into the file.
 
 Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.html)
 · [terms](https://reubenrich16.github.io/Analytics/terms.html)
@@ -633,7 +639,7 @@ Published policies: [privacy](https://reubenrich16.github.io/Analytics/privacy.h
 ```
 yt-dashboard/   index.html · tiktok.html · compare.html · style.css · motion.js · stickers.js · privacy.html · terms.html · publish.sh
 worker/         worker.js · wrangler.toml · schema.sql · *.test.mjs
-scripts/        snapshot.mjs · rank.mjs · d1-export.mjs · test-all.mjs · *.test.mjs
+scripts/        snapshot.mjs · rank.mjs · test-all.mjs · *.test.mjs
 data/           history.json · alerts.json · ranks.json · keywords.json
 docs/           tiktok-setup.md · youtube-ideas.md
 brand/          icon.svg + PNG renders · PHILOSOPHY.md
