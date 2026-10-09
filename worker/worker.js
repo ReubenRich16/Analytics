@@ -1634,7 +1634,12 @@ async function ttTick(env) {
     // that is precisely the question that could not be answered when D1 turned out to
     // hold no TikTok rows at all. Record the outcome, and persist it when it CHANGES, so
     // the two can be told apart without costing a write every minute.
-    const health = fetchErr ? 'error: ' + fetchErr : 'ok: listed ' + vids.length;
+    // The count is capped at one page, because the half-hourly pass asks for 60 posts and
+    // the minute passes for 20: "listed 60" then "listed 20" is not a change in health, and
+    // recording it as one cost a snapshot write every time the page size flipped — twice an
+    // hour per account, four now that the 60-post pass runs on the half hour as well. What
+    // the string exists to tell apart is an error, an empty list and a full one.
+    const health = fetchErr ? 'error: ' + fetchErr : 'ok: listed ' + (vids.length >= 20 ? '20+' : vids.length);
     const healthChanged = snap.ttHealth !== health;
     if (healthChanged) { snap.ttHealth = health; snap.ttHealthAt = now; }
     if (fetchErr) {

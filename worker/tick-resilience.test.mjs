@@ -294,5 +294,48 @@ console.log('\n7. one TikTok account cannot take down the others');
   } finally { globalThis.fetch = realFetch; Date.now = realNow; }
 }
 
+console.log('\n8. the page size is not a change in health');
+{
+  /* The half-hourly pass asks TikTok for 60 posts and the minute passes for 20. The health
+     string recorded the count, so on an account with 60 or more posts it read "listed 60"
+     then "listed 20" every hour — and a changed health string writes the snapshot, which
+     cost two KV writes an hour per account for nothing (four, once the 60-post pass moved to
+     the half hour). The count is capped at one page: an error, an empty list and a full one
+     are what the string exists to tell apart. */
+  const CT = Math.floor((NOW - 20 * 864e5) / 1000);   // cold posts only, so the scan runs on 5-minute boundaries
+  const many = n => ({ data: { has_more: false, cursor: 0, videos: Array.from({ length: n }, (_, i) => ({
+    id: 'c' + i, title: 't', create_time: CT - i * 3600, view_count: 10, like_count: 1, comment_count: 0, share_count: 0, cover_image_url: '' })) } });
+  const m = new Map([['tt:accounts', JSON.stringify(['A'])],
+    ['tt:tok:A', JSON.stringify({ access_token: 'x', expires_at: NOW + 9e6, refresh_token: 'r' })]]);
+  let puts = 0;
+  const kv = { async get(k) { return m.get(k) ?? null; }, async put(k, v) { puts++; m.set(k, v); } };
+  const health = () => JSON.parse(m.get('tt:snap:A') || '{}').ttHealth;
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  let want = 60;
+  globalThis.fetch = async (u) => {
+    const s = String(u);
+    if (/oauth\/token/.test(s)) return { ok: true, status: 200, json: async () => ({ access_token: 'x', expires_in: 8000 }) };
+    if (/user\/info/.test(s)) return { ok: true, status: 200, json: async () => ({ data: { user: { follower_count: 5, likes_count: 1, video_count: 60 } } }) };
+    return { ok: true, status: 200, json: async () => many(want) };
+  };
+  const TT = { TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' };
+  const atMinute = mm => { const d = new Date(NOW); d.setUTCMinutes(mm, 0, 0); Date.now = () => d.getTime(); };
+  try {
+    atMinute(0); want = 60;                                   // on the hour: the 60-post pass
+    await W.ttTick({ ...TT, MINUTE: kv, DB: mockDB() });
+    const h1 = health(), putsAfterFirst = puts;
+    atMinute(5); want = 20;                                   // a minute pass: 20
+    await W.ttTick({ ...TT, MINUTE: kv, DB: mockDB() });
+    check('a 60-post list and a 20-post list record the same health', h1 === 'ok: listed 20+' && health() === h1, h1 + ' / ' + health());
+    check('so the 20-post pass spends no snapshot write', puts === putsAfterFirst, puts + ' vs ' + putsAfterFirst);
+    atMinute(10); want = 0;
+    await W.ttTick({ ...TT, MINUTE: kv, DB: mockDB() });
+    check('an empty list is still told apart', health() === 'ok: listed 0', health());
+    atMinute(15); want = 7;
+    await W.ttTick({ ...TT, MINUTE: kv, DB: mockDB() });
+    check('and a short account keeps its exact count', health() === 'ok: listed 7', health());
+  } finally { globalThis.fetch = realFetch; Date.now = realNow; }
+}
+
 console.log('\n' + (fail ? '✗ ' + fail + ' FAILED, ' : '') + pass + ' passed');
 process.exit(fail ? 1 : 0);
