@@ -659,6 +659,32 @@
   const showError = m => { const e = $('errorBox'); e.textContent = m; e.style.display = 'block'; };
   const clearError = () => { $('errorBox').style.display = 'none'; };
 
+  /* ---------- where the last visit stopped ----------
+     iOS Safari kills a page it thinks is using too much ("A problem repeatedly occurred")
+     and nothing on the page survives to say why. So each heavy step writes its name here
+     first; a visit that ends normally writes 'closed'. If the next visit finds any other
+     step, the page died during it, and says so under the header. */
+  const BUILD = '2026-10-27';
+  const CRUMB = 'tt_crumb', T_LOAD = Date.now();
+  let lastCrumb = null;
+  try { lastCrumb = JSON.parse(localStorage.getItem(CRUMB) || 'null'); } catch (e) {}
+  const crumb = step => {
+    try { localStorage.setItem(CRUMB, JSON.stringify({ step, s: Math.round((Date.now() - T_LOAD) / 1000), b: BUILD, at: Date.now() })); } catch (e) {}
+  };
+  addEventListener('pagehide', () => crumb('closed'));
+  addEventListener('DOMContentLoaded', () => {
+    if (!lastCrumb || lastCrumb.step === 'closed') return;
+    const n = document.createElement('p');
+    n.id = 'crashNote';
+    n.style.cssText = 'margin:8px 0;font-size:12px;color:var(--muted)';
+    n.textContent = 'Last visit stopped ' + (lastCrumb.step === 'idle' ? 'while sitting idle' : 'during “' + lastCrumb.step + '”') + ', ' + lastCrumb.s + ' s after opening' +
+      (lastCrumb.at ? ', at ' + new Date(lastCrumb.at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '') +
+      ' (version ' + (lastCrumb.b || '?') + ').';
+    const eb = document.getElementById('errorBox');
+    if (eb && eb.parentNode) eb.parentNode.insertBefore(n, eb);
+  });
+  crumb('loading');
+
   /* ---------- worker API ---------- */
   async function api(path, opts) {
     const o = opts || {};
@@ -1649,7 +1675,7 @@
       const gapD = (Date.now() - histSince) / 864e5;
       q = '?since=' + histSince + (gapD > 2.5 ? '&days=' + Math.min(14, Math.ceil(gapD) + 1) : '');
     }
-    try { mergeHist(await api('/tiktok/history' + q)); }
+    try { const b = await api('/tiktok/history' + q); crumb('merging history'); mergeHist(b); }
     catch (e) { /* keep whatever is already drawn */ }
   }
   // /tiktok/history only carries the last few days of samples, because its job is "what
@@ -1738,7 +1764,7 @@
     me = await api('/tiktok/me');
     if (me) me._at = Date.now();
     // before any history is pulled: this is what decides whose store we are adding to
-    loadHist(me && me.open_id);
+    crumb('reading saved history'); loadHist(me && me.open_id);
     loadSeen();   // reads when this device last had the page open, then stamps now
     $('ttAvatar').src = me.avatar_url || '';
     $('ttName').textContent = me.display_name || me.username || 'TikTok';
@@ -1758,7 +1784,7 @@
     await pullHistory();
     await pullLaunches();
     intervalMs = +$('interval').value;   // before restoreVel: the backfill bins by it
-    restoreVel();   // resume a quick reload, or backfill the strip from the recordings
+    crumb('velocity restore'); restoreVel();   // resume a quick reload, or backfill the strip from the recordings
     await poll();
     if (timer) clearInterval(timer);
     timer = setInterval(poll, intervalMs);
@@ -1941,6 +1967,7 @@
     polling = true;
     setStatus('updating…');
     try {
+      crumb('posts download');
       const [v, u] = await Promise.all([api('/tiktok/videos'), api('/tiktok/me')]);
       const got = (v.videos || []).filter(x => x && x.id);
       /* TikTok sometimes fails part-way through the list and the Worker says so (`partial`).
@@ -2007,6 +2034,7 @@
       buildAccel();
       renderToday();
       renderTable(); showSlot(slotIdx); renderBaseline(); renderBreakdown(); renderRecTrends(); renderTags(); renderCoaching(); renderAnswer(); renderTtSparks(); renderAlerts(); ttdRepaint();
+      crumb('idle');
       clearError();
       $('liveDot').classList.add('on');
       setStatus('live · ' + new Date().toLocaleTimeString('en-AU'));
@@ -4139,7 +4167,7 @@
          so a day with a hole is left out rather than shown short or ranked.
      Each gain is filed under the hour just before its reading (arr[i][0] − 1), because a
      reading taken at 3:00 carries the views that came in before 3:00. */
-  const TT_GAP = 75 * 60e3;      // the lineChart gap rule; clears the Worker's cool tier, even with one reading missed
+  const TT_GAP = 75 * 60e3, TT_ABSENT = 6 * 3600e3;      // TT_GAP: the lineChart gap rule; clears the Worker's cool tier, even with one reading missed. TT_ABSENT: see trackerRan
   // how many posts the recorded figures rest on, when that is not every post TikTok lists
   // (0 when the store holds all of them). Every card that names its basis asks this one test.
   const ttStoredBasis = () => {
@@ -4157,6 +4185,20 @@
     const incomplete = new Set();  // local days (en-CA) a hole in some post's recording touches
     const holes = [];              // [from, to] of each hole a gain crossed, for hour-level checks
     let total = 0;
+    // every post's reading times, sorted, built only when a long gap needs checking
+    let allTs = null;
+    const trackerRan = (a, b) => {
+      if (!allTs) {
+        allTs = [];
+        for (const r of Object.values(vids)) for (const x of (r && r.s) || []) if (x.length > 2 && x[0] >= from - TT_ABSENT) allTs.push(x[0]);
+        allTs.sort((x, y) => x - y);
+      }
+      let lo = 0, hi = allTs.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (allTs[m] <= a) lo = m + 1; else hi = m; }
+      let last = a;
+      for (let j = lo; j < allTs.length && allTs[j] < b; j++) { if (allTs[j] - last > TT_GAP) return false; last = allTs[j]; }
+      return b - last <= TT_GAP;
+    };
     for (const [id, rec] of Object.entries(vids)) {
       if (onlyId != null && id !== onlyId) continue;
       let arr = (rec && rec.s) || [];
@@ -4178,6 +4220,11 @@
         if (prev < from) continue;
         total += d;
         if (arr[i][0] - prev > TT_GAP) {
+          // a post missing for hours while the tracker kept reading the others: TikTok's list
+          // left it out (privated, or skipped a page). Its views across the gap go in no hour,
+          // like any hole, but it does not void the days, or one quiet post wiped out days of
+          // comparisons. A gap where the tracker itself stopped is still a hole.
+          if (arr[i][0] - prev > TT_ABSENT && trackerRan(prev, arr[i][0])) continue;
           holes.push([prev, arr[i][0]]);
           const day = new Date(prev); day.setHours(0, 0, 0, 0);
           for (; day.getTime() < arr[i][0]; day.setDate(day.getDate() + 1)) incomplete.add(day.toLocaleDateString('en-CA'));
@@ -4528,7 +4575,18 @@
     const out = new Map();   // local day (en-CA) → recorded views gained
     const now = Date.now(), from = now - days * 864e5;
     const g = ttGainBuckets(from);
-    const kOf = t => new Date(t).toLocaleDateString('en-CA');
+    /* One local-day name per quarter hour rather than per reading. This ran on every reading
+       of every kept post, twice, on each render: about 130,000 date formattings for a
+       2-month store. Safari formats far slower than Chrome and was killing the tab. Every
+       real UTC offset is a whole number of quarter hours, so a quarter hour never straddles
+       a local midnight. */
+    const kCache = new Map();
+    const kOf = t => {
+      const q = Math.floor(t / 9e5);
+      let k = kCache.get(q);
+      if (k === undefined) { k = new Date(t).toLocaleDateString('en-CA'); kCache.set(q, k); }
+      return k;
+    };
     const vids = (hist && hist.videos) || {};
     const times = [];
     let oldest = Infinity;
@@ -6186,6 +6244,7 @@
   }
   function showRoom(k, remember) {
     if (ROOM_ORDER.indexOf(k) < 0) k = 'now';
+    crumb('opening the ' + k + ' tab'); setTimeout(() => { if (!polling) crumb('idle'); }, 4000);
     // roving tabindex: only the selected tab is in the tab order, so Tab moves past the
     // whole bar in one press and the arrow keys move within it — the tabs pattern the
     // role="tablist" on this element has been promising all along
@@ -6237,6 +6296,26 @@
     if (savedOne) { $('onePage').checked = true; document.body.classList.add('onepage-on'); }
     showRoom(savedRoom, false);
   })();
+
+  /* Name each heavy step for the crash note (see crumb). Wrapped here rather than at the
+     call sites, so the poll chain reads as it always has. */
+  const crumbWrap = (name, f) => function () { crumb(name); return f.apply(this, arguments); };
+  ttSyncPull = crumbWrap('settings sync', ttSyncPull);
+  pullHistory = crumbWrap('history download', pullHistory);
+  pullLaunches = crumbWrap('launch curves', pullLaunches);
+  buildScores = crumbWrap('scores', buildScores);
+  buildAccel = crumbWrap('speeding up', buildAccel);
+  renderToday = crumbWrap('Today card', renderToday);
+  renderTable = crumbWrap('Posts', renderTable);
+  renderBaseline = crumbWrap('baseline', renderBaseline);
+  renderBreakdown = crumbWrap('breakdown', renderBreakdown);
+  renderRecTrends = crumbWrap('Trends', renderRecTrends);
+  renderTags = crumbWrap('hashtags', renderTags);
+  renderCoaching = crumbWrap('Coach', renderCoaching);
+  renderAnswer = crumbWrap('answer card', renderAnswer);
+  renderTtSparks = crumbWrap('sparklines', renderTtSparks);
+  renderAlerts = crumbWrap('alerts', renderAlerts);
+  ttdRepaint = crumbWrap('post drawer', ttdRepaint);
 
   /* ---------- start ---------- */
   try { workerUrl = localStorage.getItem('tt_worker') || ''; } catch (e) {}

@@ -176,6 +176,16 @@ console.log('\na hole in the recording');
   const dk = t => new Date(t).toLocaleDateString('en-CA');
   check('every day the hole touches is marked incomplete',
     [T0, T0 + DAY, after].every(t => g.incomplete.has(dk(t))) && g.incomplete.size === 3, [...g.incomplete].join(','));
+  // one post left out of TikTok's list for two days while the tracker kept reading another:
+  // the post was missing, not the recording, so the days stay
+  const A = mk();
+  const other = [];
+  for (let m = 0; m <= 60 + 2 * 24 * 60 + 15; m += 15) other.push([T0 + m * MIN, 500 + m, 0, 0, 0]);
+  A.hist = { videos: { p: { create_time: CT, s }, q: { create_time: CT, s: other } } };
+  const ga = A.gains(T0 - DAY);
+  check('a post missing while the tracker ran marks no day incomplete', ga.incomplete.size === 0 && ga.holes.length === 0,
+    [...ga.incomplete].join(','));
+  check('and its views across the gap still go into no hour', ga.total - [...ga.hours.values()].reduce((a, b) => a + b.gain, 0) === 1940);
   // a reading at 11:00 carries the views that came in before 11:00
   const H = mk();
   H.hist = { videos: { p: { create_time: CT, s: [[T0 + 45 * MIN, 10, 0, 0, 0], [T0 + HOUR, 40, 0, 0, 0]] } } };
