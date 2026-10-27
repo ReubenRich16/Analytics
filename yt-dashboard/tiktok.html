@@ -851,7 +851,9 @@
   // `int` is for a count (views, likes): its gridlines are whole numbers, so a post with
   // three views is not drawn against ticks of 0.3 and 0.8
   function niceScale(lo, hi, target, int) {
-    if (!(hi > lo)) hi = lo + 1;
+    // a range lost in rounding (0.08 and 0.08000000000000001) counts as flat: a step that
+    // small vanishes when added to lo, the tick loop never ended, and the phone killed the page
+    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * 1e-9)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const n = raw / mag;
@@ -859,7 +861,8 @@
     if (int) step = step < 1 ? 1 : step === 2.5 ? 2 : step;
     const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
     const ticks = [];
-    for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
+    // counted from nlo, not added up, and capped, so no input can make this run away
+    for (let i = 0, v = nlo; v <= nhi + step / 1e6 && i < 100; v = nlo + ++i * step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
     return { lo: nlo, hi: nhi, ticks };
   }
   function axisNum(v) {

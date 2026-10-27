@@ -335,5 +335,19 @@ console.log('\nTikTok lineChart maxGap');
   check('without it, four times the median spacing lets the line run straight across', (lineD(without).match(/M/g) || []).length === 1, lineD(without));
 }
 
+
+// two values a rounding error apart once sent the tick loop round forever, filling memory
+// until iOS Safari killed the TikTok page on every load
+console.log('\nnear-flat ranges');
+for (const page of ['index.html', 'tiktok.html']) {
+  const src = fs.readFileSync(new URL('../yt-dashboard/' + page, import.meta.url), 'utf8');
+  const i = src.indexOf('  function niceScale('), j = src.indexOf('\n  }\n', i);
+  const ns = new Function('return ' + src.slice(i, j + 4))();
+  for (const [lo, hi] of [[0.08, 0.08 + 1e-17], [1e6, 1e6 + 1e-10], [5, 5], [0.3, 0.1 * 3]]) {
+    const sc = ns(lo, hi, 4);
+    check(page + ' ' + lo + '–' + hi + ' gives a few ticks', sc.ticks.length >= 2 && sc.ticks.length <= 12, sc.ticks.length);
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail?1:0);
