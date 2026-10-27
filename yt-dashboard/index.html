@@ -1651,6 +1651,14 @@
   const chartReg = new Map();
   let chartCi = 0;
   const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };
+  /* Each refresh redraws the charts under new ids, and the old ids' hover labels (thousands
+     of strings a chart) stayed here until 400 had piled up. On a phone that came to hundreds
+     of MB, and iOS Safari killed the tab ("A problem repeatedly occurred"). Drop entries
+     whose chart has left the page; the newest 50 stay in case their markup is about to go in. */
+  setInterval(() => {
+    const live = new Set(Array.from(document.querySelectorAll('svg.chart[data-ci]'), s => +s.dataset.ci));
+    for (const ci of chartReg.keys()) if (ci < chartCi - 50 && !live.has(ci)) chartReg.delete(ci);
+  }, 20000);
   const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const friendlyDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' }); } catch (e) { return d; } };
   const shortDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); } catch (e) { return d; } };
@@ -1662,7 +1670,9 @@
      way to read it. */
   // `int` is for a count: whole-number gridlines only, never 0.3 or 2.5 views
   function niceScale(lo, hi, target, int) {
-    if (!(hi > lo)) hi = lo + 1;
+    // a range lost in rounding (0.08 and 0.08000000000000001) counts as flat: a step that
+    // small vanishes when added to lo, the tick loop never ended, and the phone killed the page
+    if (!(hi - lo > Math.max(Math.abs(lo), Math.abs(hi)) * 1e-9)) hi = lo + 1;
     const raw = (hi - lo) / Math.max(1, target);
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
     const n = raw / mag;
@@ -1670,7 +1680,8 @@
     if (int) step = step < 1 ? 1 : step === 2.5 ? 2 : step;
     const nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
     const ticks = [];
-    for (let v = nlo; v <= nhi + step / 1e6; v += step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
+    // counted from nlo, not added up, and capped, so no input can make this run away
+    for (let i = 0, v = nlo; v <= nhi + step / 1e6 && i < 100; v = nlo + ++i * step) ticks.push(Math.abs(v) < step / 1e6 ? 0 : v);
     return { lo: nlo, hi: nhi, ticks, step };
   }
   /* Axis ticks stay short — 120,000 becomes 120k — so the left gutter can be narrow.
