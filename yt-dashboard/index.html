@@ -1651,6 +1651,14 @@
   const chartReg = new Map();
   let chartCi = 0;
   const chartPush = data => { const ci = chartCi++; chartReg.set(ci, data); chartReg.delete(ci - 400); return ci; };
+  /* Each refresh redraws the charts under new ids, and the old ids' hover labels (thousands
+     of strings a chart) stayed here until 400 had piled up. On a phone that came to hundreds
+     of MB, and iOS Safari killed the tab ("A problem repeatedly occurred"). Drop entries
+     whose chart has left the page; the newest 50 stay in case their markup is about to go in. */
+  setInterval(() => {
+    const live = new Set(Array.from(document.querySelectorAll('svg.chart[data-ci]'), s => +s.dataset.ci));
+    for (const ci of chartReg.keys()) if (ci < chartCi - 50 && !live.has(ci)) chartReg.delete(ci);
+  }, 20000);
   const reducedMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const friendlyDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' }); } catch (e) { return d; } };
   const shortDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); } catch (e) { return d; } };
