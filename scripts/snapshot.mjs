@@ -17,9 +17,34 @@ const api = async (ep, params) => {
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
   u.searchParams.set('key', KEY);
   const r = await fetch(u);
-  if (!r.ok) throw new Error(ep + ' HTTP ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  if (!r.ok) {
+    const body = await r.text();
+    let reason = '';
+    try { reason = JSON.parse(body).error.errors[0].reason || ''; } catch {}
+    if (QUOTA_REASONS.has(reason)) quotaOut(ep, reason);
+    throw new Error(ep + ' HTTP ' + r.status + ': ' + body.slice(0, 300));
+  }
   return r.json();
 };
+
+/* Running out of YouTube quota is not a fault in this script. The key's 10,000 units a day
+   are shared with the Worker's minute recorder and the weekly rank check, so on a busy day
+   the pot can run dry in the last stretch before the midnight-Pacific reset — and every
+   5-minute run until then used to fail, each one a GitHub failure notification. Those
+   runs can't record anything either way, so a short outage now ends the run cleanly with
+   a warning annotation and leaves history.json untouched.
+   It still fails loudly once the last full record is QUOTA_GRACE_MS old: by then
+   something is burning quota far faster than usual, and that is worth an email. */
+const QUOTA_REASONS = new Set(['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded']);
+const QUOTA_GRACE_MS = 6 * 3600e3;
+function quotaOut(ep, reason) {
+  const age = Date.now() - lastGoodFull;
+  if (lastGoodFull && age < QUOTA_GRACE_MS) {
+    console.log('::warning::YouTube quota exhausted (' + ep + ': ' + reason + '); skipping this snapshot. Last full record ' + Math.round(age / 60e3) + ' min ago.');
+    process.exit(0);
+  }
+  console.log('::error::YouTube quota exhausted (' + ep + ': ' + reason + ') and no full record for ' + (lastGoodFull ? Math.round(age / 3600e3) + 'h' : 'ever') + '.');
+}
 
 const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
 const channelsById = async ids => {
@@ -39,6 +64,8 @@ try { h = { ...h, ...JSON.parse(fs.readFileSync(HIST, 'utf8')) }; } catch {}
 if (Array.isArray(h.channel)) { if (CHANNELS[0]) h.channels[CHANNELS[0]] = h.channel; delete h.channel; }
 if (!h.channels) h.channels = {};
 if (!h.channelMeta) h.channelMeta = {};
+// when the last full record landed, read before this run moves it (see quotaOut)
+const lastGoodFull = +h.lastFull || 0;
 
 // own channel(s) + uploads — chunked so >50 channels still work.
 // Runs every 5 min, but to keep quota + commits low it records ALL videos only once an
@@ -61,17 +88,26 @@ const HOUR_MS = 55 * 60e3;
 const dueFull = now - (+h.lastFull || 0) >= HOUR_MS;
 if (dueFull) h.lastFull = now;
 const FRESH_MS = 2 * 864e5;
-const ownItems = await channelsById(CHANNELS);
-if (!ownItems.length) throw new Error('No CHANNEL_ID channels found');
+/* Quota: the in-between runs are 11 of every 12, so they are where the units go. They used
+   to cost 3+ each (channels, then every page of the uploads playlist) even when nothing was
+   fresh. Now a quiet one costs 1: a channel's uploads playlist id is its channel id with
+   UC swapped for UU, and the playlist is newest-first, so any upload under two days old is
+   on page one. The channels call (subscriber sample) is made only when it will be used —
+   on the hourly run, or for a channel that does have a fresh upload. */
+const uploadsOf = id => /^UC[\w-]{22}$/.test(id) ? 'UU' + id.slice(2) : null;
+const fetched = dueFull || CHANNELS.some(id => !uploadsOf(id)) ? await channelsById(CHANNELS) : null;
+if (fetched && !fetched.length) throw new Error('No CHANNEL_ID channels found');
+const own = fetched
+  ? fetched.map(c => ({ id: c.id, uploads: c.contentDetails.relatedPlaylists.uploads, item: c }))
+  : CHANNELS.map(id => ({ id, uploads: uploadsOf(id), item: null }));
 let vidCount = 0;
-for (const c of ownItems) {
-  const uploads = c.contentDetails.relatedPlaylists.uploads;
+for (const ch of own) {
   const vids = []; let pageToken = '';
   while (vids.length < 200) {
-    const d = await api('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, ...(pageToken ? { pageToken } : {}) });
-    for (const i of d.items) vids.push({ id: i.contentDetails.videoId, pub: i.contentDetails.videoPublishedAt });
+    const d = await api('playlistItems', { part: 'contentDetails', playlistId: ch.uploads, maxResults: 50, ...(pageToken ? { pageToken } : {}) });
+    for (const i of (d.items || [])) vids.push({ id: i.contentDetails.videoId, pub: i.contentDetails.videoPublishedAt });
     pageToken = d.nextPageToken;
-    if (!pageToken) break;
+    if (!pageToken || !dueFull) break;   // only the hourly record needs the back catalogue
   }
   const targets = (dueFull ? vids : vids.filter(v => v.pub && (now - new Date(v.pub).getTime()) < FRESH_MS)).map(v => v.id);
   /* The subscriber sample is taken whenever the hour is due, even if no video needs one —
@@ -80,13 +116,16 @@ for (const c of ownItems) {
      writing it on every delivered run would dirty history.json every five minutes and
      defeat the `git diff --cached --quiet` check that keeps this to one commit an hour. */
   if (dueFull || targets.length) {
-    h.channelMeta[c.id] = c.snippet.title;
-    (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
+    const c = ch.item || (await channelsById([ch.id]))[0];
+    if (c) {
+      h.channelMeta[c.id] = c.snippet.title;
+      (h.channels[c.id] = h.channels[c.id] || []).push([now, +c.statistics.subscriberCount || 0, +c.statistics.viewCount || 0]);
+    }
   }
   if (!targets.length) continue; // nothing worth recording for this channel this run
   for (let i = 0; i < targets.length; i += 50) {
     const d = await api('videos', { part: 'statistics', id: targets.slice(i, i + 50).join(',') });
-    for (const it of d.items) {
+    for (const it of (d.items || [])) {
       const s = it.statistics;
       (h.videos[it.id] = h.videos[it.id] || []).push([now, +(s.viewCount || 0), +(s.likeCount || 0), +(s.commentCount || 0)]);
     }
